@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>竞技游戏平台 - App预览</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+.phone{width:375px;height:812px;background:#fff;border-radius:44px;overflow:hidden;box-shadow:0 0 0 12px #111,0 0 0 14px #333,0 20px 60px rgba(0,0,0,.5);position:relative;display:flex;flex-direction:column}
+.notch{width:150px;height:30px;background:#111;border-radius:0 0 20px 20px;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:100}
+.status-bar{height:44px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;font-size:12px;color:#333;flex-shrink:0}
+.bar{height:56px;background:#fff;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #eee;flex-shrink:0}
+.bar .back{font-size:24px;cursor:pointer;margin-right:8px;color:#333;background:none;border:none}
+.bar .t{font-size:18px;font-weight:600;flex:1}
+.bar .act{background:none;border:none;font-size:14px;cursor:pointer;padding:4px 8px;color:#333}
+.ct{flex:1;overflow-y:auto;background:#f5f5f5}
+.bnav{height:56px;background:#fff;display:flex;border-top:1px solid #eee;flex-shrink:0}
+.bnav div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:#999;font-size:11px;gap:4px}
+.bnav div.on{color:#2196F3}
+.bnav div i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.hi{height:34px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hi::after{content:'';width:134px;height:5px;background:#333;border-radius:3px}
+.p{display:none;height:100%;flex-direction:column}.p.on{display:flex}
+.inp{width:100%;height:48px;border:1px solid #ddd;border-radius:8px;padding:0 12px;font-size:15px;outline:none;margin-bottom:16px}
+.inp:focus{border-color:#2196F3}
+.btn{width:100%;height:48px;background:#2196F3;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer}
+.btn:hover{background:#1976D2}
+.lnk{background:none;border:none;color:#2196F3;cursor:pointer;font-size:14px}
+.row{display:flex;align-items:center;padding:14px 16px;background:#fff;border-bottom:1px solid #f5f5f5;cursor:pointer}
+.row:active{background:#fafafa}
+.row .txt{flex:1;font-size:15px}
+.row .arr{color:#ccc}
+.empty{padding:60px 16px;text-align:center;color:#bbb;font-size:14px}
+.gc{background:#fff;border-radius:12px;padding:24px 12px;text-align:center;cursor:pointer}
+.gc:active{opacity:.8}
+.gc .box{width:48px;height:48px;border-radius:12px;margin:0 auto 8px}
+.gc .nm{font-size:15px;font-weight:600}
+.gc .ds{font-size:12px;color:#999;margin-top:4px}
+.li{display:flex;align-items:center;padding:12px 16px;background:#fff;border-bottom:1px solid #f0f0f0;cursor:pointer}
+.li:active{background:#fafafa}
+.av{width:44px;height:44px;border-radius:50%;background:#e0e0e0;flex-shrink:0}
+.msg-r,.msg-l{display:flex;flex-direction:column;margin:6px 16px}
+.msg-r{align-items:flex-end}
+.msg-l{align-items:flex-start}
+.bbl{max-width:70%;padding:10px 14px;border-radius:16px;font-size:14px;line-height:1.4}
+.msg-r .bbl{background:#2196F3;color:#fff;border-bottom-right-radius:4px}
+.msg-l .bbl{background:#e8e8e8;color:#333;border-bottom-left-radius:4px}
+.msg-st{font-size:11px;color:#999;margin-top:2px}
+.pin-tag{display:inline-block;font-size:10px;color:#1976D2;background:#e3f2fd;padding:1px 4px;border-radius:2px;margin-right:4px}
+.ci{display:flex;align-items:center;padding:8px 12px;background:#fff;border-top:1px solid #eee;gap:8px;flex-shrink:0}
+.ci input{flex:1;height:40px;border:1px solid #e0e0e0;border-radius:20px;padding:0 16px;font-size:14px;outline:none}
+.ci button{height:40px;padding:0 16px;border-radius:20px;background:#2196F3;color:#fff;border:none;font-size:14px;cursor:pointer}
+.search-bar{display:flex;align-items:center;padding:8px 16px;background:#fff;border-bottom:1px solid #eee}
+.search-bar input{flex:1;height:36px;border:1px solid #e0e0e0;border-radius:18px;padding:0 14px;font-size:14px;outline:none}
+</style>
+</head>
+<body>
+<div class="phone">
+<div class="notch"></div>
+<div class="status-bar">9:41</div>
+
+<!-- 登录 -->
+<div class="p on" id="p-login">
+<div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 32px">
+<div style="font-size:24px;font-weight:700;margin-bottom:48px">竞技游戏平台</div>
+<input class="inp" placeholder="账号">
+<input class="inp" type="password" placeholder="密码">
+<button class="btn" onclick="go('p-chat-list')">登录</button>
+<button class="lnk" style="margin-top:16px" onclick="go('p-register')">没有账号？去注册</button>
+</div>
+</div>
+
+<!-- 注册 -->
+<div class="p" id="p-register">
+<div class="bar"><button class="back" onclick="go('p-login')">‹</button><span class="t">注册</span></div>
+<div class="ct" style="background:#fff;padding:24px 32px">
+<input class="inp" placeholder="账号">
+<input class="inp" type="password" placeholder="密码">
+<input class="inp" type="password" placeholder="确认密码">
+<input class="inp" placeholder="邀请码（选填）">
+<button class="btn" onclick="go('p-chat-list')">注册</button>
+<div style="text-align:center;margin-top:16px"><button class="lnk" onclick="go('p-login')">已有账号？去登录</button></div>
+</div>
+</div>
+
+<!-- 消息列表 -->
+<div class="p" id="p-chat-list">
+<div class="bar"><span class="t">消息</span><button class="act" onclick="go('p-search')">搜索</button></div>
+<div class="ct">
+<!-- AI入口 -->
+<div class="li" onclick="go('p-ai-chat')">
+<div class="av" style="background:#e3f2fd;display:flex;align-items:center;justify-content:center;font-size:12px;color:#2196F3;font-weight:600">AI</div>
+<div style="flex:1;margin-left:12px">
+<div style="font-weight:600">AI智能体</div>
+<div style="font-size:13px;color:#999;margin-top:2px">有什么可以帮你的？</div>
+</div>
+</div>
+<div class="empty" style="padding:30px 16px">暂无更多消息</div>
+</div>
+<div class="bnav"><div class="on" onclick="go('p-chat-list')"><i></i>消息</div><div onclick="go('p-contacts')"><i></i>联系人</div><div onclick="go('p-game')"><i></i>游戏</div><div onclick="go('p-profile')"><i></i>我的</div></div>
+</div>
+
+<!-- 搜索聊天记录 -->
+<div class="p" id="p-search">
+<div class="bar"><button class="back" onclick="go('p-chat-list')">‹</button><span class="t">搜索</span></div>
+<div class="search-bar"><input placeholder="搜索聊天记录、联系人"></div>
+<div class="ct"><div class="empty">输入关键词搜索</div></div>
+</div>
+
+<!-- 聊天页 -->
+<div class="p" id="p-chat">
+<div class="bar"><button class="back" onclick="go('p-chat-list')">‹</button><span class="t">聊天</span></div>
+<div class="ct" style="display:flex;flex-direction:column">
+<div style="flex:1"><div class="empty">暂无消息</div></div>
+</div>
+<div class="ci"><input placeholder="输入消息..."><button>发送</button></div>
+</div>
+
+<!-- AI聊天 -->
+<div class="p" id="p-ai-chat">
+<div class="bar"><button class="back" onclick="go('p-chat-list')">‹</button><span class="t">AI智能体</span></div>
+<div class="ct" style="display:flex;flex-direction:column">
+<div style="flex:1"><div class="empty">向AI提问吧</div></div>
+</div>
+<div class="ci"><input placeholder="输入问题..."><button>发送</button></div>
+</div>
+
+<!-- 联系人 -->
+<div class="p" id="p-contacts">
+<div class="bar"><span class="t">联系人</span><button class="act">添加</button></div>
+<div class="ct"><div class="empty">暂无联系人</div></div>
+<div class="bnav"><div onclick="go('p-chat-list')"><i></i>消息</div><div class="on" onclick="go('p-contacts')"><i></i>联系人</div><div onclick="go('p-game')"><i></i>游戏</div><div onclick="go('p-profile')"><i></i>我的</div></div>
+</div>
+
+<!-- 游戏大厅 -->
+<div class="p" id="p-game">
+<div class="bar"><span class="t">游戏</span></div>
+<div class="ct">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px">
+<div class="gc"><div class="box" style="background:#e3f2fd"></div><div class="nm">大逃杀</div><div class="ds">2D卡通竞技</div></div>
+<div class="gc"><div class="box" style="background:#e8f5e9"></div><div class="nm">实况钓鱼</div><div class="ds">休闲钓鱼 · 3场次</div></div>
+<div class="gc"><div class="box" style="background:#fff3e0"></div><div class="nm">赛马</div><div class="ds">联机投注竞猜</div></div>
+<div class="gc"><div class="box" style="background:#fce4ec"></div><div class="nm">蛇蛇大作战</div><div class="ds">匹配挑战</div></div>
+<div class="gc" style="grid-column:span 2" onclick="go('p-lottery')"><div class="box" style="background:#f3e5f5"></div><div class="nm">转盘抽奖</div><div class="ds">消耗货币抽奖</div></div>
+</div>
+</div>
+<div class="bnav"><div onclick="go('p-chat-list')"><i></i>消息</div><div onclick="go('p-contacts')"><i></i>联系人</div><div class="on" onclick="go('p-game')"><i></i>游戏</div><div onclick="go('p-profile')"><i></i>我的</div></div>
+</div>
+
+<!-- 转盘 -->
+<div class="p" id="p-lottery">
+<div class="bar"><button class="back" onclick="go('p-game')">‹</button><span class="t">转盘抽奖</span></div>
+<div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center">
+<div style="width:240px;height:240px;border-radius:50%;border:3px solid #e0e0e0;display:flex;align-items:center;justify-content:center">
+<button style="width:60px;height:60px;border-radius:50%;background:#2196F3;color:#fff;border:none;font-size:14px;cursor:pointer">抽奖</button>
+</div>
+<div style="margin-top:24px;color:#999;font-size:14px">消耗货币 / 次</div>
+</div>
+</div>
+
+<!-- 我的 -->
+<div class="p" id="p-profile">
+<div class="bar"><span class="t">我的</span><button class="act" onclick="go('p-settings')">设置</button></div>
+<div class="ct" style="overflow-y:auto">
+<div style="text-align:center;padding:24px;background:#fff">
+<div style="width:80px;height:80px;border-radius:50%;background:#e0e0e0;margin:0 auto;cursor:pointer" onclick="go('p-edit-avatar')"></div>
+<div style="margin-top:12px;cursor:pointer" onclick="go('p-edit-nickname')"><span style="font-size:18px;font-weight:600">--</span><span style="color:#999;font-size:12px;margin-left:4px">编辑</span></div>
+<div style="margin-top:4px;font-size:14px;color:#999">未激活</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:#eee;margin-top:8px">
+<div style="background:#fff;padding:16px;text-align:center;cursor:pointer" onclick="go('p-currency')"><div style="font-size:18px;font-weight:600">--</div><div style="font-size:12px;color:#999;margin-top:2px">积分</div></div>
+<div style="background:#fff;padding:16px;text-align:center;cursor:pointer" onclick="go('p-currency')"><div style="font-size:18px;font-weight:600">--</div><div style="font-size:12px;color:#999;margin-top:2px">金币</div></div>
+<div style="background:#fff;padding:16px;text-align:center;cursor:pointer" onclick="go('p-currency')"><div style="font-size:18px;font-weight:600">--</div><div style="font-size:12px;color:#999;margin-top:2px">银币</div></div>
+<div style="background:#fff;padding:16px;text-align:center;cursor:pointer" onclick="go('p-currency')"><div style="font-size:18px;font-weight:600">--</div><div style="font-size:12px;color:#999;margin-top:2px">特殊积分</div></div>
+<div style="background:#fff;padding:16px;text-align:center;cursor:pointer" onclick="go('p-currency')"><div style="font-size:18px;font-weight:600">--</div><div style="font-size:12px;color:#999;margin-top:2px">奖励积分</div></div>
+<div style="background:#fff;padding:16px;text-align:center"><div style="font-size:18px;font-weight:600">--</div><div style="font-size:12px;color:#999;margin-top:2px">持股数</div></div>
+</div>
+<div style="margin-top:8px;background:#fff">
+<div class="row" onclick="go('p-currency')"><span class="txt">货币明细</span><span class="arr">›</span></div>
+<div class="row" onclick="go('p-activate')"><span class="txt">激活游戏</span><span class="arr">›</span></div>
+<div class="row" onclick="go('p-invite')"><span class="txt">邀请奖励</span><span class="arr">›</span></div>
+<div class="row" onclick="go('p-promotion')"><span class="txt">推广奖励</span><span class="arr">›</span></div>
+<div class="row" onclick="go('p-backpack')"><span class="txt">我的背包</span><span class="arr">›</span></div>
+<div class="row" onclick="go('p-synthesize')"><span class="txt">积分合成</span><span class="arr">›</span></div>
+<div class="row" onclick="go('p-withdraw')"><span class="txt">提现</span><span class="arr">›</span></div>
+</div>
+<div style="padding:24px 16px"><button style="width:100%;height:48px;background:#fff;color:#f44336;border:1px solid #f44336;border-radius:8px;font-size:16px;cursor:pointer" onclick="go('p-login')">退出登录</button></div>
+</div>
+<div class="bnav"><div onclick="go('p-chat-list')"><i></i>消息</div><div onclick="go('p-contacts')"><i></i>联系人</div><div onclick="go('p-game')"><i></i>游戏</div><div class="on" onclick="go('p-profile')"><i></i>我的</div></div>
+</div>
+
+<!-- 设置 -->
+<div class="p" id="p-settings">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">设置</span></div>
+<div class="ct" style="background:#fff">
+<div style="display:flex;align-items:center;padding:16px;border-bottom:1px solid #f5f5f5">
+<div style="flex:1"><div style="font-size:15px">消息提醒</div><div style="font-size:12px;color:#999;margin-top:2px">开启后接收消息时弹窗提示</div></div>
+<label style="position:relative;width:50px;height:28px;display:inline-block">
+<input type="checkbox" checked style="opacity:0;width:0;height:0" onchange="this.parentElement.style.background=this.checked?'#2196F3':'#ccc'">
+<span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#2196F3;border-radius:14px;transition:.3s"></span>
+<span style="position:absolute;height:22px;width:22px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s" id="toggle-dot"></span>
+</label>
+</div>
+</div>
+</div>
+
+<!-- 货币明细 -->
+<div class="p" id="p-currency">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">货币明细</span></div>
+<div class="ct"><div class="empty">暂无记录</div></div>
+</div>
+
+<!-- 激活游戏 -->
+<div class="p" id="p-activate">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">激活游戏</span></div>
+<div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 32px">
+<div style="font-size:16px;color:#666;margin-bottom:24px">输入CDK激活码开启游戏</div>
+<input class="inp" placeholder="CDK激活码">
+<button class="btn">激活</button>
+</div>
+</div>
+
+<!-- 邀请奖励 -->
+<div class="p" id="p-invite">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">邀请奖励</span></div>
+<div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;padding:40px 24px">
+<div style="font-size:18px;font-weight:600">邀请好友一起玩</div>
+<div style="color:#999;margin-top:8px;text-align:center">被邀请者消耗积分，你可获得比例奖励</div>
+<div style="margin-top:24px;padding:16px 24px;background:#f5f5f5;border-radius:8px">
+<span style="font-size:24px;font-weight:700;letter-spacing:4px">--------</span>
+</div>
+</div>
+</div>
+
+<!-- 推广奖励 -->
+<div class="p" id="p-promotion">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">推广奖励</span></div>
+<div class="ct" style="background:#fff;padding:24px">
+<div style="font-size:18px;font-weight:600;margin-bottom:8px">当前推广矩阵</div>
+<div style="font-size:13px;color:#999;margin-bottom:16px">启动金额 2000 · 收益比例 35%</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:20px">
+<div style="background:#f5f5f5;border-radius:8px;padding:12px;text-align:center"><div style="font-weight:700">0/6</div><div style="font-size:12px;color:#999;margin-top:2px">已占坑位</div></div>
+<div style="background:#f5f5f5;border-radius:8px;padding:12px;text-align:center"><div style="font-weight:700">0</div><div style="font-size:12px;color:#999;margin-top:2px">可领取</div></div>
+<div style="background:#f5f5f5;border-radius:8px;padding:12px;text-align:center"><div style="font-weight:700">0</div><div style="font-size:12px;color:#999;margin-top:2px">下轮资金</div></div>
+</div>
+<div style="background:#f8f8f8;border-radius:8px;padding:16px;text-align:center;line-height:1.8;font-family:monospace;white-space:pre">我
+ /   \
+1     2
+/ \   / \
+3  4 5  6</div>
+<div style="font-size:14px;color:#666;margin-top:16px;line-height:1.6">推广奖励与邀请奖励同级。新用户进入 1-4 号坑位产生可领取收益，进入 5-6 号坑位产生下轮启动资金；老用户再次进入 1-4 号坑位只占位，进入 5-6 号坑位按规则抽取下轮启动资金。</div>
+</div>
+</div>
+
+<!-- 背包 -->
+<div class="p" id="p-backpack">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">我的背包</span></div>
+<div class="ct"><div class="empty">暂无物品</div></div>
+</div>
+
+<!-- 积分合成 -->
+<div class="p" id="p-synthesize">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">积分合成</span></div>
+<div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;padding:40px 24px">
+<div style="font-size:16px;color:#666;margin-bottom:24px">消耗积分合成其他货币</div>
+<div style="color:#999;font-size:14px">合成配置将从后台加载</div>
+</div>
+</div>
+
+<!-- 提现 -->
+<div class="p" id="p-withdraw">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">提现</span></div>
+<div class="ct" style="background:#fff;padding:24px">
+<div style="font-size:14px;color:#999;margin-bottom:16px">提现将扣除100奖励积分</div>
+<textarea style="width:100%;height:100px;border:1px solid #ddd;border-radius:8px;padding:12px;font-size:14px;resize:none;outline:none;margin-bottom:24px" placeholder="请输入提现信息"></textarea>
+<button class="btn">提交提现申请</button>
+</div>
+</div>
+
+<!-- 更换头像 -->
+<div class="p" id="p-edit-avatar">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">更换头像</span></div>
+<div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center">
+<div style="width:120px;height:120px;border-radius:50%;background:#e0e0e0"></div>
+<div style="margin-top:24px;display:flex;gap:16px">
+<button style="height:40px;padding:0 20px;background:#2196F3;color:#fff;border:none;border-radius:8px;cursor:pointer">相册</button>
+<button style="height:40px;padding:0 20px;background:#2196F3;color:#fff;border:none;border-radius:8px;cursor:pointer">拍照</button>
+</div>
+<button class="btn" style="width:200px;margin-top:24px">确认上传</button>
+</div>
+</div>
+
+<!-- 编辑昵称 -->
+<div class="p" id="p-edit-nickname">
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">编辑昵称</span></div>
+<div class="ct" style="background:#fff;padding:24px">
+<input class="inp" placeholder="2-10个字" maxlength="10">
+<div style="font-size:12px;color:#999;margin-bottom:24px;margin-top:-8px">2-10个字，不可包含敏感词</div>
+<button class="btn">保存</button>
+</div>
+</div>
+
+<div class="hi"></div>
+</div>
+<script>function go(id){document.querySelectorAll('.p').forEach(p=>p.classList.remove('on'));document.getElementById(id).classList.add('on')}</script>
+</body>
+</html>

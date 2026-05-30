@@ -1,0 +1,29 @@
+# Node modules
+node_modules/
+dist/
+
+# Flutter
+app/build/
+app/.dart_tool/
+app/.packages
+app/.flutter-plugins-dependencies
+
+# Server
+server/uploads/avatars/
+server/uploads/chat/
+server/logs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+
+# Temp
+*.log
