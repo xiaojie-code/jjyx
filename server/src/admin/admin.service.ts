@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import * as bcrypt from 'bcryptjs';
 import { User } from '../entities/user.entity';
 import { UserCurrency } from '../entities/user-currency.entity';
 import { CurrencyLog } from '../entities/currency-log.entity';
@@ -59,6 +60,7 @@ export class AdminService {
     private currencyService: CurrencyService,
     private meetingService: MeetingService,
     private meetingGateway: MeetingGateway,
+    private dataSource: DataSource,
   ) {}
 
   // ===== 用户管理 =====
@@ -133,6 +135,89 @@ export class AdminService {
   }
   async getUserBackpack(userId: number) {
     return this.backpackRepo.find({ where: { userId } });
+  }
+
+  async getPasswordResetRequests(query: any) {
+    await this.ensurePasswordResetTable();
+    const status = query.status === undefined || query.status === ''
+      ? null
+      : Number(query.status);
+    const params: any[] = [];
+    let where = '';
+    if (status !== null && !Number.isNaN(status)) {
+      where = 'WHERE r.status = ?';
+      params.push(status);
+    }
+    return this.dataSource.query(
+      `SELECT r.*, u.nickname
+       FROM password_reset_requests r
+       LEFT JOIN users u ON u.id = r.user_id
+       ${where}
+       ORDER BY r.id DESC
+       LIMIT 200`,
+      params,
+    );
+  }
+
+  async resetUserPasswordByRequest(requestId: number) {
+    await this.ensurePasswordResetTable();
+    const rows = await this.dataSource.query(
+      'SELECT * FROM password_reset_requests WHERE id = ? LIMIT 1',
+      [requestId],
+    );
+    const request = rows?.[0];
+    if (!request) throw new NotFoundException('重置申请不存在');
+    const user = await this.userRepo.findOne({ where: { id: Number(request.user_id) } });
+    if (!user) throw new NotFoundException('用户不存在');
+    const newPassword = this.generateRandomPassword();
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.userRepo.update(user.id, { passwordHash });
+    await this.dataSource.query(
+      `UPDATE password_reset_requests
+       SET status = 1, new_password = ?, handled_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [newPassword, requestId],
+    );
+    return { account: user.account, phone: request.phone, newPassword };
+  }
+
+  async rejectPasswordResetRequest(requestId: number) {
+    await this.ensurePasswordResetTable();
+    await this.dataSource.query(
+      `UPDATE password_reset_requests
+       SET status = 2, handled_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [requestId],
+    );
+    return { message: '已拒绝' };
+  }
+
+  private generateRandomPassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    let password = '';
+    for (let i = 0; i < 10; i++) {
+      password += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return password;
+  }
+
+  private async ensurePasswordResetTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_requests (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        account VARCHAR(50) NOT NULL,
+        phone VARCHAR(20) NOT NULL,
+        status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 1已重置 2已拒绝',
+        new_password VARCHAR(50) NULL,
+        operator_id INT NULL,
+        handled_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_password_reset_status (status),
+        INDEX idx_password_reset_user_id (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
   }
 
   // ===== 功能开关 =====

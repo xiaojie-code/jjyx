@@ -40,6 +40,14 @@ export class UserController {
     return this.userService.login(dto, ip);
   }
 
+  @Public()
+  @Post('password-reset/request')
+  async requestPasswordReset(
+    @Body() data: { account?: string; phone?: string },
+  ) {
+    return this.userService.requestPasswordReset(data.account, data.phone);
+  }
+
   @Get('me')
   async getProfile(@CurrentUser('id') userId: number) {
     return this.userService.getProfile(userId);
@@ -75,6 +83,18 @@ export class UserController {
     @Body() dto: UpdateNicknameDto,
   ) {
     return this.userService.updateNickname(userId, dto.nickname);
+  }
+
+  @Put('password')
+  async changePassword(
+    @CurrentUser('id') userId: number,
+    @Body() data: { currentPassword?: string; newPassword?: string },
+  ) {
+    return this.userService.changePassword(
+      userId,
+      data.currentPassword,
+      data.newPassword,
+    );
   }
 
   @Post('activate')

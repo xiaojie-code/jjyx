@@ -15,6 +15,7 @@ import { UserSetting } from '../entities/user-setting.entity';
 import { FriendRequest } from '../entities/friend-request.entity';
 import { User } from '../entities/user.entity';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
 export class ChatService {
@@ -33,6 +34,7 @@ export class ChatService {
     private readonly friendRequestRepo: Repository<FriendRequest>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly currencyService: CurrencyService,
   ) {}
 
   /** 发送消息 */
@@ -444,9 +446,21 @@ export class ChatService {
 
   /** AI 智能体聊天（支持联网搜索） */
   async aiChat(userId: number, message: string) {
-    const apiKey = process.env.DEEPSEEK_API_KEY;
-    const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.siliconflow.cn/v1';
-    const model = process.env.DEEPSEEK_MODEL || 'deepseek-ai/DeepSeek-V3';
+    const apiKey = (
+      await this.getAiConfig('ai_api_key', process.env.DEEPSEEK_API_KEY || '')
+    ).trim();
+    const baseUrl = (
+      await this.getAiConfig(
+        'ai_base_url',
+        process.env.DEEPSEEK_BASE_URL || 'https://api.siliconflow.cn/v1',
+      )
+    ).trim();
+    const model = (
+      await this.getAiConfig(
+        'ai_model',
+        process.env.DEEPSEEK_MODEL || 'deepseek-ai/DeepSeek-V3',
+      )
+    ).trim();
     // 每个用户独立的AI会话ID（用负数避免和正常会话冲突）
     const aiConvId = -userId;
 
@@ -548,6 +562,10 @@ export class ChatService {
       }));
       return { reply, timestamp: new Date().toISOString() };
     }
+  }
+
+  private async getAiConfig(key: string, defaultValue: string) {
+    return this.currencyService.getConfigValue(key, defaultValue);
   }
 
   /** 判断是否需要联网搜索 */

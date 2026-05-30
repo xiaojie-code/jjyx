@@ -86,6 +86,10 @@ export class UserService {
   /** 注册 */
   async register(dto: RegisterDto, ip: string) {
     await this.checkSwitch('register');
+    const requestInviteCode = dto.inviteCode?.trim().toUpperCase();
+    if (!requestInviteCode) {
+      throw new BadRequestException('邀请码不能为空');
+    }
 
     const exists = await this.userRepo.findOne({ where: { account: dto.account } });
     if (exists) {
@@ -94,13 +98,13 @@ export class UserService {
 
     // 验证邀请码
     let inviterId: number | null = null;
-    if (dto.inviteCode) {
-      const inviter = await this.userRepo.findOne({ where: { inviteCode: dto.inviteCode } });
-      if (!inviter) {
-        throw new BadRequestException('邀请码不存在');
-      }
-      inviterId = inviter.id;
+    const inviter = await this.userRepo.findOne({
+      where: { inviteCode: requestInviteCode },
+    });
+    if (!inviter) {
+      throw new BadRequestException('邀请码不存在');
     }
+    inviterId = inviter.id;
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const now = new Date();
@@ -234,6 +238,69 @@ export class UserService {
     return { nickname };
   }
 
+  async changePassword(
+    userId: number,
+    currentPassword?: string,
+    newPassword?: string,
+  ) {
+    if (!currentPassword || !newPassword) {
+      throw new BadRequestException('请填写原密码和新密码');
+    }
+    if (newPassword.length < 6 || newPassword.length > 50) {
+      throw new BadRequestException('新密码长度需要6-50位');
+    }
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('用户不存在');
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      throw new BadRequestException('原密码不正确');
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.userRepo.update(userId, { passwordHash });
+    return { message: '密码修改成功' };
+  }
+
+  async requestPasswordReset(account?: string, phone?: string) {
+    const trimmedAccount = account?.trim();
+    const trimmedPhone = phone?.trim();
+    if (!trimmedAccount || !trimmedPhone) {
+      throw new BadRequestException('请填写账号和手机号');
+    }
+    const user = await this.userRepo.findOne({
+      where: { account: trimmedAccount },
+    });
+    if (!user) {
+      throw new BadRequestException('账号不存在');
+    }
+    await this.ensurePasswordResetTable();
+    await this.dataSource.query(
+      `INSERT INTO password_reset_requests
+        (user_id, account, phone, status, created_at, updated_at)
+       VALUES (?, ?, ?, 0, NOW(), NOW())`,
+      [user.id, user.account, trimmedPhone],
+    );
+    return { message: '重置密码申请已提交，请等待管理员处理' };
+  }
+
+  private async ensurePasswordResetTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_requests (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        account VARCHAR(50) NOT NULL,
+        phone VARCHAR(20) NOT NULL,
+        status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 1已重置 2已拒绝',
+        new_password VARCHAR(50) NULL,
+        operator_id INT NULL,
+        handled_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_password_reset_status (status),
+        INDEX idx_password_reset_user_id (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+  }
+
   /** CDK激活 */
   async activate(userId: number, code: string) {
     const user = await this.userRepo.findOne({ where: { id: userId } });
@@ -296,6 +363,9 @@ export class UserService {
     } else {
       await this.matrixService.createFirstMatrix(userId);
     }
+
+    // 指定账号（333333/555555）深层推广树激活奖励。
+    await this.matrixService.grantSpecialTreeActivationReward(userId);
 
     // 激活后自动加入系统总群
     await this.joinSystemGroup(userId);

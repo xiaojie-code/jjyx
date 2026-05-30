@@ -15,6 +15,9 @@ export class AdminController {
   @Get('users/:id/logs') getUserLogs(@Param('id', ParseIntPipe) id: number, @Query() query: any, @Query() pagination: PaginationDto) { return this.adminService.getUserLogs(id, query, pagination); }
   @Get('users/:id/activities') getUserActivities(@Param('id', ParseIntPipe) id: number, @Query() query: any) { return this.adminService.getUserActivities(id, query); }
   @Get('users/:id/backpack') getUserBackpack(@Param('id', ParseIntPipe) id: number) { return this.adminService.getUserBackpack(id); }
+  @Get('password-reset/requests') getPasswordResetRequests(@Query() query: any) { return this.adminService.getPasswordResetRequests(query); }
+  @Post('password-reset/:id/reset') resetPasswordByRequest(@Param('id', ParseIntPipe) id: number) { return this.adminService.resetUserPasswordByRequest(id); }
+  @Post('password-reset/:id/reject') rejectPasswordResetRequest(@Param('id', ParseIntPipe) id: number) { return this.adminService.rejectPasswordResetRequest(id); }
 
   // 功能开关
   @Get('switches') getSwitches() { return this.adminService.getSwitches(); }

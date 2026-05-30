@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/network/api_endpoints.dart';
 import '../../../core/router/app_router.dart';
 import '../providers/auth_provider.dart';
 
@@ -22,15 +24,96 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       _showToast('请输入账号和密码');
       return;
     }
-    final success = await ref.read(authProvider.notifier).login(account, password);
+    final success =
+        await ref.read(authProvider.notifier).login(account, password);
     if (success && mounted) {
       context.go(RoutePaths.chatList);
     } else {
       final error = ref.read(authProvider).error;
-      if (mounted && error != null) {
-        _showToast(error);
-      }
+      if (mounted && error != null) _showToast(error);
     }
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    final accountCtrl = TextEditingController(text: _accountCtrl.text.trim());
+    final phoneCtrl = TextEditingController();
+    var submitting = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('忘记密码'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: accountCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '账号',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: '手机号',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed:
+                    submitting ? null : () => Navigator.pop(dialogContext),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: submitting
+                    ? null
+                    : () async {
+                        final account = accountCtrl.text.trim();
+                        final phone = phoneCtrl.text.trim();
+                        if (account.isEmpty || phone.isEmpty) {
+                          _showToast('请填写账号和手机号');
+                          return;
+                        }
+                        setDialogState(() => submitting = true);
+                        try {
+                          await ref.read(apiClientProvider).post(
+                            ApiEndpoints.passwordResetRequest,
+                            data: {'account': account, 'phone': phone},
+                          );
+                          if (!mounted) return;
+                          Navigator.pop(dialogContext);
+                          _showToast('申请已提交，请等待管理员处理');
+                        } catch (e) {
+                          if (mounted) _showToast('$e');
+                        } finally {
+                          if (context.mounted) {
+                            setDialogState(() => submitting = false);
+                          }
+                        }
+                      },
+                child: submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('确认发送'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    accountCtrl.dispose();
+    phoneCtrl.dispose();
   }
 
   void _showToast(String message) {
@@ -85,7 +168,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   prefixIcon: Icon(Icons.lock),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _showForgotPasswordDialog,
+                  child: const Text('忘记密码？'),
+                ),
+              ),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 height: 48,
@@ -113,7 +204,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 }
 
-/// 顶部弹幕 Toast 组件
 class _ToastOverlay extends StatefulWidget {
   final String message;
   const _ToastOverlay({required this.message});

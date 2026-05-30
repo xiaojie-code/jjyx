@@ -11,14 +11,19 @@ class AuthState {
   final bool isLoading;
   final String? error;
 
-  const AuthState(
-      {this.user, this.profile, this.isLoading = false, this.error});
+  const AuthState({
+    this.user,
+    this.profile,
+    this.isLoading = false,
+    this.error,
+  });
 
-  AuthState copyWith(
-      {UserModel? user,
-      ProfileModel? profile,
-      bool? isLoading,
-      String? error}) {
+  AuthState copyWith({
+    UserModel? user,
+    ProfileModel? profile,
+    bool? isLoading,
+    String? error,
+  }) {
     return AuthState(
       user: user ?? this.user,
       profile: profile ?? this.profile,
@@ -35,7 +40,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   AuthNotifier(this._api, this._socketService) : super(const AuthState());
 
   Future<bool> register(
-      String account, String password, String? inviteCode) async {
+    String account,
+    String password,
+    String inviteCode,
+  ) async {
     state = state.copyWith(isLoading: true, error: null);
     try {
       final result = await _api.post<Map<String, dynamic>>(
@@ -43,8 +51,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         data: {
           'account': account,
           'password': password,
-          if (inviteCode != null && inviteCode.isNotEmpty)
-            'inviteCode': inviteCode,
+          'inviteCode': inviteCode,
         },
       );
       final token = result?['token'] as String?;
@@ -58,12 +65,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
       if (token != null) _socketService.connect();
       return true;
     } catch (e) {
-      String message = '注册失败，请稍后重试';
       final errStr = e.toString();
+      var message = '注册失败，请稍后重试';
       if (errStr.contains('已存在')) {
         message = '账号已存在，请换一个';
       } else if (errStr.contains('邀请码不存在')) {
         message = '邀请码不存在，请核对后重试';
+      } else if (errStr.contains('邀请码不能为空')) {
+        message = '请输入邀请码';
       } else if (errStr.contains('邀请码格式不正确')) {
         message = '邀请码格式不正确，应为8位大写字母和数字组合';
       } else if (errStr.contains('Bad Request') || errStr.contains('400')) {
@@ -98,15 +107,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
       if (token != null) _socketService.connect();
       return true;
     } catch (e) {
-      String message = '登录失败，请稍后重试';
       final errStr = e.toString();
+      var message = '登录失败，请稍后重试';
       if (errStr.contains('账号不存在')) {
         message = '账号不存在，请核对后重试';
       } else if (errStr.contains('密码错误')) {
         message = '密码错误，请重新输入';
       } else if (errStr.contains('Unauthorized')) {
         message = '账号或密码错误';
-      } else if (errStr.contains('已被禁用')) {
+      } else if (errStr.contains('被禁用')) {
         message = '账号已被禁用，请联系管理员';
       } else if (errStr.contains('维护中')) {
         message = '系统维护中，请稍后再试';
@@ -139,5 +148,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   return AuthNotifier(
-      ref.read(apiClientProvider), ref.read(socketServiceProvider));
+    ref.read(apiClientProvider),
+    ref.read(socketServiceProvider),
+  );
 });

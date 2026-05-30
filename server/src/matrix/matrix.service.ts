@@ -11,6 +11,9 @@ import { CurrencyService } from '../currency/currency.service';
 const DEFAULT_START_FUND = 2000;
 /** 每个坑位的收益比例*/
 const SLOT_INCOME_RATE = 0.35;
+/** 指定账号深层推广树激活奖励 */
+const SPECIAL_TREE_REWARD_ACCOUNTS = ['333333', '555555'];
+const SPECIAL_TREE_REWARD_AMOUNT = 200;
 
 @Injectable()
 export class MatrixService {
@@ -143,6 +146,86 @@ export class MatrixService {
       // 沿跟随链向上补位
       await this.fillUpwardMatrices(newUserId, inviterId, true, manager);
     });
+  }
+
+  /**
+   * 指定账号深层推广树奖励：
+   * 新用户激活后，沿 invited_by 向上查找，命中 333333 或 555555 时，
+   * 给命中的账号记一笔 200 可领取推广收益。
+   */
+  async grantSpecialTreeActivationReward(newUserId: number): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const activatedUser = await manager.findOne(User, {
+        where: { id: newUserId },
+        select: ['id', 'account', 'invitedBy'],
+      });
+      if (!activatedUser?.invitedBy) return;
+
+      const rewardOwner = await this.findSpecialTreeRewardOwner(
+        activatedUser.invitedBy,
+        manager,
+      );
+      if (!rewardOwner) return;
+
+      let matrix = await manager.findOne(Matrix, {
+        where: { ownerId: rewardOwner.id, status: 1 },
+        order: { round: 'DESC' },
+      });
+      if (!matrix) {
+        matrix = manager.create(Matrix, {
+          ownerId: rewardOwner.id,
+          round: 1,
+          status: 1,
+          filledCount: 0,
+          startFund: 0,
+        });
+        matrix = await manager.save(Matrix, matrix);
+      }
+
+      const income = manager.create(MatrixIncome, {
+        ownerId: rewardOwner.id,
+        matrixId: matrix.id,
+        slotNumber: 0,
+        fromUserId: activatedUser.id,
+        amount: SPECIAL_TREE_REWARD_AMOUNT,
+        incomeType: 'claimable',
+        description: `指定账号深层推广树奖励：下级用户${activatedUser.account}激活`,
+      });
+      await manager.save(MatrixIncome, income);
+
+      matrix.claimableIncome =
+        Number(matrix.claimableIncome) + SPECIAL_TREE_REWARD_AMOUNT;
+      await manager.save(Matrix, matrix);
+    });
+  }
+
+  private async findSpecialTreeRewardOwner(
+    startUserId: number,
+    manager: any,
+  ): Promise<Pick<User, 'id' | 'account' | 'invitedBy'> | null> {
+    const visited = new Set<number>();
+    let currentUserId: number | null = Number(startUserId);
+
+    for (let depth = 0; currentUserId && depth < 1000; depth += 1) {
+      if (visited.has(currentUserId)) return null;
+      visited.add(currentUserId);
+
+      const currentUser = await manager.findOne(User, {
+        where: { id: currentUserId },
+        select: ['id', 'account', 'invitedBy'],
+      });
+      if (!currentUser) return null;
+
+      if (SPECIAL_TREE_REWARD_ACCOUNTS.includes(currentUser.account)) {
+        return currentUser;
+      }
+
+      currentUserId = currentUser.invitedBy
+        ? Number(currentUser.invitedBy)
+        : null;
+    }
+
+    return null;
   }
 
   /**
@@ -966,13 +1049,17 @@ export class MatrixService {
             };
           }),
         );
+        const specialIncomeDetails = await this.getSpecialIncomeDetails(
+          matrix.id,
+          userId,
+        );
 
         return {
           round: matrix.round,
           completedAt: matrix.completedAt,
           claimableIncome: matrix.claimableIncome,
           nextRoundFund: matrix.nextRoundFund,
-          slots: slotDetails,
+          slots: [...specialIncomeDetails, ...slotDetails],
         };
       }),
     );
@@ -1070,12 +1157,17 @@ export class MatrixService {
             };
           }),
         );
+        const specialIncomeDetails = await this.getSpecialIncomeDetails(
+          matrix.id,
+          userId,
+        );
+        const allIncomeDetails = [...specialIncomeDetails, ...slotDetails];
 
         // 计算本轮总可领取收益和下轮资金
-        const roundClaimable = slotDetails
+        const roundClaimable = allIncomeDetails
           .filter(s => s.incomeType === 'claimable')
           .reduce((sum, s) => sum + Number(s.incomeAmount), 0);
-        const roundNextFund = slotDetails
+        const roundNextFund = allIncomeDetails
           .filter(s => s.incomeType === 'next_fund')
           .reduce((sum, s) => sum + Number(s.incomeAmount), 0);
 
@@ -1084,7 +1176,7 @@ export class MatrixService {
           status: matrix.status === 1 ? '进行中' : '已完成',
           claimableIncome: roundClaimable,
           nextRoundFund: roundNextFund,
-          slots: slotDetails,
+          slots: allIncomeDetails,
         };
       }),
     );
@@ -1098,5 +1190,39 @@ export class MatrixService {
       totalNextFund: totalNextFund,
       rounds: result,
     };
+  }
+
+  private async getSpecialIncomeDetails(matrixId: number, ownerId: number) {
+    const specialIncomes = await this.incomeRepo.find({
+      where: { matrixId, ownerId, slotNumber: 0 },
+      order: { createdAt: 'ASC' },
+    });
+
+    return Promise.all(
+      specialIncomes.map(async (income) => {
+        const user = await this.userRepo.findOne({
+          where: { id: income.fromUserId },
+          select: ['id', 'account', 'nickname', 'avatar', 'invitedBy'],
+        });
+
+        return {
+          slotNumber: 0,
+          isNewUser: true,
+          isSpecialIncome: true,
+          description: income.description,
+          incomeAmount: income.amount,
+          incomeType: income.incomeType,
+          user: user
+            ? {
+                id: user.id,
+                account: user.account,
+                nickname: user.nickname,
+                avatar: user.avatar,
+                isDirect: Number(user.invitedBy) === Number(ownerId),
+              }
+            : null,
+        };
+      }),
+    );
   }
 }

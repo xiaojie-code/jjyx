@@ -344,6 +344,9 @@ export class CurrencyService {
       { configKey: 'meeting_turn_credential', configName: '会议TURN密码', configValue: '', description: 'TURN 服务密码或凭据' },
       { configKey: 'meeting_recording_enabled', configName: '会议录制开关', configValue: 'false', description: '是否启用服务端录制能力' },
       { configKey: 'meeting_recording_auto', configName: '会议自动录制', configValue: 'false', description: '启用录制后是否自动开始录制' },
+      { configKey: 'ai_api_key', configName: '云AI API Key', configValue: '', description: '云AI服务密钥，例如 SiliconFlow / DeepSeek 的 API Key' },
+      { configKey: 'ai_base_url', configName: '云AI接口地址', configValue: 'https://api.siliconflow.cn/v1', description: '兼容 OpenAI Chat Completions 的接口地址' },
+      { configKey: 'ai_model', configName: '云AI模型', configValue: 'deepseek-ai/DeepSeek-V3', description: '云AI使用的模型名称' },
     ];
     for (const d of defaults) {
       const exists = await this.configRepo.findOne({ where: { configKey: d.configKey } });

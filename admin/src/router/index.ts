@@ -40,6 +40,12 @@ const router = createRouter({
           meta: { title: '用户背包' },
         },
         {
+          path: 'users/password-reset',
+          name: 'PasswordResetRequests',
+          component: () => import('@/views/users/PasswordResetRequests.vue'),
+          meta: { title: '密码重置申请' },
+        },
+        {
           path: 'switches',
           name: 'Switches',
           component: () => import('@/views/switches/SwitchList.vue'),

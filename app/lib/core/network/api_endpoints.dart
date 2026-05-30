@@ -5,9 +5,11 @@ class ApiEndpoints {
   // ==================== 用户服务 ====================
   static const String register = '/api/auth/register';
   static const String login = '/api/auth/login';
+  static const String passwordResetRequest = '/api/auth/password-reset/request';
   static const String me = '/api/auth/me';
   static const String updateAvatar = '/api/auth/profile/avatar';
   static const String updateNickname = '/api/auth/profile/nickname';
+  static const String changePassword = '/api/auth/password';
   static const String activate = '/api/auth/activate';
 
   // ==================== 货币服务 ====================

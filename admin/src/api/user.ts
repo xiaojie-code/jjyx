@@ -44,3 +44,15 @@ export function getUserActivities(id: number, params: { type?: string; page?: nu
 export function getUserBackpack(id: number) {
   return request.get(`/users/${id}/backpack`)
 }
+
+export function getPasswordResetRequests(params?: { status?: number }) {
+  return request.get('/password-reset/requests', { params })
+}
+
+export function resetPasswordByRequest(id: number) {
+  return request.post(`/password-reset/${id}/reset`)
+}
+
+export function rejectPasswordResetRequest(id: number) {
+  return request.post(`/password-reset/${id}/reject`)
+}

@@ -22,6 +22,7 @@
           <el-menu-item index="/users/logs">用户流水</el-menu-item>
           <el-menu-item index="/users/activities">用户动态</el-menu-item>
           <el-menu-item index="/users/backpack">用户背包</el-menu-item>
+          <el-menu-item index="/users/password-reset">密码重置申请</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/switches">
           <el-icon><Operation /></el-icon>
@@ -104,6 +105,7 @@ const menuItems = [
   { path: '/users/logs', title: '用户流水' },
   { path: '/users/activities', title: '用户动态' },
   { path: '/users/backpack', title: '用户背包' },
+  { path: '/users/password-reset', title: '密码重置申请' },
   { path: '/switches', title: '功能管理' },
   { path: '/lottery', title: '转盘管理' },
   { path: '/cdk', title: 'CDK管理' },

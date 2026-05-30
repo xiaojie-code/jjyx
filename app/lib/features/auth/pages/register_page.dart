@@ -18,7 +18,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
   final _confirmCtrl = TextEditingController();
   final _inviteCtrl = TextEditingController();
 
-  /// 校验邀请码格式：8位大写字母和数字组合
   bool _isValidInviteCode(String code) {
     return RegExp(r'^[A-Z0-9]{8}$').hasMatch(code);
   }
@@ -27,7 +26,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
     final account = _accountCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
     final confirm = _confirmCtrl.text.trim();
-    final invite = _inviteCtrl.text.trim();
+    final invite = _inviteCtrl.text.trim().toUpperCase();
 
     if (account.isEmpty || password.isEmpty) {
       Toast.error(context, '请输入账号和密码');
@@ -37,15 +36,18 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
       Toast.error(context, '两次密码不一致');
       return;
     }
-    // 邀请码非空时校验格式
-    if (invite.isNotEmpty && !_isValidInviteCode(invite.toUpperCase())) {
+    if (invite.isEmpty) {
+      Toast.error(context, '请输入邀请码');
+      return;
+    }
+    if (!_isValidInviteCode(invite)) {
       Toast.error(context, '邀请码格式不正确，应为8位大写字母和数字组合');
       return;
     }
 
-    final success = await ref.read(authProvider.notifier).register(
-      account, password, invite.isNotEmpty ? invite.toUpperCase() : null,
-    );
+    final success = await ref
+        .read(authProvider.notifier)
+        .register(account, password, invite);
     if (success && mounted) {
       context.go(RoutePaths.chatList);
     } else {
@@ -121,8 +123,8 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 controller: _inviteCtrl,
                 textCapitalization: TextCapitalization.characters,
                 decoration: const InputDecoration(
-                  labelText: '邀请码（选填）',
-                  hintText: '8位大写字母和数字',
+                  labelText: '邀请码',
+                  hintText: '必填，8位大写字母和数字',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.card_giftcard),
                 ),
@@ -135,7 +137,8 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                   onPressed: authState.isLoading ? null : _register,
                   child: authState.isLoading
                       ? const SizedBox(
-                          width: 20, height: 20,
+                          width: 20,
+                          height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text('注册', style: TextStyle(fontSize: 16)),
