@@ -15,7 +15,6 @@ import { Mint } from 'mint-filter';
 import { User } from '../entities/user.entity';
 import { UserCurrency } from '../entities/user-currency.entity';
 import { Cdk } from '../entities/cdk.entity';
-import { InviteReward } from '../entities/invite-reward.entity';
 import { SystemSwitch } from '../entities/system-switch.entity';
 import { Conversation } from '../entities/conversation.entity';
 import { ConversationMember } from '../entities/conversation-member.entity';
@@ -34,8 +33,6 @@ export class UserService {
     private readonly cdkRepo: Repository<Cdk>,
     @InjectRepository(SystemSwitch)
     private readonly switchRepo: Repository<SystemSwitch>,
-    @InjectRepository(InviteReward)
-    private readonly inviteRewardRepo: Repository<InviteReward>,
     @InjectRepository(Conversation)
     private readonly convRepo: Repository<Conversation>,
     @InjectRepository(ConversationMember)
@@ -129,32 +126,6 @@ export class UserService {
 
     // 创建货币账户（注册时不送积分，激活后才送）
     await this.currencyRepo.save(this.currencyRepo.create({ userId: savedUser.id }));
-
-    // 邀请奖励：直推100，间推30（发放到普通积分，记录流水）
-    if (inviterId) {
-      // 直推奖励 - 加积分
-      await this.dataSource.query(
-        `UPDATE user_currencies SET points = points + 100 WHERE user_id = ?`,
-        [inviterId],
-      );
-      await this.dataSource.query(
-        `INSERT INTO invite_rewards (inviter_id, invitee_id, reward_type, reward_amount, trigger_type, created_at) VALUES (?, ?, 'points', 100, 'direct_invite', NOW())`,
-        [inviterId, savedUser.id],
-      );
-
-      // 间推奖励：查邀请者的邀请者
-      const directInviter = await this.userRepo.findOne({ where: { id: inviterId } });
-      if (directInviter && directInviter.invitedBy) {
-        await this.dataSource.query(
-          `UPDATE user_currencies SET points = points + 30 WHERE user_id = ?`,
-          [directInviter.invitedBy],
-        );
-        await this.dataSource.query(
-          `INSERT INTO invite_rewards (inviter_id, invitee_id, reward_type, reward_amount, trigger_type, created_at) VALUES (?, ?, 'points', 30, 'indirect_invite', NOW())`,
-          [directInviter.invitedBy, savedUser.id],
-        );
-      }
-    }
 
     // 签发 token
     const token = this.jwtService.sign({ sub: savedUser.id, account: savedUser.account });
@@ -301,7 +272,7 @@ export class UserService {
             const amount = Number(item.amount) || 0;
             switch (item.item) {
               case 'points':
-                currency.points = Number(currency.points) + amount;
+                // 激活固定赠送 10000 普通积分，不再叠加 CDK 配置里的普通积分。
                 break;
               case 'gold':
                 currency.gold = Number(currency.gold) + amount;
@@ -347,23 +318,17 @@ export class UserService {
         .getMany();
     }
 
-    // 奖励记录
-    const rewards = await this.inviteRewardRepo.find({
-      where: { inviterId: userId },
-      order: { createdAt: 'DESC' },
-    });
-
     return {
       directCount: directInvitees.length,
       indirectCount: indirectInvitees.length,
-      totalReward: rewards.reduce((sum, r) => sum + Number(r.rewardAmount), 0),
+      totalReward: 0,
       directInvitees: directInvitees.map(u => ({
         id: u.id,
         nickname: u.nickname,
         account: u.account,
         registerTime: u.registerTime,
         type: 'direct',
-        reward: 100,
+        reward: 0,
       })),
       indirectInvitees: indirectInvitees.map(u => ({
         id: u.id,
@@ -372,9 +337,9 @@ export class UserService {
         registerTime: u.registerTime,
         invitedBy: u.invitedBy,
         type: 'indirect',
-        reward: 30,
+        reward: 0,
       })),
-      rewards,
+      rewards: [],
     };
   }
 }

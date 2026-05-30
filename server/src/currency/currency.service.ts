@@ -10,8 +10,6 @@ import { CurrencyLog } from '../entities/currency-log.entity';
 import { PointReturn } from '../entities/point-return.entity';
 import { PointSynthesis } from '../entities/point-synthesis.entity';
 import { Withdrawal } from '../entities/withdrawal.entity';
-import { InviteReward } from '../entities/invite-reward.entity';
-import { User } from '../entities/user.entity';
 import { SystemConfig } from '../entities/system-config.entity';
 import { DailyDeduction } from '../entities/daily-deduction.entity';
 import { generateSn } from '../common/utils/sn-generator';
@@ -32,10 +30,6 @@ export class CurrencyService {
     private readonly synthesisRepo: Repository<PointSynthesis>,
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepo: Repository<Withdrawal>,
-    @InjectRepository(InviteReward)
-    private readonly inviteRewardRepo: Repository<InviteReward>,
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
     @InjectRepository(SystemConfig)
     private readonly configRepo: Repository<SystemConfig>,
     @InjectRepository(DailyDeduction)
@@ -315,28 +309,6 @@ export class CurrencyService {
     }
 
     return { message: approve ? '已通过' : '已驳回' };
-  }
-
-  /** 邀请者积分奖励（被邀请者消耗积分时触发） */
-  async triggerInviteReward(inviteeId: number, consumeAmount: number) {
-    const invitee = await this.userRepo.findOne({ where: { id: inviteeId } });
-    if (!invitee || !invitee.invitedBy) return;
-
-    const rewardRatio = 0.05; // 5%比例奖励
-    const reward = consumeAmount * rewardRatio;
-    if (reward <= 0) return;
-
-    await this.dataSource.transaction(async (mgr) => {
-      await this.changeCurrency(invitee.invitedBy, 'points', reward, 'invite_reward', '邀请奖励', mgr);
-      const record = mgr.create(InviteReward, {
-        inviterId: invitee.invitedBy,
-        inviteeId,
-        rewardType: 'points',
-        rewardAmount: reward,
-        triggerType: 'invitee_consume',
-      });
-      await mgr.save(InviteReward, record);
-    });
   }
 
   // ==================== 系统配置 ====================

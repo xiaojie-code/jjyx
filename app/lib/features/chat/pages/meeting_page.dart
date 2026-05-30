@@ -34,6 +34,8 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   final Map<int, _MeetingMediaState> _mediaStates = {};
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final Map<int, RTCVideoRenderer> _remoteRenderers = {};
+  final Map<int, MediaStream> _remoteStreams = {};
+  final List<MediaStream> _localCaptureStreams = [];
   final Map<int, RTCPeerConnection> _peerConnections = {};
   final Map<int, List<RTCIceCandidate>> _pendingRemoteCandidates = {};
   final Map<int, Set<String>> _localTrackIdsByPeer = {};
@@ -43,8 +45,8 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   io.Socket? _meetingSocket;
   String? _meetingAuthToken;
   bool _loading = true;
-  bool _micOn = true;
-  bool _cameraOn = true;
+  bool _micOn = false;
+  bool _cameraOn = false;
   bool _allMuted = false;
   bool _closingPage = false;
   bool _mediaInitializing = false;
@@ -63,7 +65,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   bool _recordingAvailable = false;
   String _recordingUrl = '';
   String _connectionText = '连接中';
-  int? _focusedUserId;
+  int? _activeCameraUserId;
 
   int get _meetingId => int.tryParse(_meeting['id']?.toString() ?? '') ?? 0;
 
@@ -105,13 +107,12 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
 
   Future<void> _joinAndLoad() async {
     try {
-      // 先准备本地媒体，再加入信令房间，避免无视频轨道的 offer/answer。
       await ref
           .read(apiClientProvider)
           .post(ApiEndpoints.meetingJoin(_meetingId));
-        await _loadMediaConfig();
+      await _loadMediaConfig();
       await _loadParticipants();
-      await _initializeLocalMedia();
+      await _prepareRtc();
       if (!mounted) return;
       _connectMeetingSocket();
       await _loadParticipants();
@@ -222,6 +223,9 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     });
     socket.on('meeting:signal', _handleSignal);
     socket.on('meeting:media-status', _handleMediaStatus);
+    socket.on('meeting:media-status-snapshot', _handleMediaStatusSnapshot);
+    socket.on('meeting:camera-share-state', _handleCameraShareState);
+    socket.on('meeting:camera-share-rejected', _handleCameraShareRejected);
     socket.on('meeting:media-control', _handleMediaControl);
     socket.on('meeting:mute-all', _handleMuteAll);
     socket.on('meeting:kicked', _handleKicked);
@@ -329,50 +333,85 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     return servers;
   }
 
-  Future<void> _initializeLocalMedia() async {
-    if (_mediaInitializing || _localStream != null) return;
+  Future<void> _prepareRtc() async {
+    if (!_localRendererReady) {
+      await _localRenderer.initialize();
+      _localRendererReady = true;
+    }
+    try {
+      await Helper.setSpeakerphoneOn(true);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _rtcReady = true);
+  }
+
+  Future<bool> _ensureLocalMedia({
+    required bool audio,
+    required bool video,
+  }) async {
+    final currentStream = _localStream;
+    final needsAudio =
+        audio && (currentStream?.getAudioTracks().isEmpty ?? true);
+    final needsVideo =
+        video && (currentStream?.getVideoTracks().isEmpty ?? true);
+    if (!needsAudio && !needsVideo) return true;
+    if (_mediaInitializing) return false;
     _mediaInitializing = true;
     try {
-      final permissionResult = await [
-        permissions.Permission.camera,
-        permissions.Permission.microphone,
-      ].request();
+      final requiredPermissions = <permissions.Permission>[
+        if (needsAudio) permissions.Permission.microphone,
+        if (needsVideo) permissions.Permission.camera,
+      ];
+      final permissionResult = await requiredPermissions.request();
       final denied = permissionResult.values.any((status) => !status.isGranted);
-      if (denied) throw Exception('camera_or_microphone_denied');
+      if (denied) throw Exception('media_permission_denied');
       if (!_localRendererReady) {
         await _localRenderer.initialize();
         _localRendererReady = true;
       }
       final stream = await navigator.mediaDevices.getUserMedia({
-        'audio': true,
-        'video': {
-          'facingMode': _frontCamera ? 'user' : 'environment',
-          'width': {'ideal': 640},
-          'height': {'ideal': 480},
-        },
+        'audio': needsAudio,
+        'video': needsVideo ? _videoConstraints() : false,
       });
-      _localStream = stream;
-      _localRenderer.srcObject = stream;
+      _localCaptureStreams.add(stream);
+      if (_localStream == null) {
+        _localStream = stream;
+      } else {
+        for (final track in stream.getTracks()) {
+          await _localStream!.addTrack(track);
+        }
+      }
+      _localRenderer.srcObject = _localStream;
+      try {
+        await Helper.setSpeakerphoneOn(true);
+      } catch (_) {}
       _applyLocalMediaState();
       _meetingLog(
-          'local media ready audio=${stream.getAudioTracks().length} video=${stream.getVideoTracks().length}');
-      if (!mounted) return;
+          'local media ready audio=${_localStream?.getAudioTracks().length ?? 0} video=${_localStream?.getVideoTracks().length ?? 0}');
+      if (!mounted) return true;
       setState(() {
         _rtcReady = true;
       });
       await _syncPeerConnections();
+      return true;
     } catch (e) {
       _meetingLog('local media failed error=$e');
       if (mounted) {
-        setState(() {
-          _rtcReady = false;
-          _cameraOn = false;
-        });
-        Toast.warning(context, '请允许摄像头和麦克风权限');
+        setState(() => _rtcReady = true);
+        Toast.warning(context, video ? '请允许摄像头权限' : '请允许麦克风权限');
       }
+      return false;
     } finally {
       _mediaInitializing = false;
     }
+  }
+
+  Map<String, dynamic> _videoConstraints() {
+    return {
+      'facingMode': _frontCamera ? 'user' : 'environment',
+      'width': {'ideal': 640},
+      'height': {'ideal': 480},
+    };
   }
 
   void _applyLocalMediaState() {
@@ -402,7 +441,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     for (final peerId in _peerConnections.keys.toList()) {
       if (!onlineIds.contains(peerId)) await _removePeer(peerId);
     }
-    // 如果媒体还没就绪，先不建立连接（等 _initializeLocalMedia 完成后会再次调用）
+    // 如果 RTC 还没就绪，先不建立连接。
     if (!_rtcReady) return;
     // 为所有在线用户创建 PeerConnection，ID 小的一方主动发 offer
     for (final peerId in onlineIds) {
@@ -479,12 +518,24 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     RTCVideoRenderer remoteRenderer,
     RTCTrackEvent event,
   ) async {
-    final stream = event.streams.isNotEmpty
-        ? event.streams.first
-        : await createLocalMediaStream(
-            'remote-$peerId-${event.track.id ?? DateTime.now().microsecondsSinceEpoch}',
-          );
-    if (event.streams.isEmpty) await stream.addTrack(event.track);
+    final stream = _remoteStreams[peerId] ??
+        (event.streams.isNotEmpty
+            ? event.streams.first
+            : await createLocalMediaStream('remote-$peerId'));
+    _remoteStreams[peerId] = stream;
+    final trackId =
+        event.track.id ?? '${event.track.kind}-${identityHashCode(event.track)}';
+    final exists = stream.getTracks().any((track) {
+      final id = track.id ?? '${track.kind}-${identityHashCode(track)}';
+      return id == trackId;
+    });
+    if (!exists) await stream.addTrack(event.track);
+    if (event.track.kind == 'audio') {
+      event.track.enabled = true;
+      try {
+        await Helper.setSpeakerphoneOn(true);
+      } catch (_) {}
+    }
     _meetingLog(
         'remote track received peer=$peerId kind=${event.track.kind} streams=${event.streams.length}');
     remoteRenderer.srcObject = stream;
@@ -664,6 +715,8 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     final renderer = _remoteRenderers.remove(peerId);
     renderer?.srcObject = null;
     await renderer?.dispose();
+    final stream = _remoteStreams.remove(peerId);
+    stream?.dispose();
     if (mounted) setState(() {});
   }
 
@@ -688,6 +741,10 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
       renderer.dispose();
     }
     _remoteRenderers.clear();
+    for (final stream in _remoteStreams.values) {
+      stream.dispose();
+    }
+    _remoteStreams.clear();
     final stream = _localStream;
     if (stream != null) {
       for (final track in stream.getTracks()) {
@@ -695,6 +752,12 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
       }
       stream.dispose();
     }
+    for (final captureStream in _localCaptureStreams) {
+      if (!identical(captureStream, stream)) {
+        captureStream.dispose();
+      }
+    }
+    _localCaptureStreams.clear();
     _localRenderer.srcObject = null;
     if (_localRendererReady) _localRenderer.dispose();
   }
@@ -708,12 +771,68 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     final map = Map<String, dynamic>.from(data);
     final userId = int.tryParse(map['userId']?.toString() ?? '') ?? 0;
     if (userId == 0) return;
+    final cameraOn = map['cameraOn'] == true;
     setState(() {
       _mediaStates[userId] = _MeetingMediaState(
         micOn: map['micOn'] == true,
-        cameraOn: map['cameraOn'] == true,
+        cameraOn: cameraOn,
       );
+      if (cameraOn) {
+        _activeCameraUserId = userId;
+      } else if (_activeCameraUserId == userId) {
+        _activeCameraUserId = null;
+      }
     });
+  }
+
+  void _handleMediaStatusSnapshot(dynamic data) {
+    if (!mounted || data is! Map) return;
+    final map = Map<String, dynamic>.from(data);
+    final states = map['states'];
+    setState(() {
+      if (states is List) {
+        for (final item in states) {
+          if (item is! Map) continue;
+          final state = Map<String, dynamic>.from(item);
+          final userId = int.tryParse(state['userId']?.toString() ?? '') ?? 0;
+          if (userId <= 0) continue;
+          _mediaStates[userId] = _MeetingMediaState(
+            micOn: state['micOn'] == true,
+            cameraOn: state['cameraOn'] == true,
+          );
+        }
+      }
+      _activeCameraUserId =
+          int.tryParse(map['activeCameraUserId']?.toString() ?? '');
+    });
+  }
+
+  void _handleCameraShareState(dynamic data) {
+    if (!mounted || data is! Map) return;
+    final map = Map<String, dynamic>.from(data);
+    setState(() {
+      _activeCameraUserId =
+          int.tryParse(map['activeUserId']?.toString() ?? '');
+    });
+  }
+
+  void _handleCameraShareRejected(dynamic data) {
+    if (!mounted) return;
+    final activeUserId = data is Map
+        ? int.tryParse(data['activeUserId']?.toString() ?? '')
+        : null;
+    setState(() {
+      _cameraOn = false;
+      _activeCameraUserId = activeUserId;
+      final userId = _myId;
+      if (userId > 0) {
+        _mediaStates[userId] =
+            _MeetingMediaState(micOn: _micOn, cameraOn: false);
+      }
+    });
+    _applyLocalMediaState();
+    _emitMediaStatus();
+    Toast.info(context, '已有用户正在分享画面，请稍等');
   }
 
   void _handleMuteAll(dynamic data) {
@@ -748,6 +867,11 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     setState(() {
       _mediaStates[targetUserId] =
           _MeetingMediaState(micOn: nextMicOn, cameraOn: nextCameraOn);
+      if (nextCameraOn) {
+        _activeCameraUserId = targetUserId;
+      } else if (_activeCameraUserId == targetUserId) {
+        _activeCameraUserId = null;
+      }
       if (targetUserId == _myId) {
         _micOn = nextMicOn;
         _cameraOn = nextCameraOn;
@@ -785,6 +909,11 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     if (userId > 0) {
       _mediaStates[userId] =
           _MeetingMediaState(micOn: _micOn, cameraOn: _cameraOn);
+      _activeCameraUserId = _cameraOn
+          ? userId
+          : _activeCameraUserId == userId
+              ? null
+              : _activeCameraUserId;
     }
     if (!_meetingRoomJoined) return;
     _meetingSocket?.emit('meeting:media-status', {
@@ -796,16 +925,46 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
 
   Future<void> _toggleMic({required bool locked}) async {
     if (locked) return;
-    setState(() => _micOn = !_micOn);
+    final nextMicOn = !_micOn;
+    setState(() => _micOn = nextMicOn);
+    if (nextMicOn) {
+      final ready = await _ensureLocalMedia(audio: true, video: false);
+      final hasAudio = _localStream?.getAudioTracks().isNotEmpty == true;
+      if (!ready || !hasAudio) {
+        if (mounted) setState(() => _micOn = false);
+        _applyLocalMediaState();
+        _emitMediaStatus();
+        return;
+      }
+    }
     _applyLocalMediaState();
     _emitMediaStatus();
+    await _syncPeerConnections();
   }
 
   Future<void> _toggleCamera() async {
-    if (_localStream == null) await _initializeLocalMedia();
-    setState(() => _cameraOn = !_cameraOn);
+    if (!_cameraOn) {
+      final activeUserId = _activeCameraUserId;
+      if (activeUserId != null && activeUserId != _myId) {
+        Toast.info(context, '已有用户正在分享画面，请稍等');
+        return;
+      }
+    }
+    final nextCameraOn = !_cameraOn;
+    setState(() => _cameraOn = nextCameraOn);
+    if (nextCameraOn) {
+      final ready = await _ensureLocalMedia(audio: false, video: true);
+      final hasVideo = _localStream?.getVideoTracks().isNotEmpty == true;
+      if (!ready || !hasVideo) {
+        if (mounted) setState(() => _cameraOn = false);
+        _applyLocalMediaState();
+        _emitMediaStatus();
+        return;
+      }
+    }
     _applyLocalMediaState();
     _emitMediaStatus();
+    await _syncPeerConnections();
   }
 
   Future<void> _switchCamera() async {
@@ -898,6 +1057,9 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
           micOn: micOn ?? current.micOn,
           cameraOn: cameraOn ?? current.cameraOn,
         );
+        if (cameraOn == false && _activeCameraUserId == userId) {
+          _activeCameraUserId = null;
+        }
       });
       if (mounted) Toast.success(context, '操作已发送');
     } catch (_) {
@@ -916,8 +1078,8 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   _MeetingMediaState _mediaStateFor(int userId) {
     return _mediaStates[userId] ??
         _MeetingMediaState(
-          micOn: userId == _myId ? _micOn : true,
-          cameraOn: userId == _myId ? _cameraOn : true,
+          micOn: userId == _myId ? _micOn : false,
+          cameraOn: userId == _myId ? _cameraOn : false,
         );
   }
 
@@ -1100,8 +1262,6 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
                                   participant['userId']?.toString() ?? '') ??
                               0;
                           final media = _mediaStateFor(userId);
-                          final remoteVideoReady =
-                              userId != myId && _remoteVideoReady(userId);
                           final canManageTarget = canControl &&
                               userId != myId &&
                               !isOwner &&
@@ -1155,11 +1315,11 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
                                         : Colors.grey),
                                 const SizedBox(width: 6),
                                 Icon(
-                                    media.cameraOn || remoteVideoReady
+                                    media.cameraOn
                                         ? Icons.videocam
                                         : Icons.videocam_off,
                                     size: 16,
-                                    color: media.cameraOn || remoteVideoReady
+                                    color: media.cameraOn
                                         ? Colors.green
                                         : Colors.grey),
                               ],
@@ -1232,197 +1392,35 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   }
 
   Widget _videoStage() {
-    final remoteUserIds = _remoteUserIds();
-    final hasRemote = remoteUserIds.isNotEmpty;
-
-    // 双击放大模式
-    if (_focusedUserId != null && hasRemote) {
-      final focusedUserId = remoteUserIds.contains(_focusedUserId)
-          ? _focusedUserId!
-          : remoteUserIds.first;
+    final activeUserId = _activeVideoUserId();
+    if (activeUserId == null) {
       return SizedBox(
-        height: 320,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: GestureDetector(
-                onDoubleTap: () => setState(() => _focusedUserId = null),
-                child: _videoTile(
-                  renderer: _remoteRenderers[focusedUserId],
-                  label: _participantName(focusedUserId),
-                  cameraOn: _remoteCameraEnabled(focusedUserId) ||
-                      _remoteVideoReady(focusedUserId),
-                  mirror: false,
-                ),
-              ),
-            ),
-            // 本人画面悬浮右下角
-            if (_cameraOn && _localStream != null)
-              Positioned(
-                right: 8,
-                bottom: 8,
-                width: 90,
-                height: 120,
-                child: _videoTile(
-                  renderer: _localRenderer,
-                  label: '我',
-                  cameraOn: true,
-                  mirror: _frontCamera,
-                ),
-              ),
-          ],
-        ),
+        height: 260,
+        child: _videoPlaceholder('暂无成员分享摄像头画面'),
       );
     }
 
-    // 宫格模式：每页最多6个（3列2行）
-    if (!hasRemote) {
-      return SizedBox(
-        height: 220,
-        child: Stack(
-          children: [
-            Positioned.fill(child: _videoPlaceholder('等待其他成员加入')),
-            if (_cameraOn && _localStream != null)
-              Positioned(
-                right: 8,
-                bottom: 8,
-                width: 90,
-                height: 120,
-                child: _videoTile(
-                  renderer: _localRenderer,
-                  label: '我',
-                  cameraOn: true,
-                  mirror: _frontCamera,
-                ),
-              ),
-          ],
-        ),
-      );
-    }
-
-    // 分页：每页6个
-    final pages = <List<int>>[];
-    for (var i = 0; i < remoteUserIds.length; i += 6) {
-      pages.add(
-          remoteUserIds.sublist(i, (i + 6).clamp(0, remoteUserIds.length)));
-    }
-
+    final isMe = activeUserId == _myId;
     return SizedBox(
       height: 320,
-      child: Stack(
-        children: [
-          PageView.builder(
-            itemCount: pages.length,
-            itemBuilder: (context, pageIndex) {
-              final pageUserIds = pages[pageIndex];
-              return _buildVideoGrid(pageUserIds);
-            },
-          ),
-          // 本人画面悬浮右下角
-          if (_cameraOn && _localStream != null)
-            Positioned(
-              right: 8,
-              bottom: 8,
-              width: 90,
-              height: 120,
-              child: GestureDetector(
-                onDoubleTap: () {},
-                child: _videoTile(
-                  renderer: _localRenderer,
-                  label: '我',
-                  cameraOn: true,
-                  mirror: _frontCamera,
-                ),
-              ),
-            ),
-          // 页码指示器
-          if (pages.length > 1)
-            Positioned(
-              bottom: 4,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                    pages.length,
-                    (i) => Container(
-                          width: 6,
-                          height: 6,
-                          margin: const EdgeInsets.symmetric(horizontal: 2),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white.withOpacity(0.6),
-                          ),
-                        )),
-              ),
-            ),
-        ],
+      child: _videoTile(
+        renderer: isMe ? _localRenderer : _remoteRenderers[activeUserId],
+        label: isMe ? '我' : _participantName(activeUserId),
+        cameraOn: true,
+        mirror: isMe && _frontCamera,
       ),
     );
   }
 
-  List<int> _remoteUserIds() {
+  int? _activeVideoUserId() {
+    final activeUserId = _activeCameraUserId;
+    if (activeUserId != null) return activeUserId;
     final myId = _myId;
-    final ids = <int>[];
-    for (final participant in _participants) {
-      final userId = int.tryParse(participant['userId']?.toString() ?? '') ?? 0;
-      if (userId > 0 && userId != myId && !ids.contains(userId)) {
-        ids.add(userId);
-      }
+    if (_cameraOn && myId > 0) return myId;
+    for (final entry in _mediaStates.entries) {
+      if (entry.value.cameraOn) return entry.key;
     }
-    for (final userId in _remoteRenderers.keys) {
-      if (userId > 0 && userId != myId && !ids.contains(userId)) {
-        ids.add(userId);
-      }
-    }
-    return ids;
-  }
-
-  bool _remoteCameraEnabled(int userId) {
-    return _mediaStates[userId]?.cameraOn != false;
-  }
-
-  bool _remoteVideoReady(int userId) {
-    final stream = _remoteRenderers[userId]?.srcObject;
-    return stream != null && stream.getVideoTracks().isNotEmpty;
-  }
-
-  /// 构建宫格视频布局（最多6个，3列2行）
-  Widget _buildVideoGrid(List<int> userIds) {
-    final count = userIds.length;
-    // 根据人数决定行列
-    int crossAxisCount;
-    if (count <= 1) {
-      crossAxisCount = 1;
-    } else if (count <= 4) {
-      crossAxisCount = 2;
-    } else {
-      crossAxisCount = 3;
-    }
-
-    return GridView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(2),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-        childAspectRatio: crossAxisCount == 1 ? 16 / 9 : 3 / 4,
-      ),
-      itemCount: count,
-      itemBuilder: (context, index) {
-        final userId = userIds[index];
-        return GestureDetector(
-          onDoubleTap: () => setState(() => _focusedUserId = userId),
-          child: _videoTile(
-            renderer: _remoteRenderers[userId],
-            label: _participantName(userId),
-            cameraOn: _remoteCameraEnabled(userId) || _remoteVideoReady(userId),
-            mirror: false,
-          ),
-        );
-      },
-    );
+    return null;
   }
 
   Widget _videoTile({

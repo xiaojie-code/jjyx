@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/utils/toast.dart';
@@ -504,9 +505,10 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                 const SizedBox(width: 10),
                 GestureDetector(
                   onTap: () {
-                    // 复制到剪贴板
-                    // Clipboard.setData(ClipboardData(text: code));
-                    Toast.success(context, '邀请码已复制');
+                    if (code != '---' && code.isNotEmpty) {
+                      Clipboard.setData(ClipboardData(text: code));
+                      Toast.success(context, '邀请码已复制');
+                    }
                   },
                   child: const Icon(Icons.copy, size: 20, color: Colors.grey),
                 ),

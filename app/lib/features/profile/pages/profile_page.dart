@@ -4,15 +4,14 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/router/app_router.dart';
 import '../../auth/providers/auth_provider.dart';
+import 'activate_page.dart';
+import 'backpack_page.dart';
 import 'edit_avatar_page.dart';
 import 'edit_nickname_page.dart';
-import 'activate_page.dart';
-import 'invite_page.dart';
 import 'promotion_reward_page.dart';
+import 'settings_page.dart';
 import 'synthesize_page.dart';
 import 'withdraw_page.dart';
-import 'backpack_page.dart';
-import 'settings_page.dart';
 
 class ProfilePage extends ConsumerStatefulWidget {
   const ProfilePage({super.key});
@@ -71,10 +70,10 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                                     : '${AppConstants.apiBaseUrl}${user.avatar}',
                               )
                             : null,
-                        child: user.avatar.isEmpty ||
-                                user.avatar.contains('default')
-                            ? const Icon(Icons.person, size: 40)
-                            : null,
+                        child:
+                            user.avatar.isEmpty || user.avatar.contains('default')
+                                ? const Icon(Icons.person, size: 40)
+                                : null,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -113,13 +112,6 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                       Icons.card_giftcard,
                       '激活游戏',
                       () => _push(const ActivatePage()),
-                    ),
-                    _buildMenuItem(
-                      Icons.people,
-                      '邀请奖励',
-                      () => _push(
-                        InvitePage(inviteCode: profile?.inviteCode ?? ''),
-                      ),
                     ),
                     _buildMenuItem(
                       Icons.group_add,
@@ -196,7 +188,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       child: Column(
         children: [
           Text(
-            value % 1 == 0 ? value.toInt().toString() : value.toStringAsFixed(2),
+            value % 1 == 0
+                ? value.toInt().toString()
+                : value.toStringAsFixed(2),
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 2),

@@ -90,11 +90,6 @@ export class GameService {
       }));
     });
 
-    // 触发邀请奖励
-    if (data.pointsEarned && data.pointsEarned > 0) {
-      await this.currencyService.triggerInviteReward(userId, data.pointsEarned);
-    }
-
     return { message: '结算成功' };
   }
 

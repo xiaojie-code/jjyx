@@ -51,13 +51,17 @@ export class MatrixService {
 
   private async completeFullActiveMatrixIfNeeded(userId: number): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      const matrix = await manager.findOne(Matrix, {
+      let matrix = await manager.findOne(Matrix, {
         where: { ownerId: userId, status: 1 },
         order: { round: 'ASC' },
       });
 
-      if (matrix && Number(matrix.filledCount) >= 6) {
+      while (matrix && Number(matrix.filledCount) >= 6) {
         await this.handleMatrixComplete(matrix, manager);
+        matrix = await manager.findOne(Matrix, {
+          where: { ownerId: userId, status: 1 },
+          order: { round: 'ASC' },
+        });
       }
     });
   }
@@ -804,6 +808,8 @@ export class MatrixService {
    * 获取用户矩阵历史
    */
   async getMatrixHistory(userId: number) {
+    await this.completeFullActiveMatrixIfNeeded(userId);
+
     return this.matrixRepo.find({
       where: { ownerId: userId },
       order: { round: 'DESC' },
@@ -814,6 +820,8 @@ export class MatrixService {
    * 获取用户可领取收益
    */
   async getClaimableIncome(userId: number) {
+    await this.completeFullActiveMatrixIfNeeded(userId);
+
     const incomes = await this.incomeRepo.find({
       where: { ownerId: userId, incomeType: 'claimable', isClaimed: false },
       order: { createdAt: 'DESC' },
@@ -853,6 +861,8 @@ export class MatrixService {
    * 获取用户的矩阵统计信息
    */
   async getMatrixStats(userId: number) {
+    await this.completeFullActiveMatrixIfNeeded(userId);
+
     const totalMatrices = await this.matrixRepo.count({ where: { ownerId: userId } });
     const completedMatrices = await this.matrixRepo.count({ where: { ownerId: userId, status: 2 } });
     const currentMatrix = await this.matrixRepo.findOne({ where: { ownerId: userId, status: 1 } });
@@ -921,6 +931,8 @@ export class MatrixService {
    * 获取已完成矩阵的详情（含坑位用户和直推标注）
    */
   async getCompletedRounds(userId: number) {
+    await this.completeFullActiveMatrixIfNeeded(userId);
+
     const matrices = await this.matrixRepo.find({
       where: { ownerId: userId, status: 2 },
       order: { round: 'ASC' },
@@ -997,6 +1009,8 @@ export class MatrixService {
    * 获取指定用户的当前轮次和资金信息
    */
   async getUserRoundInfo(userId: number) {
+    await this.completeFullActiveMatrixIfNeeded(userId);
+
     const completedCount = await this.matrixRepo.count({
       where: { ownerId: userId, status: 2 },
     });
@@ -1022,6 +1036,8 @@ export class MatrixService {
    * 获取收益明细（当前矩阵+ 已完成矩阵的每个坑位收益
    */
   async getIncomeDetail(userId: number) {
+    await this.completeFullActiveMatrixIfNeeded(userId);
+
     // 获取所有矩阵（包括当前进行中的和已完成的）
     const matrices = await this.matrixRepo.find({
       where: { ownerId: userId },

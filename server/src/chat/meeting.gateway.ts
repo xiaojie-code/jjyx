@@ -24,6 +24,11 @@ export class MeetingGateway
   private readonly userSockets = new Map<number, Set<string>>();
   private readonly socketMeetingIds = new Map<string, number>();
   private readonly meetingMuteStates = new Map<number, boolean>();
+  private readonly meetingCameraSharers = new Map<number, number>();
+  private readonly meetingMediaStates = new Map<
+    number,
+    Map<number, { micOn: boolean; cameraOn: boolean }>
+  >();
 
   constructor(
     private readonly jwtService: JwtService,
@@ -56,6 +61,7 @@ export class MeetingGateway
     const meetingId = client.data.meetingId;
     if (meetingId) {
       await this.markLeft(client, meetingId);
+      this.clearMediaState(meetingId, Number(client.data.userId));
       client
         .to(`meeting:${meetingId}`)
         .emit('meeting:user-left', { userId: client.data.userId });
@@ -98,6 +104,7 @@ export class MeetingGateway
     if (muted) {
       client.emit('meeting:mute-all', { meetingId, operatorId: 0, muted });
     }
+    this.emitMediaSnapshot(client, meetingId);
     return { meetingId, userId: client.data.userId };
   }
 
@@ -108,6 +115,7 @@ export class MeetingGateway
   ) {
     const meetingId = Number(data.meetingId || client.data.meetingId);
     await this.markLeft(client, meetingId);
+    this.clearMediaState(meetingId, Number(client.data.userId));
     client.leave(`meeting:${meetingId}`);
     client
       .to(`meeting:${meetingId}`)
@@ -177,20 +185,96 @@ export class MeetingGateway
     data: { meetingId: number; micOn?: boolean; cameraOn?: boolean },
   ) {
     const meetingId = Number(data.meetingId || client.data.meetingId);
+    const userId = Number(client.data.userId);
+    if (!meetingId || Number(client.data.meetingId) !== meetingId || !userId) {
+      return { error: 'not_joined' };
+    }
+
+    const current = this.getMediaState(meetingId, userId);
+    const micOn =
+      data.micOn === undefined ? current.micOn : data.micOn === true;
+    let cameraOn =
+      data.cameraOn === undefined ? current.cameraOn : data.cameraOn === true;
+    const activeCameraUserId = this.meetingCameraSharers.get(meetingId);
+
+    if (
+      cameraOn &&
+      activeCameraUserId &&
+      Number(activeCameraUserId) !== userId
+    ) {
+      cameraOn = false;
+      client.emit('meeting:camera-share-rejected', {
+        meetingId,
+        activeUserId: activeCameraUserId,
+      });
+    }
+
+    if (cameraOn) {
+      this.meetingCameraSharers.set(meetingId, userId);
+    } else if (activeCameraUserId === userId) {
+      this.meetingCameraSharers.delete(meetingId);
+    }
+
+    this.setMediaState(meetingId, userId, {
+      micOn,
+      cameraOn,
+    });
+
     const payload = {
       meetingId,
-      userId: client.data.userId,
-      micOn: data.micOn === true,
-      cameraOn: data.cameraOn === true,
+      userId,
+      micOn,
+      cameraOn,
     };
     this.server
       .to(`meeting:${meetingId}`)
       .emit('meeting:media-status', payload);
+    this.server.to(`meeting:${meetingId}`).emit('meeting:camera-share-state', {
+      meetingId,
+      activeUserId: this.meetingCameraSharers.get(meetingId) || null,
+    });
     return payload;
   }
 
   notifyMeeting(meetingId: number, event: string, data: any) {
-    if (event === 'meeting:ended') this.meetingMuteStates.delete(meetingId);
+    if (event === 'meeting:ended') {
+      this.meetingMuteStates.delete(meetingId);
+      this.meetingCameraSharers.delete(meetingId);
+      this.meetingMediaStates.delete(meetingId);
+    }
+    if (event === 'meeting:media-control' && data?.targetUserId) {
+      const userId = Number(data.targetUserId);
+      const current = this.getMediaState(meetingId, userId);
+      this.setMediaState(meetingId, userId, {
+        micOn: data.micOn === undefined ? current.micOn : data.micOn === true,
+        cameraOn:
+          data.cameraOn === undefined
+            ? current.cameraOn
+            : data.cameraOn === true,
+      });
+      if (
+        data.cameraOn === false &&
+        this.meetingCameraSharers.get(meetingId) === userId
+      ) {
+        this.meetingCameraSharers.delete(meetingId);
+        this.server
+          .to(`meeting:${meetingId}`)
+          .emit('meeting:camera-share-state', {
+            meetingId,
+            activeUserId: null,
+          });
+      }
+    }
+    if (event === 'meeting:kicked' && data?.targetUserId) {
+      this.clearMediaState(meetingId, Number(data.targetUserId));
+    }
+    if (
+      event === 'meeting:participant-refresh' &&
+      data?.reason === 'leave' &&
+      data?.userId
+    ) {
+      this.clearMediaState(meetingId, Number(data.userId));
+    }
     this.server.to(`meeting:${meetingId}`).emit(event, data);
   }
 
@@ -216,6 +300,50 @@ export class MeetingGateway
       this.logger.warn(
         `标记会议离开失败 meeting=${meetingId} user=${userId}: ${String(error)}`,
       );
+    }
+  }
+
+  private emitMediaSnapshot(client: Socket, meetingId: number) {
+    const states = Array.from(
+      this.meetingMediaStates.get(meetingId)?.entries() ?? [],
+    ).map(([userId, state]) => ({ userId, ...state }));
+    client.emit('meeting:media-status-snapshot', {
+      meetingId,
+      states,
+      activeCameraUserId: this.meetingCameraSharers.get(meetingId) || null,
+    });
+  }
+
+  private getMediaState(meetingId: number, userId: number) {
+    return (
+      this.meetingMediaStates.get(meetingId)?.get(userId) ?? {
+        micOn: false,
+        cameraOn: false,
+      }
+    );
+  }
+
+  private setMediaState(
+    meetingId: number,
+    userId: number,
+    state: { micOn: boolean; cameraOn: boolean },
+  ) {
+    const states =
+      this.meetingMediaStates.get(meetingId) ??
+      new Map<number, { micOn: boolean; cameraOn: boolean }>();
+    states.set(userId, state);
+    this.meetingMediaStates.set(meetingId, states);
+  }
+
+  private clearMediaState(meetingId: number, userId: number) {
+    const states = this.meetingMediaStates.get(meetingId);
+    states?.delete(userId);
+    if (this.meetingCameraSharers.get(meetingId) === userId) {
+      this.meetingCameraSharers.delete(meetingId);
+      this.server.to(`meeting:${meetingId}`).emit('meeting:camera-share-state', {
+        meetingId,
+        activeUserId: null,
+      });
     }
   }
 
