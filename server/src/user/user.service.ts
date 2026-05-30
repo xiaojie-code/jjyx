@@ -284,7 +284,7 @@ export class UserService {
       // 激活用户 + 发放持股数
       await manager.update(User, userId, {
         isActivated: true,
-        shares: 100,
+        shares: 200,
       });
 
       // 激活送10000积分
@@ -329,7 +329,7 @@ export class UserService {
     // 激活后自动加入系统总群
     await this.joinSystemGroup(userId);
 
-    return { message: '激活成功', shares: 100 };
+    return { message: '激活成功', shares: 200 };
   }
 
   /** 获取邀请记录（直推+间推） */

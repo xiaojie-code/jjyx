@@ -471,8 +471,6 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
         _buildSummaryCard(matrix),
         const SizedBox(height: 12),
         _buildMatrixCard(matrix),
-        const SizedBox(height: 12),
-        _buildPositionList(matrix),
       ],
     );
   }
@@ -658,19 +656,6 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
     );
   }
 
-  Widget _buildPositionList(PromotionMatrixViewModel matrix) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 8),
-          child: Text('坑位明细', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-        ),
-        ...matrix.positions.map(_positionTile),
-      ],
-    );
-  }
-
   Widget _buildErrorCard(String message) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -850,39 +835,6 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
         children: [
           Text('$label：', style: const TextStyle(fontSize: 13, color: Colors.grey)),
           Expanded(child: Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
-        ],
-      ),
-    );
-  }
-
-  Widget _positionTile(PromotionPosition position) {
-    final user = position.user;
-    final amount = _formatAmount(position.amount);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(19)),
-            child: Text('${position.position}', style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(user?.displayName ?? '待补位', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 2),
-                Text(position.description, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
-            ),
-          ),
-          Text(amount, style: TextStyle(color: position.amount > 0 ? Colors.green : Colors.grey, fontWeight: FontWeight.w600)),
         ],
       ),
     );

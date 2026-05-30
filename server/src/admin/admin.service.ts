@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -93,8 +93,9 @@ export class AdminService {
     await this.userRepo.update(id, { status });
   }
   async addCurrency(userId: number, type: string, amount: number) {
-    if (type === 'special')
-      return this.currencyService.addSpecialPoints(userId, amount);
+    if (type === 'special') {
+      throw new BadRequestException('特殊积分功能已关闭');
+    }
     return this.currencyService.changeCurrency(
       userId,
       type as any,

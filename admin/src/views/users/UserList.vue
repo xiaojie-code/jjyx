@@ -114,7 +114,6 @@
             <el-option label="积分" value="points" />
             <el-option label="金币" value="gold" />
             <el-option label="银币" value="silver" />
-            <el-option label="特殊积分(钻石)" value="special" />
             <el-option label="奖励积分" value="reward" />
           </el-select>
         </el-form-item>

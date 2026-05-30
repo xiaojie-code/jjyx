@@ -6,7 +6,6 @@ import '../../../core/router/app_router.dart';
 import '../../auth/providers/auth_provider.dart';
 import 'edit_avatar_page.dart';
 import 'edit_nickname_page.dart';
-import 'currency_detail_page.dart';
 import 'activate_page.dart';
 import 'invite_page.dart';
 import 'promotion_reward_page.dart';
@@ -46,8 +45,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         title: const Text('我的'),
         actions: [
           IconButton(
-              icon: const Icon(Icons.settings),
-              onPressed: () => _push(const SettingsPage())),
+            icon: const Icon(Icons.settings),
+            onPressed: () => _push(const SettingsPage()),
+          ),
         ],
       ),
       body: user == null
@@ -63,12 +63,16 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                       onTap: () => _push(const EditAvatarPage()),
                       child: CircleAvatar(
                         radius: 40,
-                        backgroundImage: user.avatar.isNotEmpty && !user.avatar.contains('default')
+                        backgroundImage: user.avatar.isNotEmpty &&
+                                !user.avatar.contains('default')
                             ? NetworkImage(
-                                user.avatar.startsWith('http') ? user.avatar : '${AppConstants.apiBaseUrl}${user.avatar}',
+                                user.avatar.startsWith('http')
+                                    ? user.avatar
+                                    : '${AppConstants.apiBaseUrl}${user.avatar}',
                               )
                             : null,
-                        child: user.avatar.isEmpty || user.avatar.contains('default')
+                        child: user.avatar.isEmpty ||
+                                user.avatar.contains('default')
                             ? const Icon(Icons.person, size: 40)
                             : null,
                       ),
@@ -76,48 +80,67 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     const SizedBox(height: 8),
                     GestureDetector(
                       onTap: () => _push(
-                          EditNicknamePage(currentNickname: user.nickname)),
+                        EditNicknamePage(currentNickname: user.nickname),
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(user.nickname,
-                              style: const TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text(
+                            user.nickname,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                           const SizedBox(width: 4),
                           const Icon(Icons.edit, size: 16, color: Colors.grey),
                         ],
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(user.isActivated ? '已激活' : '未激活',
-                        style: TextStyle(
-                            color: user.isActivated
-                                ? Colors.green
-                                : Colors.orange)),
+                    Text(
+                      user.isActivated ? '已激活' : '未激活',
+                      style: TextStyle(
+                        color: user.isActivated ? Colors.green : Colors.orange,
+                      ),
+                    ),
                     const SizedBox(height: 16),
-                    // 货币展示
                     if (currency != null) ...[
                       _buildCurrencyGrid(currency, profile!.shares),
                       const SizedBox(height: 16),
                     ],
-                    // 功能菜单
-                    _buildMenuItem(Icons.monetization_on, '货币明细',
-                        () => _push(const CurrencyDetailPage())),
-                    _buildMenuItem(Icons.card_giftcard, '激活游戏',
-                        () => _push(const ActivatePage())),
                     _buildMenuItem(
-                        Icons.people,
-                        '邀请奖励',
-                        () => _push(
-                            InvitePage(inviteCode: profile?.inviteCode ?? ''))),
-                    _buildMenuItem(Icons.group_add, '推广奖励',
-                        () => _push(const PromotionRewardPage())),
-                    _buildMenuItem(Icons.backpack, '我的背包',
-                        () => _push(const BackpackPage())),
-                    _buildMenuItem(Icons.sync, '积分合成',
-                        () => _push(const SynthesizePage())),
-                    _buildMenuItem(Icons.account_balance_wallet, '提现',
-                        () => _push(const WithdrawPage())),
+                      Icons.card_giftcard,
+                      '激活游戏',
+                      () => _push(const ActivatePage()),
+                    ),
+                    _buildMenuItem(
+                      Icons.people,
+                      '邀请奖励',
+                      () => _push(
+                        InvitePage(inviteCode: profile?.inviteCode ?? ''),
+                      ),
+                    ),
+                    _buildMenuItem(
+                      Icons.group_add,
+                      '推广奖励',
+                      () => _push(const PromotionRewardPage()),
+                    ),
+                    _buildMenuItem(
+                      Icons.backpack,
+                      '我的背包',
+                      () => _push(const BackpackPage()),
+                    ),
+                    _buildMenuItem(
+                      Icons.sync,
+                      '积分合成',
+                      () => _push(const SynthesizePage()),
+                    ),
+                    _buildMenuItem(
+                      Icons.account_balance_wallet,
+                      '提现',
+                      () => _push(const WithdrawPage()),
+                    ),
                     const Divider(height: 32),
                     SizedBox(
                       width: double.infinity,
@@ -128,7 +151,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                           context.go(RoutePaths.login);
                         },
                         style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red),
+                          foregroundColor: Colors.red,
+                        ),
                         child: const Text('退出登录'),
                       ),
                     ),
@@ -142,25 +166,26 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   Widget _buildCurrencyGrid(dynamic currency, int shares) {
     return Container(
       decoration: BoxDecoration(
-          color: Colors.white, borderRadius: BorderRadius.circular(12)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
       padding: const EdgeInsets.all(12),
       child: Column(
         children: [
-          Row(children: [
-            _currencyItem('积分', currency.points),
-            _currencyItem('金币', currency.gold),
-            _currencyItem('银币', currency.silver),
-          ]),
+          Row(
+            children: [
+              _currencyItem('积分', currency.points),
+              _currencyItem('金币', currency.gold),
+              _currencyItem('银币', currency.silver),
+            ],
+          ),
           const SizedBox(height: 8),
-          Row(children: [
-            _currencyItem(
-                '特殊积分',
-                currency.specialPointsTier1 +
-                    currency.specialPointsTier2 +
-                    currency.specialPointsTier3),
-            _currencyItem('奖励积分', currency.rewardPoints),
-            _currencyItem('持股数', shares.toDouble()),
-          ]),
+          Row(
+            children: [
+              _currencyItem('奖励积分', currency.rewardPoints),
+              _currencyItem('持股数', shares.toDouble()),
+            ],
+          ),
         ],
       ),
     );
@@ -168,31 +193,28 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
 
   Widget _currencyItem(String label, double value) {
     return Expanded(
-      child: GestureDetector(
-        onTap: () => _push(
-            CurrencyDetailPage(currencyType: label == '积分' ? 'points' : null)),
-        child: Column(
-          children: [
-            Text(
-                value % 1 == 0
-                    ? value.toInt().toString()
-                    : value.toStringAsFixed(2),
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 2),
-            Text(label,
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ),
+      child: Column(
+        children: [
+          Text(
+            value % 1 == 0 ? value.toInt().toString() : value.toStringAsFixed(2),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildMenuItem(IconData icon, String title, VoidCallback onTap) {
     return ListTile(
-        leading: Icon(icon),
-        title: Text(title),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap);
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    );
   }
 }
