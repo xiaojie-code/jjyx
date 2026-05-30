@@ -595,8 +595,6 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
   }
 
   Widget _buildMatrixCard(PromotionMatrixViewModel matrix) {
-    final isFull = matrix.filledCount >= 6;
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),

@@ -49,12 +49,26 @@ export class MatrixService {
     return this.matrixRepo.save(matrix);
   }
 
+  private async completeFullActiveMatrixIfNeeded(userId: number): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const matrix = await manager.findOne(Matrix, {
+        where: { ownerId: userId, status: 1 },
+        order: { round: 'ASC' },
+      });
+
+      if (matrix && Number(matrix.filledCount) >= 6) {
+        await this.handleMatrixComplete(matrix, manager);
+      }
+    });
+  }
+
   /**
    * 获取推广邀请码信息和推广统计
    */
   async getInviteInfo(userId: number) {
     const user = await this.userRepo.findOne({ where: { id: userId }, select: ['id', 'inviteCode', 'nickname', 'invitedBy'] });
     if (!user) return null;
+    await this.completeFullActiveMatrixIfNeeded(userId);
 
     // 获取直接上级信息
     let inviter: { id: number; account: string; nickname: string } | null = null;
@@ -500,6 +514,10 @@ export class MatrixService {
               matrix.ownerId, nextSlot, superiorMatrix.id, false, manager,
             );
           }
+
+          if (superiorMatrix.filledCount >= 6) {
+            await this.handleMatrixComplete(superiorMatrix, manager);
+          }
         }
       }
     }
@@ -609,6 +627,10 @@ export class MatrixService {
     }
 
     await manager.save(Matrix, firstLayerMatrix);
+
+    if (firstLayerMatrix.filledCount >= 6) {
+      await this.handleMatrixComplete(firstLayerMatrix, manager);
+    }
   }
 
   /**
@@ -744,6 +766,8 @@ export class MatrixService {
    * 获取用户当前矩阵信息
    */
   async getCurrentMatrix(userId: number) {
+    await this.completeFullActiveMatrixIfNeeded(userId);
+
     const matrix = await this.matrixRepo.findOne({
       where: { ownerId: userId, status: 1 },
     });
