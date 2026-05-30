@@ -1,0 +1,36 @@
+allprojects {
+    repositories {
+        maven { url "https://storage.flutter-io.cn/download.flutter.io" }
+        maven { url "https://maven.aliyun.com/repository/google" }
+        maven { url "https://maven.aliyun.com/repository/central" }
+        maven { url "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/" }
+        google()
+        mavenCentral()
+    }
+}
+
+// 强制所有子项目使用 compileSdk 34（避免 android-35 兼容性问题）
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android {
+                if (namespace == null) {
+                    namespace = project.group.toString()
+                }
+                compileSdkVersion 34
+            }
+        }
+    }
+}
+
+rootProject.buildDir = "../build"
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

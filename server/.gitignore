@@ -20,4 +20,6 @@ npm-debug.log*
 .env
 
 # Uploads
-/uploads
+/uploads/*
+!/uploads/games/
+!/uploads/games/**
