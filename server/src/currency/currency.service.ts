@@ -218,7 +218,6 @@ export class CurrencyService {
   }
 
   /** 提现申请 */
-  /** 提现申请 */
   async withdraw(userId: number, data: { amount: number; paymentMethod: string; accountName: string; accountNumber: string; content?: string }) {
     const { amount, paymentMethod, accountName, accountNumber, content } = data;
     if (!amount || amount < 100) throw new BadRequestException('提现最低100元');
@@ -229,7 +228,7 @@ export class CurrencyService {
     if (!accountName || !accountName.trim()) throw new BadRequestException('请填写收款人姓名');
     if (!accountNumber || !accountNumber.trim()) throw new BadRequestException('请填写收款账号');
 
-    // 校验可提现余额 = 已完成矩阵总收益 - 已提现总额（状态为待审核或已通过的）
+    // 校验可提现余额 = 实时可提现推广收益 - 待审核/已通过提现总额。
     const { totalEarned, totalWithdrawn } = await this.getWithdrawableBalance(userId);
     const available = totalEarned - totalWithdrawn;
     if (amount > available) {
@@ -255,11 +254,11 @@ export class CurrencyService {
 
   /** 获取用户可提现余额 */
   async getWithdrawableBalance(userId: number) {
-    // 已完成矩阵的总收益（直接用 SQL 查询，避免 Repository 注入问题）
+    // 1-4号位与特殊奖励产生后即可提现，不等待矩阵完成。
     const earnedResult = await this.dataSource.query(
       `SELECT COALESCE(SUM(i.amount), 0) as total FROM matrix_incomes i
        INNER JOIN matrices m ON i.matrix_id = m.id
-       WHERE i.owner_id = ? AND i.income_type = 'claimable' AND m.owner_id = ? AND m.status = 2`,
+       WHERE i.owner_id = ? AND i.income_type = 'claimable' AND m.owner_id = ?`,
       [userId, userId],
     );
     const totalEarned = Number(earnedResult?.[0]?.total || 0);
@@ -274,14 +273,36 @@ export class CurrencyService {
     return { totalEarned, totalWithdrawn };
   }
 
-  /** 获取用户提现记录 */
+  /** 获取用户交易记录：推广收益入账 + 提现申请。 */
   async getWithdrawRecords(userId: number) {
-    const records = await this.withdrawalRepo.find({
+    const withdrawals = await this.withdrawalRepo.find({
       where: { userId },
       order: { createdAt: 'DESC' },
     });
-    return records.map(r => ({
-      id: r.id,
+    const incomes = await this.dataSource.query(
+      `SELECT i.id, i.amount, i.slot_number, i.description, i.created_at,
+              u.account AS source_account, u.nickname AS source_nickname
+       FROM matrix_incomes i
+       LEFT JOIN users u ON u.id = i.from_user_id
+       WHERE i.owner_id = ? AND i.income_type = 'claimable'
+       ORDER BY i.created_at DESC`,
+      [userId],
+    );
+
+    const incomeRecords = incomes.map((r: any) => ({
+      id: `income-${r.id}`,
+      transactionType: 'income',
+      amount: Number(r.amount),
+      isSpecialReward: Number(r.slot_number) === 0,
+      title: Number(r.slot_number) === 0 ? '特殊奖励' : '推广收益',
+      description: r.description,
+      sourceAccount: r.source_account || '',
+      sourceNickname: r.source_nickname || '',
+      createdAt: r.created_at,
+    }));
+    const withdrawalRecords = withdrawals.map(r => ({
+      id: `withdrawal-${r.id}`,
+      transactionType: 'withdrawal',
       amount: Number(r.amount),
       fee: Math.floor(Number(r.amount) * 0.2),
       actualAmount: Number(r.amount) - Math.floor(Number(r.amount) * 0.2),
@@ -293,6 +314,11 @@ export class CurrencyService {
       createdAt: r.createdAt,
       reviewTime: r.reviewTime,
     }));
+
+    return [...incomeRecords, ...withdrawalRecords].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
   }
 
   /** 提现审核（管理端） */

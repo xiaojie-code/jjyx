@@ -1,11 +1,10 @@
-import { Injectable, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Matrix } from '../entities/matrix.entity';
 import { MatrixSlot } from '../entities/matrix-slot.entity';
 import { MatrixIncome } from '../entities/matrix-income.entity';
 import { User } from '../entities/user.entity';
-import { CurrencyService } from '../currency/currency.service';
 
 /** 启动金额（可后续改为配置项） */
 const DEFAULT_START_FUND = 2000;
@@ -29,8 +28,6 @@ export class MatrixService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly dataSource: DataSource,
-    @Inject(forwardRef(() => CurrencyService))
-    private readonly currencyService: CurrencyService,
   ) {}
 
   /**
@@ -96,23 +93,14 @@ export class MatrixService {
     const currentMatrix = await this.matrixRepo.findOne({ where: { ownerId: userId, status: 1 } });
     const completedCount = await this.matrixRepo.count({ where: { ownerId: userId, status: 2 } });
 
-    // 总收益（只统计已完成矩阵的收益）
-    const completedMatrixIds = await this.matrixRepo.find({
-      where: { ownerId: userId, status: 2 },
-      select: ['id'],
-    });
-    let totalEarnedValue = 0;
-    if (completedMatrixIds.length > 0) {
-      const ids = completedMatrixIds.map(m => m.id);
-      const totalEarned = await this.incomeRepo
-        .createQueryBuilder('i')
-        .select('SUM(i.amount)', 'total')
-        .where('i.owner_id = :userId', { userId })
-        .andWhere('i.income_type = :type', { type: 'claimable' })
-        .andWhere('i.matrix_id IN (:...ids)', { ids })
-        .getRawOne();
-      totalEarnedValue = Number(totalEarned?.total || 0);
-    }
+    // 总收益：1-4号位和指定账号特殊奖励产生后立即累计，不等待矩阵完成。
+    const totalEarned = await this.incomeRepo
+      .createQueryBuilder('i')
+      .select('SUM(i.amount)', 'total')
+      .where('i.owner_id = :userId', { userId })
+      .andWhere('i.income_type = :type', { type: 'claimable' })
+      .getRawOne();
+    const totalEarnedValue = Number(totalEarned?.total || 0);
 
     return {
       inviteCode: user.inviteCode,
@@ -884,7 +872,14 @@ export class MatrixService {
       }),
     );
 
-    return { matrix, slots: slotDetails };
+    return {
+      matrix,
+      slots: await this.mergeSpecialRewardAmounts(
+        matrix.id,
+        userId,
+        slotDetails,
+      ),
+    };
   }
 
   /**
@@ -917,27 +912,7 @@ export class MatrixService {
    * 领取收益
    */
   async claimIncome(userId: number): Promise<number> {
-    const { total, list } = await this.getClaimableIncome(userId);
-    if (total <= 0) throw new BadRequestException('暂无可领取收益');
-
-    await this.dataSource.transaction(async (manager) => {
-      for (const income of list) {
-        income.isClaimed = true;
-        income.claimedAt = new Date();
-        await manager.save(MatrixIncome, income);
-      }
-    });
-
-    // 将收益转入用户积分账户
-    await this.currencyService.changeCurrency(
-      userId,
-      'points',
-      total,
-      'matrix_income',
-      `矩阵推广收益领取`,
-    );
-
-    return total;
+    throw new BadRequestException('推广收益已实时计入可提现余额，无需领取');
   }
 
   /**
@@ -1001,6 +976,7 @@ export class MatrixService {
           nickname: user.nickname,
           avatar: user.avatar,
           registerTime: user.registerTime,
+          isActivated: user.isActivated,
           completedRounds: completedCount,
           currentFilled: currentMatrix?.filledCount || 0,
         };
@@ -1049,9 +1025,10 @@ export class MatrixService {
             };
           }),
         );
-        const specialIncomeDetails = await this.getSpecialIncomeDetails(
+        const mergedSlotDetails = await this.mergeSpecialRewardAmounts(
           matrix.id,
           userId,
+          slotDetails,
         );
 
         return {
@@ -1059,7 +1036,7 @@ export class MatrixService {
           completedAt: matrix.completedAt,
           claimableIncome: matrix.claimableIncome,
           nextRoundFund: matrix.nextRoundFund,
-          slots: [...specialIncomeDetails, ...slotDetails],
+          slots: mergedSlotDetails,
         };
       }),
     );
@@ -1157,26 +1134,22 @@ export class MatrixService {
             };
           }),
         );
-        const specialIncomeDetails = await this.getSpecialIncomeDetails(
+        const mergedSlotDetails = await this.mergeSpecialRewardAmounts(
           matrix.id,
           userId,
+          slotDetails,
         );
-        const allIncomeDetails = [...specialIncomeDetails, ...slotDetails];
 
         // 计算本轮总可领取收益和下轮资金
-        const roundClaimable = allIncomeDetails
-          .filter(s => s.incomeType === 'claimable')
-          .reduce((sum, s) => sum + Number(s.incomeAmount), 0);
-        const roundNextFund = allIncomeDetails
-          .filter(s => s.incomeType === 'next_fund')
-          .reduce((sum, s) => sum + Number(s.incomeAmount), 0);
+        const roundClaimable = Number(matrix.claimableIncome);
+        const roundNextFund = Number(matrix.nextRoundFund);
 
         return {
           round: matrix.round,
           status: matrix.status === 1 ? '进行中' : '已完成',
           claimableIncome: roundClaimable,
           nextRoundFund: roundNextFund,
-          slots: allIncomeDetails,
+          slots: mergedSlotDetails,
         };
       }),
     );
@@ -1192,37 +1165,34 @@ export class MatrixService {
     };
   }
 
-  private async getSpecialIncomeDetails(matrixId: number, ownerId: number) {
+  private async mergeSpecialRewardAmounts(
+    matrixId: number,
+    ownerId: number,
+    slotDetails: any[],
+  ) {
     const specialIncomes = await this.incomeRepo.find({
       where: { matrixId, ownerId, slotNumber: 0 },
       order: { createdAt: 'ASC' },
     });
+    const specialAmountByUser = new Map<number, number>();
+    for (const income of specialIncomes) {
+      const fromUserId = Number(income.fromUserId);
+      specialAmountByUser.set(
+        fromUserId,
+        (specialAmountByUser.get(fromUserId) || 0) + Number(income.amount),
+      );
+    }
 
-    return Promise.all(
-      specialIncomes.map(async (income) => {
-        const user = await this.userRepo.findOne({
-          where: { id: income.fromUserId },
-          select: ['id', 'account', 'nickname', 'avatar', 'invitedBy'],
-        });
-
-        return {
-          slotNumber: 0,
-          isNewUser: true,
-          isSpecialIncome: true,
-          description: income.description,
-          incomeAmount: income.amount,
-          incomeType: income.incomeType,
-          user: user
-            ? {
-                id: user.id,
-                account: user.account,
-                nickname: user.nickname,
-                avatar: user.avatar,
-                isDirect: Number(user.invitedBy) === Number(ownerId),
-              }
-            : null,
-        };
-      }),
-    );
+    return slotDetails.map((slot) => {
+      const specialRewardAmount =
+        specialAmountByUser.get(Number(slot.userId ?? slot.user?.id)) || 0;
+      if (specialRewardAmount <= 0) return slot;
+      return {
+        ...slot,
+        incomeAmount: Number(slot.incomeAmount) + specialRewardAmount,
+        specialRewardAmount,
+        hasSpecialReward: true,
+      };
+    });
   }
 }

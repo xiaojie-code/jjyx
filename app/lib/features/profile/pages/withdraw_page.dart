@@ -290,10 +290,10 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
 
-                  // 提现记录
+                  // 交易记录
                   if (_records.isNotEmpty) ...[
                     const SizedBox(height: 32),
-                    const Text('提现记录', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    const Text('交易记录', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 12),
                     ..._records.map((r) => _buildRecordItem(r)),
                   ],
@@ -304,6 +304,11 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
   }
 
   Widget _buildRecordItem(Map<String, dynamic> record) {
+    final transactionType = record['transactionType']?.toString() ?? 'withdrawal';
+    if (transactionType == 'income') {
+      return _buildIncomeRecordItem(record);
+    }
+
     final amount = record['amount'] ?? 0;
     final actualAmount = record['actualAmount'] ?? 0;
     final status = record['status'] as int? ?? 0;
@@ -357,6 +362,53 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                 fontWeight: FontWeight.w500,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIncomeRecordItem(Map<String, dynamic> record) {
+    final amount = double.tryParse(record['amount']?.toString() ?? '0') ?? 0;
+    final title = record['title']?.toString() ?? '推广收益';
+    final sourceNickname = record['sourceNickname']?.toString() ?? '';
+    final sourceAccount = record['sourceAccount']?.toString() ?? '';
+    final createdAt = record['createdAt']?.toString() ?? '';
+    final source = sourceNickname.isNotEmpty ? '$sourceNickname（$sourceAccount）' : sourceAccount;
+    String timeStr = '';
+    if (createdAt.isNotEmpty) {
+      try {
+        final dt = DateTime.parse(createdAt).toLocal();
+        timeStr = '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      } catch (_) {}
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                const SizedBox(height: 4),
+                Text(
+                  source.isEmpty ? timeStr : '来源：$source · $timeStr',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            '+${amount.toStringAsFixed(amount % 1 == 0 ? 0 : 2)}',
+            style: const TextStyle(fontSize: 16, color: Colors.green, fontWeight: FontWeight.bold),
           ),
         ],
       ),

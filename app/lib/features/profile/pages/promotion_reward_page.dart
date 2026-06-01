@@ -120,33 +120,89 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
               if (users.isEmpty) {
                 return const Text('暂无直推用户');
               }
-              return ListView.builder(
-                shrinkWrap: true,
-                itemCount: users.length,
-                itemBuilder: (context, index) {
-                  final user = Map<String, dynamic>.from(users[index]);
-                  final name = user['nickname'] ?? user['account'] ?? '用户${user['id']}';
-                  final account = user['account'] ?? '';
-                  final completedRounds = user['completedRounds'] ?? 0;
-                  final currentFilled = user['currentFilled'] ?? 0;
-                  return ListTile(
-                    dense: true,
-                    leading: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: Colors.blue.shade100,
-                      child: Text('${index + 1}', style: const TextStyle(fontSize: 12)),
+              final directUsers = users
+                  .map((item) => Map<String, dynamic>.from(item))
+                  .toList();
+              final activeCount = directUsers
+                  .where((user) => user['isActivated'] == true)
+                  .length;
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    title: Text(name, style: const TextStyle(fontSize: 14)),
-                    subtitle: Text('账号：$account · 完成${completedRounds}轮 · 当前${currentFilled}/6',
-                        style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                  );
-                },
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _miniStat('总直推', '${directUsers.length}人'),
+                        _miniStat('有效直推', '$activeCount人'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: directUsers.length,
+                      itemBuilder: (context, index) {
+                        final user = directUsers[index];
+                        final name = user['nickname'] ?? user['account'] ?? '用户${user['id']}';
+                        final account = user['account'] ?? '';
+                        final completedRounds = user['completedRounds'] ?? 0;
+                        final currentFilled = user['currentFilled'] ?? 0;
+                        final isActivated = user['isActivated'] == true;
+                        return ListTile(
+                          dense: true,
+                          leading: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: isActivated ? Colors.green.shade100 : Colors.grey.shade200,
+                            child: Text('${index + 1}', style: TextStyle(fontSize: 12, color: isActivated ? Colors.green : Colors.grey)),
+                          ),
+                          title: Row(
+                            children: [
+                              Expanded(child: Text(name, style: const TextStyle(fontSize: 14))),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: isActivated ? Colors.green.shade50 : Colors.grey.shade100,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  isActivated ? '已激活' : '未激活',
+                                  style: TextStyle(fontSize: 10, color: isActivated ? Colors.green : Colors.grey),
+                                ),
+                              ),
+                            ],
+                          ),
+                          subtitle: Text('账号：$account · 完成${completedRounds}轮 · 当前${currentFilled}/6',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               );
             },
           ),
         ),
         actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭'))],
       ),
+    );
+  }
+
+  Widget _miniStat(String label, String value) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      ],
     );
   }
 
@@ -863,12 +919,16 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
 
 class PromotionMatrixViewModel {
   final List<PromotionPosition> positions;
+  final double? currentClaimableIncome;
+  final double? currentNextRoundFund;
   final double newUserReward;
   final double oldUserReentryBase;
   final double rewardRate;
 
   const PromotionMatrixViewModel({
     required this.positions,
+    this.currentClaimableIncome,
+    this.currentNextRoundFund,
     required this.newUserReward,
     required this.oldUserReentryBase,
     required this.rewardRate,
@@ -889,13 +949,17 @@ class PromotionMatrixViewModel {
 
   int get filledCount => positions.where((position) => position.user != null).length;
 
-  double get withdrawableAmount => positions
-      .where((position) => position.position <= 4)
-      .fold(0, (sum, position) => sum + position.amount);
+  double get withdrawableAmount =>
+      currentClaimableIncome ??
+      positions
+          .where((position) => position.position <= 4)
+          .fold(0, (sum, position) => sum + position.amount);
 
-  double get nextRoundAmount => positions
-      .where((position) => position.position >= 5)
-      .fold(0, (sum, position) => sum + position.amount);
+  double get nextRoundAmount =>
+      currentNextRoundFund ??
+      positions
+          .where((position) => position.position >= 5)
+          .fold(0, (sum, position) => sum + position.amount);
 
   factory PromotionMatrixViewModel.empty() {
     return PromotionMatrixViewModel(
@@ -921,6 +985,7 @@ class PromotionMatrixViewModel {
     }
 
     final slots = data['slots'] as List? ?? [];
+    final matrix = Map<String, dynamic>.from(data['matrix'] as Map);
 
     return PromotionMatrixViewModel(
       positions: List.generate(6, (index) {
@@ -969,6 +1034,8 @@ class PromotionMatrixViewModel {
           description: description,
         );
       }),
+      currentClaimableIncome: double.tryParse(matrix['claimableIncome']?.toString() ?? '0') ?? 0,
+      currentNextRoundFund: double.tryParse(matrix['nextRoundFund']?.toString() ?? '0') ?? 0,
       newUserReward: newUserReward,
       oldUserReentryBase: oldUserReentryBase,
       rewardRate: rewardRate,
