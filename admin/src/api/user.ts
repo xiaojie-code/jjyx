@@ -11,7 +11,7 @@ export function getUserList(params: {
 }
 
 export function getUserStats() {
-  return request.get('/users/stats')
+  return request.get('/user-stats')
 }
 
 // 用户详情

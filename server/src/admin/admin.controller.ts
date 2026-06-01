@@ -8,6 +8,7 @@ export class AdminController {
 
   // 用户
   @Get('users') getUsers(@Query() query: any, @Query() pagination: PaginationDto) { return this.adminService.getUsers(query, pagination); }
+  @Get('user-stats') getUserStatsSafe() { return this.adminService.getUserStats(); }
   @Get('users/stats') getUserStats() { return this.adminService.getUserStats(); }
   @Get('users/:id') getUserDetail(@Param('id', ParseIntPipe) id: number) { return this.adminService.getUsers({ keyword: String(id) }, { page: 1, pageSize: 1 }); }
   @Put('users/:id') updateUser(@Param('id', ParseIntPipe) id: number, @Body() data: any) { return this.adminService.updateUser(id, data); }
