@@ -14,6 +14,7 @@ import { SystemConfig } from '../entities/system-config.entity';
 import { DailyDeduction } from '../entities/daily-deduction.entity';
 import { generateSn } from '../common/utils/sn-generator';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import * as bcrypt from 'bcryptjs';
 
 type CurrencyType = 'points' | 'gold' | 'silver' | 'special' | 'reward' | 'invite';
 
@@ -217,9 +218,125 @@ export class CurrencyService {
     return this.synthesisRepo.find({ where: { status: 1 } });
   }
 
+  private async ensureWithdrawSecurityTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS withdraw_securities (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        phone VARCHAR(20) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_withdraw_security_user_id (user_id),
+        INDEX idx_withdraw_security_user_id (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+  }
+
+  private normalizeWithdrawPassword(password?: string) {
+    const value = String(password || '').trim();
+    if (!/^\d{6}$/.test(value)) {
+      throw new BadRequestException('提现密码必须是6位数字');
+    }
+    return value;
+  }
+
+  private normalizeWithdrawPhone(phone?: string) {
+    const value = String(phone || '').trim();
+    if (!/^1\d{10}$/.test(value)) {
+      throw new BadRequestException('请输入正确的预留手机号');
+    }
+    return value;
+  }
+
+  async getWithdrawSecurity(userId: number) {
+    await this.ensureWithdrawSecurityTable();
+    const rows = await this.dataSource.query(
+      `SELECT phone FROM withdraw_securities WHERE user_id = ? LIMIT 1`,
+      [userId],
+    );
+    const phone = rows?.[0]?.phone || '';
+    return {
+      hasPassword: rows.length > 0,
+      phoneMasked: phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : '',
+    };
+  }
+
+  async setWithdrawPassword(
+    userId: number,
+    data: { phone?: string; password?: string; confirmPassword?: string },
+  ) {
+    await this.ensureWithdrawSecurityTable();
+    const existing = await this.dataSource.query(
+      `SELECT id FROM withdraw_securities WHERE user_id = ? LIMIT 1`,
+      [userId],
+    );
+    if (existing.length > 0) {
+      return { message: '提现密码已设置', hasPassword: true };
+    }
+    const phone = this.normalizeWithdrawPhone(data.phone);
+    const password = this.normalizeWithdrawPassword(data.password);
+    const confirmPassword = this.normalizeWithdrawPassword(data.confirmPassword);
+    if (password !== confirmPassword) {
+      throw new BadRequestException('两次输入的提现密码不一致');
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    await this.dataSource.query(
+      `INSERT INTO withdraw_securities (user_id, phone, password_hash)
+       VALUES (?, ?, ?)`,
+      [userId, phone, passwordHash],
+    );
+    return { message: '提现密码设置成功' };
+  }
+
+  async resetWithdrawPassword(
+    userId: number,
+    data: { phone?: string; password?: string; confirmPassword?: string },
+  ) {
+    await this.ensureWithdrawSecurityTable();
+    const rows = await this.dataSource.query(
+      `SELECT id, phone FROM withdraw_securities WHERE user_id = ? LIMIT 1`,
+      [userId],
+    );
+    if (rows.length === 0) {
+      throw new BadRequestException('请先设置提现密码');
+    }
+    const phone = this.normalizeWithdrawPhone(data.phone);
+    if (phone !== rows[0].phone) {
+      throw new BadRequestException('预留手机号验证失败');
+    }
+    const password = this.normalizeWithdrawPassword(data.password);
+    const confirmPassword = this.normalizeWithdrawPassword(data.confirmPassword);
+    if (password !== confirmPassword) {
+      throw new BadRequestException('两次输入的提现密码不一致');
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    await this.dataSource.query(
+      `UPDATE withdraw_securities SET password_hash = ?, updated_at = NOW() WHERE user_id = ?`,
+      [passwordHash, userId],
+    );
+    return { message: '提现密码重置成功' };
+  }
+
+  private async verifyWithdrawPassword(userId: number, withdrawPassword?: string) {
+    await this.ensureWithdrawSecurityTable();
+    const rows = await this.dataSource.query(
+      `SELECT password_hash FROM withdraw_securities WHERE user_id = ? LIMIT 1`,
+      [userId],
+    );
+    if (rows.length === 0) {
+      throw new BadRequestException('请先设置提现密码');
+    }
+    const password = this.normalizeWithdrawPassword(withdrawPassword);
+    const valid = await bcrypt.compare(password, rows[0].password_hash);
+    if (!valid) {
+      throw new BadRequestException('提现密码错误');
+    }
+  }
+
   /** 提现申请 */
-  async withdraw(userId: number, data: { amount: number; paymentMethod: string; accountName: string; accountNumber: string; content?: string }) {
-    const { amount, paymentMethod, accountName, accountNumber, content } = data;
+  async withdraw(userId: number, data: { amount: number; paymentMethod: string; accountName: string; accountNumber: string; content?: string; withdrawPassword?: string }) {
+    const { amount, paymentMethod, accountName, accountNumber, content, withdrawPassword } = data;
     if (!amount || amount < 100) throw new BadRequestException('提现最低100元');
     if (amount % 100 !== 0) throw new BadRequestException('提现金额必须是100的整数倍');
     if (!paymentMethod || !['alipay', 'bank'].includes(paymentMethod)) {
@@ -227,6 +344,7 @@ export class CurrencyService {
     }
     if (!accountName || !accountName.trim()) throw new BadRequestException('请填写收款人姓名');
     if (!accountNumber || !accountNumber.trim()) throw new BadRequestException('请填写收款账号');
+    await this.verifyWithdrawPassword(userId, withdrawPassword);
 
     // 校验可提现余额 = 实时可提现推广收益 - 待审核/已通过提现总额。
     const { totalEarned, totalWithdrawn } = await this.getWithdrawableBalance(userId);

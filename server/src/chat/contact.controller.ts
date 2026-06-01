@@ -103,6 +103,15 @@ export class ContactController {
     return this.contactService.deleteGroup(userId, id);
   }
 
+  @Put('groups/invitations/:id')
+  handleGroupInvitation(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('accept') accept: boolean,
+  ) {
+    return this.contactService.handleGroupInvitation(userId, id, accept);
+  }
+
   @Get('groups/:id/members')
   getGroupMembers(@Param('id', ParseIntPipe) id: number) {
     return this.contactService.getGroupMembers(id);

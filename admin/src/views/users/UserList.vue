@@ -1,5 +1,16 @@
 <template>
   <div class="page-container">
+    <div class="stats-grid">
+      <el-card shadow="hover" class="stat-card">
+        <div class="stat-label">总用户数量</div>
+        <div class="stat-value">{{ userStats.totalUsers }}</div>
+      </el-card>
+      <el-card shadow="hover" class="stat-card">
+        <div class="stat-label">已激活用户</div>
+        <div class="stat-value activated">{{ userStats.activatedUsers }}</div>
+      </el-card>
+    </div>
+
     <!-- 搜索栏 -->
     <el-card shadow="hover" class="search-card">
       <el-form :inline="true" @submit.prevent="handleSearch">
@@ -132,7 +143,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getUserList, updateUser, updateUserStatus, addUserCurrency } from '@/api/user'
+import { getUserList, getUserStats, updateUser, updateUserStatus, addUserCurrency } from '@/api/user'
 import { dateTimeFormatter } from '@/utils/format'
 
 const loading = ref(false)
@@ -140,6 +151,7 @@ const userList = ref<any[]>([])
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const userStats = ref({ totalUsers: 0, activatedUsers: 0 })
 const searchKeyword = ref('')
 const searchStatus = ref<number | undefined>(undefined)
 
@@ -164,6 +176,14 @@ async function loadUsers() {
     userList.value = res.list || []
     total.value = res.total || 0
   } finally { loading.value = false }
+}
+
+async function loadUserStats() {
+  const res: any = await getUserStats()
+  userStats.value = {
+    totalUsers: res.totalUsers || 0,
+    activatedUsers: res.activatedUsers || 0,
+  }
 }
 
 function handleSearch() { page.value = 1; loadUsers() }
@@ -206,7 +226,10 @@ async function handleAddCurrency() {
   currencyVisible.value = false
 }
 
-onMounted(loadUsers)
+onMounted(() => {
+  loadUsers()
+  loadUserStats()
+})
 </script>
 
 <style scoped>
@@ -214,6 +237,28 @@ onMounted(loadUsers)
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 180px));
+  gap: 16px;
+}
+.stat-card {
+  border-radius: 12px;
+  border: none;
+}
+.stat-label {
+  color: #606266;
+  font-size: 13px;
+}
+.stat-value {
+  margin-top: 8px;
+  color: #303133;
+  font-size: 28px;
+  font-weight: 700;
+}
+.stat-value.activated {
+  color: #67c23a;
 }
 .search-card {
   border-radius: 12px;

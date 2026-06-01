@@ -10,6 +10,10 @@ export function getUserList(params: {
   return request.get('/users', { params })
 }
 
+export function getUserStats() {
+  return request.get('/users/stats')
+}
+
 // 用户详情
 export function getUserDetail(id: number) {
   return request.get(`/users/${id}`)

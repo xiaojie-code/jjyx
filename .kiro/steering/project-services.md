@@ -29,11 +29,18 @@ inclusion: manual
 - 路径：`d:\myApp\work_ycykj\jjyx\jjyx\app`
 - 端口：3200
 - Flutter SDK：`D:\myApp\flutter\flutter\bin\flutter.bat`
-- 启动命令（电脑Web调试）：`D:\myApp\flutter\flutter\bin\flutter.bat run -d web-server --web-port=3200`
-- 启动命令（手机真机调试）：`D:\myApp\flutter\flutter\bin\flutter.bat run --dart-define=API_BASE_URL=http://192.168.31.75:3001 --dart-define=WS_BASE_URL=http://192.168.31.75:3001`
+- 启动命令（电脑/手机浏览器 Web 调试）：在项目根目录执行 `./run-flutter-web.ps1 -NetworkProfile lan`
+- 启动命令（手机真机调试）：在项目根目录执行 `./run-android-device.ps1 -NetworkProfile lan`
+- 打 debug APK：在项目根目录执行 `./build-debug-apk.ps1 -NetworkProfile lan`
 - 说明：使用 web-server 模式，不会自动打开浏览器，用户自行在浏览器访问 localhost:3200
 - 重启时不要杀 Edge 进程，直接 stop 旧进程再重新启动即可
-- **重要**：手机端调试时必须用电脑局域网 IP（当前为 192.168.31.75），不能用 localhost
+- **重要**：手机端调试时必须用电脑局域网 IP，不能用 localhost。当前地址由 `server/.env` 中的 `DEV_NETWORK_PROFILE`、`LAN_API_HOST`、`PUBLIC_API_HOST` 切换；本轮检测到的 WLAN IPv4 为 `192.168.31.74`。
+
+## 5. 局域网/公网地址切换
+
+- 默认本地联调：`DEV_NETWORK_PROFILE=lan`，`LAN_API_HOST=192.168.31.74`。
+- 公网测试时：把 `DEV_NETWORK_PROFILE=public`，并填写 `PUBLIC_API_HOST=服务器公网IP`；也可以临时执行 `./run-flutter-web.ps1 -NetworkProfile public -ApiHost 服务器公网IP`。
+- 这些脚本会统一生成 `API_BASE_URL` 和 `WS_BASE_URL`，避免 Flutter Web、真机运行、APK 打包各写一套地址。
 
 ## 快速启动全部服务
 

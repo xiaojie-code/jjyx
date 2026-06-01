@@ -53,6 +53,7 @@ class ApiEndpoints {
   static String contactDelete(int id) => '/api/social/contacts/$id';
   static String groupDetail(int id) => '/api/social/groups/$id';
   static String groupMembers(int id) => '/api/social/groups/$id/members';
+  static String groupInvitation(int id) => '/api/social/groups/invitations/$id';
   static String groupMemberRole(int id, int userId) =>
       '/api/social/groups/$id/members/$userId/role';
   static String groupMeetingActive(int id) =>

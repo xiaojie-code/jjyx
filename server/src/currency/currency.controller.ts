@@ -38,10 +38,31 @@ export class CurrencyController {
     return this.currencyService.getSynthesisConfigs();
   }
 
+  @Get('withdraw/security')
+  async getWithdrawSecurity(@CurrentUser('id') userId: number) {
+    return this.currencyService.getWithdrawSecurity(userId);
+  }
+
+  @Post('withdraw/password')
+  async setWithdrawPassword(
+    @CurrentUser('id') userId: number,
+    @Body() data: { phone?: string; password?: string; confirmPassword?: string },
+  ) {
+    return this.currencyService.setWithdrawPassword(userId, data);
+  }
+
+  @Post('withdraw/password/reset')
+  async resetWithdrawPassword(
+    @CurrentUser('id') userId: number,
+    @Body() data: { phone?: string; password?: string; confirmPassword?: string },
+  ) {
+    return this.currencyService.resetWithdrawPassword(userId, data);
+  }
+
   @Post('withdraw')
   async withdraw(
     @CurrentUser('id') userId: number,
-    @Body() data: { amount: number; paymentMethod: string; accountName: string; accountNumber: string; content?: string },
+    @Body() data: { amount: number; paymentMethod: string; accountName: string; accountNumber: string; content?: string; withdrawPassword?: string },
   ) {
     return this.currencyService.withdraw(userId, data);
   }

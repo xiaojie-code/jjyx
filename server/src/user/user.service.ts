@@ -18,6 +18,8 @@ import { Cdk } from '../entities/cdk.entity';
 import { SystemSwitch } from '../entities/system-switch.entity';
 import { Conversation } from '../entities/conversation.entity';
 import { ConversationMember } from '../entities/conversation-member.entity';
+import { Friendship } from '../entities/friendship.entity';
+import { Message } from '../entities/message.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { MatrixService } from '../matrix/matrix.service';
@@ -37,6 +39,8 @@ export class UserService {
     private readonly convRepo: Repository<Conversation>,
     @InjectRepository(ConversationMember)
     private readonly convMemberRepo: Repository<ConversationMember>,
+    @InjectRepository(Friendship)
+    private readonly friendshipRepo: Repository<Friendship>,
     private readonly jwtService: JwtService,
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => MatrixService))
@@ -51,25 +55,92 @@ export class UserService {
     }
   }
 
-  /** 激活后自动加入系统总群 */
-  private async joinSystemGroup(userId: number) {
+  /** 激活后自动添加客服联系人，但不自动加入系统总群 */
+  private async ensureCustomerServiceContact(userId: number) {
     try {
-      // 查找系统总群（is_system=true 的群）
-      const systemGroup = await this.convRepo.findOne({ where: { isSystem: true, type: 2 } });
-      if (!systemGroup) return;
-      // 检查是否已在群中
-      const existing = await this.convMemberRepo.findOne({
-        where: { conversationId: systemGroup.id, userId },
-      });
-      if (!existing) {
-        await this.convMemberRepo.save(this.convMemberRepo.create({
-          conversationId: systemGroup.id,
-          userId,
-          role: 1,
-        }));
+      const admin = await this.userRepo.findOne({ where: { account: 'admin' } });
+      if (!admin || Number(admin.id) === Number(userId)) return;
+
+      if (admin.nickname !== '客服') {
+        await this.userRepo.update(admin.id, { nickname: '客服' });
       }
+
+      await this.dataSource.transaction(async (manager) => {
+        const pairs = [
+          { userId, friendId: admin.id, remark: '客服' },
+          { userId: admin.id, friendId: userId, remark: null },
+        ];
+        for (const pair of pairs) {
+          const existing = await manager.findOne(Friendship, {
+            where: { userId: pair.userId, friendId: pair.friendId },
+          });
+          if (!existing) {
+            await manager.save(Friendship, manager.create(Friendship, pair));
+          }
+        }
+
+        const existingChat = await manager.query(
+          `SELECT c.id
+           FROM conversations c
+           INNER JOIN conversation_members m1 ON m1.conversation_id = c.id AND m1.user_id = ?
+           INNER JOIN conversation_members m2 ON m2.conversation_id = c.id AND m2.user_id = ?
+           WHERE c.type = 1
+           LIMIT 1`,
+          [userId, admin.id],
+        );
+        let conversationId = existingChat[0]?.id;
+        const welcomeText = '欢迎使用云AI，我是客服，有任何问题都可以随时联系我。';
+
+        if (existingChat.length === 0) {
+          const conversation = await manager.save(
+            Conversation,
+            manager.create(Conversation, { type: 1, creatorId: admin.id, status: 1 }),
+          );
+          conversationId = conversation.id;
+          await manager.save(ConversationMember, [
+            manager.create(ConversationMember, {
+              conversationId: conversation.id,
+              userId: admin.id,
+              role: 1,
+            }),
+            manager.create(ConversationMember, {
+              conversationId: conversation.id,
+              userId,
+              role: 1,
+            }),
+          ]);
+        }
+
+        if (conversationId) {
+          const existingWelcome = await manager.findOne(Message, {
+            where: {
+              conversationId: Number(conversationId),
+              senderId: admin.id,
+              content: welcomeText,
+            },
+          });
+          if (!existingWelcome) {
+            await manager.save(
+              Message,
+              manager.create(Message, {
+                conversationId: Number(conversationId),
+                senderId: admin.id,
+                msgType: 1,
+                content: welcomeText,
+                status: 1,
+              }),
+            );
+            await manager.increment(
+              ConversationMember,
+              { conversationId: Number(conversationId), userId },
+              'unreadCount',
+              1,
+            );
+          }
+        }
+      });
     } catch (e) {
-      // 加群失败不影响激活流程
+      // 客服联系人初始化失败不影响激活流程
     }
   }
 
@@ -367,8 +438,8 @@ export class UserService {
     // 指定账号（333333/555555）深层推广树激活奖励。
     await this.matrixService.grantSpecialTreeActivationReward(userId);
 
-    // 激活后自动加入系统总群
-    await this.joinSystemGroup(userId);
+    // 激活后只自动添加客服联系人，总群需由客服邀请后进入
+    await this.ensureCustomerServiceContact(userId);
 
     return { message: '激活成功', shares: 200 };
   }

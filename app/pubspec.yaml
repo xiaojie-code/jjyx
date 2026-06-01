@@ -29,6 +29,7 @@ dependencies:
 
   # Local storage
   shared_preferences: ^2.2.2
+  package_info_plus: ^8.0.2
 
   # WebSocket (IM)
   socket_io_client: ^2.0.3+1

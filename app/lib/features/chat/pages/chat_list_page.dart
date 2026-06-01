@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import '../../../core/constants/app_constants.dart';
@@ -27,7 +27,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadConversations();
-    // 先注册监听器，再确保连接（避免离线消息在监听器注册前到达）
+    // Register listeners before connecting so offline messages are not missed.
     ref.read(socketServiceProvider).addMessageListener(_onNewMessageInList);
     ref
         .read(socketServiceProvider)
@@ -53,7 +53,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 从后台恢复时刷新会话列表
+    // 浠庡悗鍙版仮澶嶆椂鍒锋柊浼氳瘽鍒楄〃
     if (state == AppLifecycleState.resumed) {
       _loadConversations();
     }
@@ -61,12 +61,12 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
   void _onNewMessageInList(ChatMessage msg) {
     if (!mounted) return;
-    // 直接在本地更新会话列表，不等待 API
+    // 鐩存帴鍦ㄦ湰鍦版洿鏂颁細璇濆垪琛紝涓嶇瓑寰?API
     setState(() {
       final idx = _conversations
           .indexWhere((c) => c.conversationId == msg.conversationId);
       if (idx >= 0) {
-        // 更新已有会话的最后消息和未读数
+        // Update existing conversation preview and unread count.
         final old = _conversations[idx];
         _conversations[idx] = ConversationItem(
           conversationId: old.conversationId,
@@ -79,7 +79,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
         );
       }
     });
-    // 同时从服务器刷新完整数据（确保数据一致性）
+    // 鍚屾椂浠庢湇鍔″櫒鍒锋柊瀹屾暣鏁版嵁锛堢‘淇濇暟鎹竴鑷存€э級
     _loadConversations();
   }
 
@@ -90,7 +90,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
   void _onSocketConnected() {
     if (!mounted) return;
-    // Socket 连接成功后，延迟刷新会话列表（等待离线消息推送完成）
+    // Socket 杩炴帴鎴愬姛鍚庯紝寤惰繜鍒锋柊浼氳瘽鍒楄〃锛堢瓑寰呯绾挎秷鎭帹閫佸畬鎴愶級
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) _loadConversations();
     });
@@ -120,10 +120,10 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
         );
       }).toList();
       conversations.sort((a, b) {
-        // 置顶优先
+        // 置顶浼樺厛
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
-        // 按最新消息时间降序（越新越靠上）
+        // 鎸夋渶鏂版秷鎭椂闂撮檷搴忥紙瓒婃柊瓒婇潬涓婏級
         final aTime = a.lastMessage?.createdAt ?? '';
         final bTime = b.lastMessage?.createdAt ?? '';
         return bTime.compareTo(aTime);
@@ -158,11 +158,11 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     showSearch(context: context, delegate: _MessageSearchDelegate(ref));
   }
 
-  /// 格式化消息时间（仿微信风格）
-  /// 今天：显示 HH:mm
-  /// 昨天：显示 "昨天"
-  /// 本周内：显示 "周X"
-  /// 更早：显示 MM/DD
+  /// 鏍煎紡鍖栨秷鎭椂闂达紙浠垮井淇￠鏍硷級
+  /// 浠婂ぉ锛氭樉绀?HH:mm
+  /// 昨天锛氭樉绀?"昨天"
+  /// 鏈懆鍐咃細鏄剧ず "鍛╔"
+  /// 鏇存棭锛氭樉绀?MM/DD
   String _formatMessageTime(String? timeStr) {
     if (timeStr == null || timeStr.isEmpty) return '';
     try {
@@ -173,16 +173,16 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       final diff = today.difference(messageDay).inDays;
 
       if (diff == 0) {
-        // 今天：显示时分
+        // Today: HH:mm
         return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
       } else if (diff == 1) {
         return '昨天';
       } else if (diff < 7) {
-        // 本周内：显示星期几
+        // This week: weekday
         const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
         return weekdays[time.weekday - 1];
       } else {
-        // 更早：显示月/日
+        // Older: MM/DD
         return '${time.month}/${time.day}';
       }
     } catch (_) {
@@ -214,6 +214,12 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       if (data is Map && data['kind'] == 'group_meeting') {
         return '[群会议] ${data['text']?.toString() ?? '有人发起了群会议'}';
       }
+      if (data is Map && data['kind'] == 'member_join') {
+        return data['text']?.toString() ?? '有新成员加入群聊';
+      }
+      if (data is Map && data['kind'] == 'group_invite') {
+        return data['text']?.toString() ?? '邀请加入群聊';
+      }
     } catch (_) {}
     return content;
   }
@@ -233,9 +239,9 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           : RefreshIndicator(
               onRefresh: _loadConversations,
               child: ListView.builder(
-                itemCount: _conversations.length + 2, // +2 for AI entry + 数字人
+                itemCount: _conversations.length + 2, // +2 for AI entry + digital human
                 itemBuilder: (context, index) {
-                  // 云AI 入口（顶部）
+                  // 浜慉I 鍏ュ彛锛堥《閮級
                   if (index == 0) {
                     return ListTile(
                       leading: const CircleAvatar(
@@ -253,7 +259,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                     );
                   }
 
-                  // 数字人入口
+                  // Digital human entry
                   if (index == 1) {
                     return ListTile(
                       leading: CircleAvatar(
@@ -354,7 +360,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                           type: conv.type,
                         ),
                       ));
-                      // 返回后刷新消息列表（更新未读数）
+                      // 杩斿洖鍚庡埛鏂版秷鎭垪琛紙鏇存柊鏈鏁帮級
                       _loadConversations();
                     },
                     onLongPress: () => _togglePin(conv),
@@ -366,7 +372,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   }
 }
 
-/// 聊天记录搜索
+/// 聊天璁板綍鎼滅储
 class _MessageSearchDelegate extends SearchDelegate<String> {
   final WidgetRef ref;
   _MessageSearchDelegate(this.ref);
@@ -417,7 +423,7 @@ class _MessageSearchDelegate extends SearchDelegate<String> {
               title: Text(_searchMessagePreview(msgType, content),
                   maxLines: 2, overflow: TextOverflow.ellipsis),
               subtitle: Text(
-                '${senderNickname.isNotEmpty ? '$senderNickname · ' : ''}$createdAt',
+                '${senderNickname.isNotEmpty ? '$senderNickname 路 ' : ''}$createdAt',
                 style: const TextStyle(fontSize: 11),
               ),
               onTap: () {
@@ -456,12 +462,18 @@ class _MessageSearchDelegate extends SearchDelegate<String> {
       if (data is Map && data['kind'] == 'group_meeting') {
         return '[群会议] ${data['text']?.toString() ?? '有人发起了群会议'}';
       }
+      if (data is Map && data['kind'] == 'member_join') {
+        return data['text']?.toString() ?? '有新成员加入群聊';
+      }
+      if (data is Map && data['kind'] == 'group_invite') {
+        return data['text']?.toString() ?? '邀请加入群聊';
+      }
     } catch (_) {}
     return content;
   }
 }
 
-/// 数字人页面 - 暂未开放
+/// Digital human page - not open yet.
 class _DigitalHumanPage extends StatelessWidget {
   const _DigitalHumanPage();
 

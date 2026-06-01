@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { getToken } from '@/utils/auth'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
@@ -98,6 +98,12 @@ const router = createRouter({
           name: 'Configs',
           component: () => import('@/views/configs/SystemConfig.vue'),
           meta: { title: '系统配置', icon: 'Setting' },
+        },
+        {
+          path: 'app-versions',
+          name: 'AppVersions',
+          component: () => import('@/views/app/AppVersionManage.vue'),
+          meta: { title: 'App版本管理', icon: 'Upload' },
         },
       ],
     },

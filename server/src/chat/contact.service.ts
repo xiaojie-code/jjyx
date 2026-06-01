@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   BadRequestException,
   NotFoundException,
@@ -37,7 +37,7 @@ export class ContactService implements OnModuleInit {
     private readonly chatGateway: ChatGateway,
   ) {}
 
-  /** 启动时自动创建系统总群，并把已激活用户加入 */
+  /** 启动时只确保系统总群存在，并把 admin 设置为客服/群主 */
   async onModuleInit() {
     try {
       let systemGroup = await this.convRepo.findOne({ where: { isSystem: true, type: 2 } });
@@ -47,21 +47,28 @@ export class ContactService implements OnModuleInit {
         );
         this.logger.log(`系统总群"沧恒云芯"已自动创建，ID=${systemGroup.id}`);
       }
-      // 把所有已激活用户加入系统总群
-      const activatedUsers = await this.userRepo.find({ where: { isActivated: true } });
-      for (const user of activatedUsers) {
+      const admin = await this.userRepo.findOne({ where: { account: 'admin' } });
+      if (admin) {
+        if (admin.nickname !== '客服') {
+          await this.userRepo.update(admin.id, { nickname: '客服' });
+        }
+        if (Number(systemGroup.creatorId) !== Number(admin.id)) {
+          await this.convRepo.update(systemGroup.id, { creatorId: admin.id });
+        }
         const existing = await this.memberRepo.findOne({
-          where: { conversationId: systemGroup.id, userId: user.id },
+          where: { conversationId: systemGroup.id, userId: admin.id },
         });
         if (!existing) {
           await this.memberRepo.save(this.memberRepo.create({
             conversationId: systemGroup.id,
-            userId: user.id,
-            role: 1,
+            userId: admin.id,
+            role: 2,
           }));
+        } else if (Number(existing.role) < 2) {
+          await this.memberRepo.update(existing.id, { role: 2 });
         }
       }
-      this.logger.log(`系统总群成员同步完成，当前已激活用户${activatedUsers.length}人`);
+      this.logger.log('系统总群初始化完成：已关闭激活用户自动入群');
     } catch (e) {
       this.logger.error('系统总群初始化失败', e);
     }
@@ -378,6 +385,49 @@ export class ContactService implements OnModuleInit {
   }
 
   /** 添加群成员 */
+  private async ensureGroupInvitationTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS group_invitations (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        conversation_id INT NOT NULL,
+        inviter_id INT NOT NULL,
+        invitee_id INT NOT NULL,
+        message_id BIGINT NULL,
+        status TINYINT NOT NULL DEFAULT 0 COMMENT '0 pending, 1 accepted, 2 rejected',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        handled_at DATETIME NULL,
+        INDEX idx_group_invitation_invitee (invitee_id, status),
+        INDEX idx_group_invitation_conversation (conversation_id),
+        INDEX idx_group_invitation_pending (conversation_id, invitee_id, status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    try {
+      await this.dataSource.query(`ALTER TABLE group_invitations ADD COLUMN message_id BIGINT NULL`);
+    } catch (_) {}
+  }
+
+  private async ensureSingleConversation(userA: number, userB: number) {
+    const existing = await this.dataSource.query(
+      `SELECT c.id
+       FROM conversations c
+       INNER JOIN conversation_members m1 ON m1.conversation_id = c.id AND m1.user_id = ?
+       INNER JOIN conversation_members m2 ON m2.conversation_id = c.id AND m2.user_id = ?
+       WHERE c.type = 1
+       LIMIT 1`,
+      [userA, userB],
+    );
+    if (existing.length > 0) return Number(existing[0].id);
+
+    const conv = await this.convRepo.save(
+      this.convRepo.create({ type: 1, creatorId: userA, status: 1 }),
+    );
+    await this.memberRepo.save([
+      this.memberRepo.create({ conversationId: conv.id, userId: userA, role: 1 }),
+      this.memberRepo.create({ conversationId: conv.id, userId: userB, role: 1 }),
+    ]);
+    return Number(conv.id);
+  }
+
   async addGroupMember(
     userId: number,
     conversationId: number,
@@ -397,19 +447,109 @@ export class ContactService implements OnModuleInit {
     if (exists) throw new BadRequestException('该用户已在群中');
     const user = await this.userRepo.findOne({ where: { id: memberId } });
     if (!user) throw new NotFoundException('用户不存在');
-    await this.memberRepo.save(
-      this.memberRepo.create({ conversationId, userId: memberId, role: 1 }),
+
+    await this.ensureGroupInvitationTable();
+    const pending = await this.dataSource.query(
+      `SELECT id FROM group_invitations
+       WHERE conversation_id = ? AND invitee_id = ? AND status = 0
+       LIMIT 1`,
+      [conversationId, memberId],
     );
+    if (pending.length > 0) throw new BadRequestException('已发送邀请，等待对方确认');
 
-    // 通知新成员有新会话
-    this.chatGateway.notifyUser(Number(memberId), 'conversation:new', {
-      conversationId,
-    });
-
-    // 发送入群通知消息（系统消息 msgType=3）
     const inviter = await this.userRepo.findOne({ where: { id: userId } });
     const inviterName = inviter?.nickname?.trim() || inviter?.account?.trim() || `用户${userId}`;
-    const newMemberName = user.nickname?.trim() || user.account?.trim() || `用户${memberId}`;
+    const groupName = conv.name?.trim() || '群聊';
+    const chatId = await this.ensureSingleConversation(Number(userId), Number(memberId));
+
+    const insertResult = await this.dataSource.query(
+      `INSERT INTO group_invitations
+        (conversation_id, inviter_id, invitee_id, status, created_at)
+       VALUES (?, ?, ?, 0, NOW())`,
+      [conversationId, userId, memberId],
+    );
+    const invitationId = Number(insertResult?.insertId || insertResult?.[0]?.insertId || 0);
+
+    const inviteMsg = await this.msgRepo.save(this.msgRepo.create({
+      conversationId: chatId,
+      senderId: userId,
+      msgType: 3,
+      status: 1,
+      content: JSON.stringify({
+        kind: 'group_invite',
+        invitationId,
+        groupId: Number(conversationId),
+        groupName,
+        inviterId: Number(userId),
+        inviterName,
+        status: 0,
+        text: `${inviterName}邀请你加入群聊：${groupName}`,
+      }),
+    }));
+    await this.dataSource.query(
+      `UPDATE group_invitations SET message_id = ? WHERE id = ?`,
+      [inviteMsg.id, invitationId],
+    );
+    await this.memberRepo.increment({ conversationId: chatId, userId: memberId }, 'unreadCount', 1);
+
+    this.chatGateway.notifyUser(Number(memberId), 'conversation:new', { conversationId: chatId });
+    this.chatGateway.notifyUser(Number(userId), 'conversation:new', { conversationId: chatId });
+    await this.chatGateway.notifyConversationMessage(userId, inviteMsg, { includeSender: true });
+
+    return { message: '邀请已发送，等待对方确认' };
+  }
+
+  async handleGroupInvitation(userId: number, invitationId: number, accept: boolean) {
+    await this.ensureGroupInvitationTable();
+    const rows = await this.dataSource.query(
+      `SELECT * FROM group_invitations WHERE id = ? LIMIT 1`,
+      [invitationId],
+    );
+    const invitation = rows[0];
+    if (!invitation) throw new NotFoundException('邀请不存在');
+    if (Number(invitation.invitee_id) !== Number(userId)) {
+      throw new ForbiddenException('无权处理该邀请');
+    }
+    if (Number(invitation.status) !== 0) throw new BadRequestException('该邀请已处理');
+
+    const conversationId = Number(invitation.conversation_id);
+    const conv = await this.convRepo.findOne({ where: { id: conversationId, type: 2 } });
+    if (!conv) throw new NotFoundException('群聊不存在');
+
+    const status = accept ? 1 : 2;
+    await this.dataSource.query(
+      `UPDATE group_invitations SET status = ?, handled_at = NOW() WHERE id = ?`,
+      [status, invitationId],
+    );
+
+    if (invitation.message_id) {
+      const inviter = await this.userRepo.findOne({ where: { id: Number(invitation.inviter_id) } });
+      const inviterName = inviter?.nickname?.trim() || inviter?.account?.trim() || `用户${invitation.inviter_id}`;
+      await this.msgRepo.update(Number(invitation.message_id), {
+        content: JSON.stringify({
+          kind: 'group_invite',
+          invitationId,
+          groupId: conversationId,
+          groupName: conv.name || '群聊',
+          inviterId: Number(invitation.inviter_id),
+          inviterName,
+          status,
+          text: `${inviterName}邀请你加入群聊：${conv.name || '群聊'}`,
+        }),
+      });
+    }
+
+    if (!accept) return { message: '已拒绝邀请' };
+
+    const exists = await this.memberRepo.findOne({ where: { conversationId, userId } });
+    if (!exists) {
+      await this.memberRepo.save(
+        this.memberRepo.create({ conversationId, userId, role: 1 }),
+      );
+    }
+
+    const joinedUser = await this.userRepo.findOne({ where: { id: userId } });
+    const memberName = joinedUser?.nickname?.trim() || joinedUser?.account?.trim() || `用户${userId}`;
     const noticeMsg = await this.msgRepo.save(this.msgRepo.create({
       conversationId,
       senderId: userId,
@@ -417,22 +557,18 @@ export class ContactService implements OnModuleInit {
       status: 1,
       content: JSON.stringify({
         kind: 'member_join',
-        inviterId: Number(userId),
-        inviterName,
-        memberId: Number(memberId),
-        memberName: newMemberName,
-        text: `${inviterName}邀请${newMemberName}加入了群聊`,
+        memberId: Number(userId),
+        memberName,
+        text: `${memberName}已同意邀请并加入群聊`,
       }),
     }));
 
-    // 通过 Socket 推送给群内所有人
+    this.chatGateway.notifyUser(Number(userId), 'conversation:new', { conversationId });
     await this.chatGateway.notifyConversationMessage(userId, noticeMsg, { includeSender: true });
-
-    return { message: '已添加' };
+    return { message: '已加入群聊' };
   }
 
-  /** 移除群成员 */
-  async removeGroupMember(
+  /** 移除群成员 */  async removeGroupMember(
     userId: number,
     conversationId: number,
     memberId: number,

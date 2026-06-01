@@ -64,6 +64,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   AudioPlayer? _audioPlayer;
   StreamSubscription<void>? _playerCompleteSub;
   String? _playingVoiceUrl;
+  final Map<int, int> _handledInvitationStatus = <int, int>{};
 
   bool get _voiceRecordingSupported => !kIsWeb;
   AudioRecorder get _recorder => _audioRecorder ??= AudioRecorder();
@@ -857,6 +858,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         if (data is Map && data['kind'] == 'member_join') {
           return _memberJoinNotice(data);
         }
+        if (data is Map && data['kind'] == 'group_invite') {
+          return _groupInviteNotice(data);
+        }
       } catch (_) {}
       return Text(
         msg.content,
@@ -886,6 +890,86 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ],
       ),
     );
+  }
+
+  Widget _groupInviteNotice(Map<dynamic, dynamic> data) {
+    final invitationId = int.tryParse(data['invitationId']?.toString() ?? '') ?? 0;
+    final groupName = data['groupName']?.toString() ?? '群聊';
+    final text = data['text']?.toString() ?? '邀请你加入群聊：$groupName';
+    final status = int.tryParse(data['status']?.toString() ?? '0') ?? 0;
+    final currentStatus = _handledInvitationStatus[invitationId] ?? status;
+    final handled = currentStatus != 0;
+    final statusText = currentStatus == 1
+        ? '已同意'
+        : currentStatus == 2
+            ? '已拒绝'
+            : '';
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 260),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.group_add, size: 18, color: Colors.blue),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  groupName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(text, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+          const SizedBox(height: 10),
+          if (handled)
+            Text(statusText, style: const TextStyle(fontSize: 13, color: Colors.black54))
+          else
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton(
+                  onPressed: invitationId > 0 ? () => _handleGroupInvitation(invitationId, false) : null,
+                  child: const Text('拒绝'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: invitationId > 0 ? () => _handleGroupInvitation(invitationId, true) : null,
+                  child: const Text('同意'),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleGroupInvitation(int invitationId, bool accept) async {
+    try {
+      await ref.read(apiClientProvider).put(
+            ApiEndpoints.groupInvitation(invitationId),
+            data: {'accept': accept},
+          );
+      if (!mounted) return;
+      setState(() => _handledInvitationStatus[invitationId] = accept ? 1 : 2);
+      Toast.success(context, accept ? '已加入群聊' : '已拒绝邀请');
+      await _loadMessages();
+    } catch (e) {
+      if (mounted) Toast.error(context, '$e');
+    }
   }
 
   Widget _memberJoinNotice(Map<dynamic, dynamic> data) {

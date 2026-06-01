@@ -1,15 +1,21 @@
 param(
     [string]$DeviceId,
     [string]$ApiHost,
-    [int]$ServerPort = 3001
+    [ValidateSet('lan', 'public')]
+    [string]$NetworkProfile,
+    [int]$ServerPort = 0
 )
 
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppRoot = Join-Path $RepoRoot 'app'
+$EnvFile = Join-Path $RepoRoot 'server\.env'
+$NetworkProfileScript = Join-Path $RepoRoot 'network-profile.ps1'
 $Flutter = 'D:\myApp\flutter\flutter\bin\flutter.bat'
 $Adb = 'D:\myApp\Android\Sdk\platform-tools\adb.exe'
+
+. $NetworkProfileScript
 
 if (-not (Test-Path $Flutter)) {
     throw "Flutter not found: $Flutter"
@@ -30,27 +36,12 @@ if (-not $DeviceId) {
     $DeviceId = (($AuthorizedDevices | Select-Object -First 1) -split '\s+')[0]
 }
 
-if (-not $ApiHost) {
-    $ApiHost = Get-NetIPAddress -AddressFamily IPv4 |
-        Where-Object {
-            $_.IPAddress -notlike '127.*' -and
-            $_.IPAddress -notlike '169.254.*' -and
-            $_.InterfaceAlias -notmatch 'Loopback|Docker|VMware|VirtualBox|vEthernet'
-        } |
-        Sort-Object InterfaceMetric |
-        Select-Object -First 1 -ExpandProperty IPAddress
-}
-
-if (-not $ApiHost) {
-    throw 'Could not detect a LAN IPv4 address. Pass one manually, for example: -ApiHost 192.168.31.75'
-}
-
-$ApiBaseUrl = "http://${ApiHost}:$ServerPort"
-$WsBaseUrl = "http://${ApiHost}:$ServerPort"
+$Endpoint = Resolve-JjyxNetworkEndpoint -NetworkProfile $NetworkProfile -ApiHost $ApiHost -ServerPort $ServerPort -EnvFile $EnvFile
 
 Write-Host "Device: $DeviceId"
-Write-Host "API_BASE_URL: $ApiBaseUrl"
-Write-Host "WS_BASE_URL: $WsBaseUrl"
+Write-Host "Network profile: $($Endpoint.NetworkProfile)"
+Write-Host "API_BASE_URL: $($Endpoint.ApiBaseUrl)"
+Write-Host "WS_BASE_URL: $($Endpoint.WsBaseUrl)"
 
 Set-Location $AppRoot
-& $Flutter run -d $DeviceId --dart-define=API_BASE_URL=$ApiBaseUrl --dart-define=WS_BASE_URL=$WsBaseUrl
+& $Flutter --no-version-check run -d $DeviceId --dart-define=API_BASE_URL=$($Endpoint.ApiBaseUrl) --dart-define=WS_BASE_URL=$($Endpoint.WsBaseUrl)

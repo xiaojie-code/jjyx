@@ -872,13 +872,15 @@ export class MatrixService {
       }),
     );
 
+    const specialRewardAmount = await this.getSpecialRewardAmount(matrix.id, userId);
+
     return {
-      matrix,
-      slots: await this.mergeSpecialRewardAmounts(
-        matrix.id,
-        userId,
-        slotDetails,
-      ),
+      matrix: {
+        ...matrix,
+        claimableIncome: Math.max(0, Number(matrix.claimableIncome) - specialRewardAmount),
+        specialRewardAmount,
+      },
+      slots: slotDetails,
     };
   }
 
@@ -1025,18 +1027,14 @@ export class MatrixService {
             };
           }),
         );
-        const mergedSlotDetails = await this.mergeSpecialRewardAmounts(
-          matrix.id,
-          userId,
-          slotDetails,
-        );
+        const specialRewardAmount = await this.getSpecialRewardAmount(matrix.id, userId);
 
         return {
           round: matrix.round,
           completedAt: matrix.completedAt,
-          claimableIncome: matrix.claimableIncome,
+          claimableIncome: Math.max(0, Number(matrix.claimableIncome) - specialRewardAmount),
           nextRoundFund: matrix.nextRoundFund,
-          slots: mergedSlotDetails,
+          slots: slotDetails,
         };
       }),
     );
@@ -1134,14 +1132,19 @@ export class MatrixService {
             };
           }),
         );
-        const mergedSlotDetails = await this.mergeSpecialRewardAmounts(
-          matrix.id,
-          userId,
-          slotDetails,
+        const specialRewardAmount = await this.getSpecialRewardAmount(matrix.id, userId);
+        const specialRewards = await this.dataSource.query(
+          `SELECT i.id, i.amount, i.description, i.created_at,
+                  u.id AS user_id, u.account, u.nickname
+           FROM matrix_incomes i
+           LEFT JOIN users u ON u.id = i.from_user_id
+           WHERE i.matrix_id = ? AND i.owner_id = ? AND i.slot_number = 0
+           ORDER BY i.created_at ASC`,
+          [matrix.id, userId],
         );
 
-        // 计算本轮总可领取收益和下轮资金
-        const roundClaimable = Number(matrix.claimableIncome);
+        // 计算本轮矩阵可领取收益和下轮资金；特殊奖励单独进入总收益记录，不并入矩阵可领取
+        const roundClaimable = Math.max(0, Number(matrix.claimableIncome) - specialRewardAmount);
         const roundNextFund = Number(matrix.nextRoundFund);
 
         return {
@@ -1149,13 +1152,25 @@ export class MatrixService {
           status: matrix.status === 1 ? '进行中' : '已完成',
           claimableIncome: roundClaimable,
           nextRoundFund: roundNextFund,
-          slots: mergedSlotDetails,
+          specialRewardAmount,
+          specialRewards: specialRewards.map((reward: any) => ({
+            id: reward.id,
+            amount: Number(reward.amount),
+            description: reward.description || '特殊奖励',
+            createdAt: reward.created_at,
+            user: reward.user_id ? {
+              id: Number(reward.user_id),
+              account: reward.account,
+              nickname: reward.nickname,
+            } : null,
+          })),
+          slots: slotDetails,
         };
       }),
     );
 
     // 汇总
-    const totalClaimable = result.reduce((sum, r) => sum + r.claimableIncome, 0);
+    const totalClaimable = result.reduce((sum, r) => sum + r.claimableIncome + (r.specialRewardAmount || 0), 0);
     const totalNextFund = result.reduce((sum, r) => sum + r.nextRoundFund, 0);
 
     return {
@@ -1165,34 +1180,14 @@ export class MatrixService {
     };
   }
 
-  private async mergeSpecialRewardAmounts(
-    matrixId: number,
-    ownerId: number,
-    slotDetails: any[],
-  ) {
-    const specialIncomes = await this.incomeRepo.find({
-      where: { matrixId, ownerId, slotNumber: 0 },
-      order: { createdAt: 'ASC' },
-    });
-    const specialAmountByUser = new Map<number, number>();
-    for (const income of specialIncomes) {
-      const fromUserId = Number(income.fromUserId);
-      specialAmountByUser.set(
-        fromUserId,
-        (specialAmountByUser.get(fromUserId) || 0) + Number(income.amount),
-      );
-    }
-
-    return slotDetails.map((slot) => {
-      const specialRewardAmount =
-        specialAmountByUser.get(Number(slot.userId ?? slot.user?.id)) || 0;
-      if (specialRewardAmount <= 0) return slot;
-      return {
-        ...slot,
-        incomeAmount: Number(slot.incomeAmount) + specialRewardAmount,
-        specialRewardAmount,
-        hasSpecialReward: true,
-      };
-    });
+  private async getSpecialRewardAmount(matrixId: number, ownerId: number) {
+    const result = await this.incomeRepo
+      .createQueryBuilder('i')
+      .select('SUM(i.amount)', 'total')
+      .where('i.matrix_id = :matrixId', { matrixId })
+      .andWhere('i.owner_id = :ownerId', { ownerId })
+      .andWhere('i.slot_number = 0')
+      .getRawOne();
+    return Number(result?.total || 0);
   }
 }

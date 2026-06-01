@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
+import '../../../core/update/app_update_service.dart';
 import '../../../core/utils/toast.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -175,6 +176,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   subtitle: const Text('修改当前账号登录密码'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _showChangePasswordDialog,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.system_update_alt),
+                  title: const Text('检查更新'),
+                  subtitle: const Text('检测是否有新的安装包版本'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => AppUpdateService.checkForUpdate(context, ref, manual: true),
                 ),
               ],
             ),

@@ -88,6 +88,14 @@ export class AdminService {
     };
   }
 
+  async getUserStats() {
+    const [totalUsers, activatedUsers] = await Promise.all([
+      this.userRepo.count(),
+      this.userRepo.count({ where: { isActivated: true } }),
+    ]);
+    return { totalUsers, activatedUsers };
+  }
+
   async updateUser(id: number, data: any) {
     await this.userRepo.update(id, data);
   }
@@ -190,6 +198,116 @@ export class AdminService {
       [requestId],
     );
     return { message: '已拒绝' };
+  }
+
+  private async ensureAppVersionsTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS app_versions (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        platform VARCHAR(20) NOT NULL DEFAULT 'android',
+        version_name VARCHAR(50) NOT NULL,
+        version_code INT NOT NULL,
+        download_url VARCHAR(500) NOT NULL,
+        force_update TINYINT NOT NULL DEFAULT 0,
+        changelog TEXT NULL,
+        file_size BIGINT NULL,
+        status TINYINT NOT NULL DEFAULT 1 COMMENT '1 enabled, 0 disabled',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_app_versions_platform_status_code (platform, status, version_code)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+  }
+
+  async getAppVersions() {
+    await this.ensureAppVersionsTable();
+    return this.dataSource.query(
+      `SELECT id, platform, version_name AS versionName, version_code AS versionCode,
+              download_url AS downloadUrl, force_update AS forceUpdate,
+              changelog, file_size AS fileSize, status, created_at AS createdAt,
+              updated_at AS updatedAt
+       FROM app_versions
+       ORDER BY platform ASC, version_code DESC, id DESC
+       LIMIT 200`,
+    );
+  }
+
+  async createAppVersion(data: any) {
+    await this.ensureAppVersionsTable();
+    const platform = (data.platform || 'android').trim();
+    const versionName = String(data.versionName || '').trim();
+    const versionCode = Number(data.versionCode);
+    const downloadUrl = String(data.downloadUrl || '').trim();
+    const changelog = String(data.changelog || '').trim();
+    const fileSize = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
+      ? null
+      : Number(data.fileSize);
+    if (!platform) throw new BadRequestException('平台不能为空');
+    if (!versionName) throw new BadRequestException('版本名称不能为空');
+    if (!Number.isInteger(versionCode) || versionCode <= 0) {
+      throw new BadRequestException('版本号必须是大于0的整数');
+    }
+    if (!downloadUrl) throw new BadRequestException('下载地址不能为空');
+    await this.dataSource.query(
+      `INSERT INTO app_versions
+        (platform, version_name, version_code, download_url, force_update, changelog, file_size, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        platform,
+        versionName,
+        versionCode,
+        downloadUrl,
+        data.forceUpdate ? 1 : 0,
+        changelog || null,
+        Number.isFinite(fileSize as number) ? fileSize : null,
+        data.status === 0 ? 0 : 1,
+      ],
+    );
+    return { message: '版本已发布' };
+  }
+
+  async updateAppVersion(id: number, data: any) {
+    await this.ensureAppVersionsTable();
+    const rows = await this.dataSource.query('SELECT id FROM app_versions WHERE id = ? LIMIT 1', [id]);
+    if (rows.length === 0) throw new NotFoundException('版本不存在');
+    const platform = (data.platform || 'android').trim();
+    const versionName = String(data.versionName || '').trim();
+    const versionCode = Number(data.versionCode);
+    const downloadUrl = String(data.downloadUrl || '').trim();
+    const changelog = String(data.changelog || '').trim();
+    const fileSize = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
+      ? null
+      : Number(data.fileSize);
+    if (!platform) throw new BadRequestException('平台不能为空');
+    if (!versionName) throw new BadRequestException('版本名称不能为空');
+    if (!Number.isInteger(versionCode) || versionCode <= 0) {
+      throw new BadRequestException('版本号必须是大于0的整数');
+    }
+    if (!downloadUrl) throw new BadRequestException('下载地址不能为空');
+    await this.dataSource.query(
+      `UPDATE app_versions
+       SET platform = ?, version_name = ?, version_code = ?, download_url = ?,
+           force_update = ?, changelog = ?, file_size = ?, status = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [
+        platform,
+        versionName,
+        versionCode,
+        downloadUrl,
+        data.forceUpdate ? 1 : 0,
+        changelog || null,
+        Number.isFinite(fileSize as number) ? fileSize : null,
+        data.status === 0 ? 0 : 1,
+        id,
+      ],
+    );
+    return { message: '版本已更新' };
+  }
+
+  async deleteAppVersion(id: number) {
+    await this.ensureAppVersionsTable();
+    await this.dataSource.query('DELETE FROM app_versions WHERE id = ?', [id]);
+    return { message: '版本已删除' };
   }
 
   private generateRandomPassword() {

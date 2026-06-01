@@ -6,6 +6,8 @@ import { Cdk } from '../entities/cdk.entity';
 import { SystemSwitch } from '../entities/system-switch.entity';
 import { Conversation } from '../entities/conversation.entity';
 import { ConversationMember } from '../entities/conversation-member.entity';
+import { Friendship } from '../entities/friendship.entity';
+import { Message } from '../entities/message.entity';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import { AuthModule } from '../auth/auth.module';
@@ -13,7 +15,7 @@ import { MatrixModule } from '../matrix/matrix.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, UserCurrency, Cdk, SystemSwitch, Conversation, ConversationMember]),
+    TypeOrmModule.forFeature([User, UserCurrency, Cdk, SystemSwitch, Conversation, ConversationMember, Friendship, Message]),
     AuthModule,
     forwardRef(() => MatrixModule),
   ],

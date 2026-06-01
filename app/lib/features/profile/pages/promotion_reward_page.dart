@@ -345,6 +345,7 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                         final roundNum = round['round'] ?? (index + 1);
                         final status = round['status'] ?? '';
                         final slots = (round['slots'] as List?) ?? [];
+                        final specialRewards = (round['specialRewards'] as List?) ?? [];
                         final roundClaimable = double.tryParse(round['claimableIncome']?.toString() ?? '0') ?? 0;
                         final roundNextFund = double.tryParse(round['nextRoundFund']?.toString() ?? '0') ?? 0;
 
@@ -367,9 +368,31 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                             '可领取 ${_formatAmount(roundClaimable)} · 下轮资金 ${_formatAmount(roundNextFund)}',
                             style: const TextStyle(fontSize: 11, color: Colors.grey),
                           ),
-                          children: slots.isEmpty
-                              ? [const Padding(padding: EdgeInsets.all(12), child: Text('暂无入位用户', style: TextStyle(color: Colors.grey)))]
-                              : slots.map<Widget>((s) {
+                          children: [
+                            ...specialRewards.map<Widget>((s) {
+                              final reward = Map<String, dynamic>.from(s);
+                              final user = reward['user'] as Map<String, dynamic>?;
+                              final amount = double.tryParse(reward['amount']?.toString() ?? '0') ?? 0;
+                              final name = user?['nickname'] ?? user?['account'] ?? '未知';
+                              return ListTile(
+                                dense: true,
+                                leading: CircleAvatar(
+                                  radius: 14,
+                                  backgroundColor: Colors.purple.shade50,
+                                  child: const Text('特', style: TextStyle(fontSize: 11, color: Colors.purple)),
+                                ),
+                                title: Text('特殊奖励 - $name', style: const TextStyle(fontSize: 13)),
+                                subtitle: const Text('指定账号推广树激活奖励，不计入矩阵可领取金额',
+                                    style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                trailing: Text(
+                                  '+${_formatAmount(amount)}',
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.green),
+                                ),
+                              );
+                            }),
+                            if (slots.isEmpty && specialRewards.isEmpty)
+                              const Padding(padding: EdgeInsets.all(12), child: Text('暂无入位用户', style: TextStyle(color: Colors.grey))),
+                            ...slots.map<Widget>((s) {
                                   final slot = Map<String, dynamic>.from(s);
                                   final user = slot['user'] as Map<String, dynamic>?;
                                   final slotNum = slot['slotNumber'] ?? 0;
@@ -409,7 +432,8 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                                       ],
                                     ),
                                   );
-                                }).toList(),
+                                }),
+                          ],
                         );
                       },
                     ),

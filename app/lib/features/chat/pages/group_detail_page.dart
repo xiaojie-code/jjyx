@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
@@ -123,7 +123,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
         content: TextField(
           controller: ctrl,
           decoration: const InputDecoration(
-            hintText: '输入昵称（留空则使用默认昵称）',
+            hintText: '输入昵称，留空则使用默认昵称',
             border: OutlineInputBorder(),
           ),
         ),
@@ -227,7 +227,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
   }
 
   Future<void> _addMember() async {
-    // 获取当前群成员ID列表，排除已在群中的
+    // 鑾峰彇褰撳墠缇ゆ垚鍛業D鍒楄〃锛屾帓闄ゅ凡鍦ㄧ兢涓殑
     final existingIds = _members
         .map((m) => int.tryParse(m['userId']?.toString() ?? '') ?? 0)
         .where((id) => id > 0)
@@ -251,7 +251,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
       } catch (_) {}
     }
     if (mounted) {
-      Toast.success(context, '已添加 $successCount 人');
+      Toast.success(context, '已发送 $successCount 个邀请');
       _loadMembers();
     }
   }
@@ -305,9 +305,9 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                 ApiEndpoints.groupMeetingActive(widget.conversationId),
               );
       if (meeting == null) {
-        // 没有进行中的会议，需要发起
+        // 娌℃湁杩涜涓殑浼氳锛岄渶瑕佸彂璧?
         if (!_canManageMeeting()) {
-          // 普通成员需要确认消耗积分，显示当前余额
+          // 鏅€氭垚鍛橀渶瑕佺‘璁ゆ秷鑰楃Н鍒嗭紝鏄剧ず褰撳墠浣欓
           int currentPoints = 0;
           try {
             final balance = await ref.read(apiClientProvider).get<Map<String, dynamic>>('/api/currency/balance');
@@ -404,7 +404,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // 群信息
+                // 缇や俊鎭?
                 Container(
                   padding: const EdgeInsets.all(16),
                   color: Colors.white,
@@ -433,7 +433,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                // 群公告
+                // 缇ゅ叕鍛?
                 ListTile(
                   dense: true,
                   leading: const Icon(Icons.campaign, size: 20, color: Colors.orange),
@@ -446,7 +446,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                   trailing: canManage ? const Icon(Icons.edit, size: 16) : null,
                   onTap: canManage ? _editAnnouncement : null,
                 ),
-                // 我在本群的昵称
+                // 鎴戝湪鏈兢鐨勬樀绉?
                 ListTile(
                   dense: true,
                   leading: const Icon(Icons.badge, size: 20, color: Colors.blue),
@@ -459,7 +459,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                   onTap: _editMyGroupNickname,
                 ),
                 const SizedBox(height: 8),
-                // 成员搜索
+                // 鎴愬憳鎼滅储
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   child: TextField(
@@ -474,7 +474,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                     ),
                   ),
                 ),
-                // 成员列表
+                // 鎴愬憳鍒楄〃
                 Expanded(
                   child: ListView.builder(
                     itemCount: _filteredMembers.length,
@@ -502,7 +502,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                         ),
                         title: Row(
                           children: [
-                            Text(m['nickname'] ?? '用户${m['userId']}'),
+                            Text(m['nickname'] ?? "用户${m['userId']}"),
                             if (isOwner) ...[
                               const SizedBox(width: 6),
                               Container(
@@ -590,7 +590,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                     },
                   ),
                 ),
-                // 底部操作
+                // 搴曢儴鎿嶄綔
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(

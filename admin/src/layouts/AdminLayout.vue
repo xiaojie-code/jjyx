@@ -60,6 +60,10 @@
           <el-icon><Setting /></el-icon>
           <span>系统配置</span>
         </el-menu-item>
+        <el-menu-item index="/app-versions">
+          <el-icon><Upload /></el-icon>
+          <span>App版本管理</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
@@ -115,6 +119,7 @@ const menuItems = [
   { path: '/social', title: '社交管理' },
   { path: '/invite-records', title: '邀请关系' },
   { path: '/configs', title: '系统配置' },
+  { path: '/app-versions', title: 'App版本管理' },
 ]
 
 const activeMenu = computed(() => route.path)

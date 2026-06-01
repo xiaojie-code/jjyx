@@ -1,12 +1,14 @@
 # Node modules
 node_modules/
 dist/
+admin/dist_admin/
 
 # Flutter
 app/build/
 app/.dart_tool/
 app/.packages
 app/.flutter-plugins-dependencies
+app/android/.gradle-user-home/
 
 # Server
 server/uploads/avatars/
@@ -28,3 +30,4 @@ Thumbs.db
 # Temp
 *.log
 *.zip
+.codex/

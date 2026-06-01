@@ -8,6 +8,7 @@ export class AdminController {
 
   // 用户
   @Get('users') getUsers(@Query() query: any, @Query() pagination: PaginationDto) { return this.adminService.getUsers(query, pagination); }
+  @Get('users/stats') getUserStats() { return this.adminService.getUserStats(); }
   @Get('users/:id') getUserDetail(@Param('id', ParseIntPipe) id: number) { return this.adminService.getUsers({ keyword: String(id) }, { page: 1, pageSize: 1 }); }
   @Put('users/:id') updateUser(@Param('id', ParseIntPipe) id: number, @Body() data: any) { return this.adminService.updateUser(id, data); }
   @Put('users/:id/status') updateUserStatus(@Param('id', ParseIntPipe) id: number, @Body('status') status: number) { return this.adminService.updateUserStatus(id, status); }
@@ -18,6 +19,12 @@ export class AdminController {
   @Get('password-reset/requests') getPasswordResetRequests(@Query() query: any) { return this.adminService.getPasswordResetRequests(query); }
   @Post('password-reset/:id/reset') resetPasswordByRequest(@Param('id', ParseIntPipe) id: number) { return this.adminService.resetUserPasswordByRequest(id); }
   @Post('password-reset/:id/reject') rejectPasswordResetRequest(@Param('id', ParseIntPipe) id: number) { return this.adminService.rejectPasswordResetRequest(id); }
+
+  // App版本管理
+  @Get('app-versions') getAppVersions() { return this.adminService.getAppVersions(); }
+  @Post('app-versions') createAppVersion(@Body() data: any) { return this.adminService.createAppVersion(data); }
+  @Put('app-versions/:id') updateAppVersion(@Param('id', ParseIntPipe) id: number, @Body() data: any) { return this.adminService.updateAppVersion(id, data); }
+  @Delete('app-versions/:id') deleteAppVersion(@Param('id', ParseIntPipe) id: number) { return this.adminService.deleteAppVersion(id); }
 
   // 功能开关
   @Get('switches') getSwitches() { return this.adminService.getSwitches(); }
