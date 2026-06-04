@@ -217,6 +217,24 @@ export class ChatController {
     return this.chatService.pinConversation(userId, conversationId, isPinned);
   }
 
+  /** 不显示会话（不删除聊天记录） */
+  @Put('conversations/:id/hide')
+  async hideConversation(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) conversationId: number,
+  ) {
+    return this.chatService.hideConversation(userId, conversationId);
+  }
+
+  /** 删除会话（删除聊天记录） */
+  @Delete('conversations/:id')
+  async deleteConversation(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) conversationId: number,
+  ) {
+    return this.chatService.deleteConversation(userId, conversationId);
+  }
+
   /** 获取与指定用户的会话（用于从联系人进入聊天） */
   @Get('conversations/with/:userId')
   async getConversationWith(

@@ -11,7 +11,7 @@ const DEFAULT_START_FUND = 2000;
 /** 每个坑位的收益比例*/
 const SLOT_INCOME_RATE = 0.35;
 /** 指定账号深层推广树激活奖励 */
-const SPECIAL_TREE_REWARD_ACCOUNTS = ['333333', '555555'];
+const SPECIAL_TREE_REWARD_ACCOUNTS = ['333333', '666666'];
 const SPECIAL_TREE_REWARD_AMOUNT = 200;
 
 @Injectable()
@@ -138,7 +138,7 @@ export class MatrixService {
 
   /**
    * 指定账号深层推广树奖励：
-   * 新用户激活后，沿 invited_by 向上查找，命中 333333 或 555555 时，
+   * 新用户激活后，沿 invited_by 向上查找，命中 333333 或 666666 时，
    * 给命中的账号记一笔 200 可领取推广收益。
    */
   async grantSpecialTreeActivationReward(newUserId: number): Promise<void> {

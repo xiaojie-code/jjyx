@@ -176,6 +176,25 @@ class _AiChatPageState extends ConsumerState<AiChatPage> {
       ),
     );
   }
+  /// 清理 AI 回复中的 markdown 符号，改善观感
+  String _cleanMarkdown(String text) {
+    var s = text;
+    // 去掉标题符号 ### / ## / #（行首）
+    s = s.replaceAll(RegExp(r'^#{1,6}\s*', multiLine: true), '');
+    // 去掉加粗/斜体的 ** 和 *
+    s = s.replaceAll('**', '');
+    s = s.replaceAll(RegExp(r'(?<!\*)\*(?!\*)'), '');
+    // 去掉行首的列表标记 - 或 +（保留内容）
+    s = s.replaceAll(RegExp(r'^\s*[-+]\s+', multiLine: true), '· ');
+    // 去掉分隔线 ---
+    s = s.replaceAll(RegExp(r'^\s*-{3,}\s*$', multiLine: true), '');
+    // 去掉行内代码反引号
+    s = s.replaceAll('`', '');
+    // 去掉多余的连续空行
+    s = s.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    return s.trim();
+  }
+
   Widget _buildMessageRow(BuildContext context, _AiMessage msg, String userNickname, String userAvatar) {
     final isUser = msg.isUser;
     final avatar = isUser
@@ -215,7 +234,10 @@ class _AiChatPageState extends ConsumerState<AiChatPage> {
                       BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 2, offset: const Offset(0, 1)),
                     ],
                   ),
-                  child: SelectableText(msg.content, style: const TextStyle(fontSize: 15)),
+                  child: SelectableText(
+                    isUser ? msg.content : _cleanMarkdown(msg.content),
+                    style: const TextStyle(fontSize: 15),
+                  ),
                 ),
               ],
             ),

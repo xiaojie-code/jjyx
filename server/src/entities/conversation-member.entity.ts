@@ -25,6 +25,9 @@ export class ConversationMember {
   @Column({ type: 'boolean', default: false, name: 'is_pinned' })
   isPinned: boolean;
 
+  @Column({ type: 'boolean', default: false, name: 'is_hidden', comment: '是否不显示该会话（不删除记录）' })
+  isHidden: boolean;
+
   @Column({ type: 'int', default: 0, name: 'unread_count' })
   unreadCount: number;
 

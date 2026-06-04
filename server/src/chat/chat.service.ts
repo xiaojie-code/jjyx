@@ -60,16 +60,22 @@ export class ChatService {
     });
     const saved = await this.msgRepo.save(msg);
 
-    // 更新会话成员未读数
+    // 更新会话成员未读数（同时取消隐藏：收到新消息的会话重新显示）
     await this.memberRepo
       .createQueryBuilder()
       .update()
-      .set({ unreadCount: () => 'unread_count + 1' })
+      .set({ unreadCount: () => 'unread_count + 1', isHidden: false })
       .where('conversation_id = :cid AND user_id != :uid', {
         cid: conversationId,
         uid: senderId,
       })
       .execute();
+
+    // 发送者自己发消息后，如果之前隐藏了会话，也重新显示（不增加未读）
+    await this.memberRepo.update(
+      { conversationId, userId: senderId },
+      { isHidden: false },
+    );
 
     return saved;
   }
@@ -143,6 +149,8 @@ export class ChatService {
 
     const result = [];
     for (const m of members) {
+      // 用户隐藏（不显示）的会话跳过
+      if (m.isHidden) continue;
       const conv = await this.convRepo.findOne({
         where: { id: m.conversationId },
       });
@@ -374,6 +382,29 @@ export class ChatService {
   ) {
     await this.memberRepo.update({ conversationId, userId }, { isPinned });
     return { message: isPinned ? '已置顶' : '已取消置顶' };
+  }
+
+  /** 不显示会话（不删除聊天记录，仅当前用户隐藏） */
+  async hideConversation(userId: number, conversationId: number) {
+    await this.ensureConversationMember(userId, conversationId);
+    await this.memberRepo.update(
+      { conversationId, userId },
+      { isHidden: true, isPinned: false },
+    );
+    return { message: '已不显示该聊天' };
+  }
+
+  /** 删除会话（删除聊天记录 + 隐藏会话） */
+  async deleteConversation(userId: number, conversationId: number) {
+    await this.ensureConversationMember(userId, conversationId);
+    // 删除该会话的所有消息
+    await this.msgRepo.delete({ conversationId });
+    // 隐藏会话并清零未读
+    await this.memberRepo.update(
+      { conversationId, userId },
+      { isHidden: true, isPinned: false, unreadCount: 0 },
+    );
+    return { message: '已删除该聊天' };
   }
 
   /** 获取与指定用户的单聊会话（不存在则自动创建） */

@@ -154,6 +154,110 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     }
   }
 
+  /// 长按会话弹出操作菜单（置顶/不显示/删除），在长按位置附近显示（仿微信）
+  void _showConversationMenu(
+      ConversationItem conv, String peerName, Offset position) {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        overlay.size.width - position.dx,
+        overlay.size.height - position.dy,
+      ),
+      items: [
+        PopupMenuItem<String>(
+          value: 'pin',
+          child: Row(
+            children: [
+              Icon(
+                  conv.isPinned
+                      ? Icons.vertical_align_bottom
+                      : Icons.vertical_align_top,
+                  size: 18,
+                  color: Colors.black87),
+              const SizedBox(width: 10),
+              Text(conv.isPinned ? '取消置顶' : '置顶该聊天'),
+            ],
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'hide',
+          child: Row(
+            children: [
+              Icon(Icons.visibility_off_outlined, size: 18, color: Colors.black87),
+              SizedBox(width: 10),
+              Text('不显示该聊天'),
+            ],
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18, color: Colors.red),
+              SizedBox(width: 10),
+              Text('删除该聊天', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'pin') {
+        _togglePin(conv);
+      } else if (value == 'hide') {
+        _hideConversation(conv);
+      } else if (value == 'delete') {
+        _confirmDeleteConversation(conv, peerName);
+      }
+    });
+  }
+
+  /// 不显示会话（不删除记录）
+  Future<void> _hideConversation(ConversationItem conv) async {
+    try {
+      await ref.read(apiClientProvider).put(
+        ApiEndpoints.hideConversation(conv.conversationId),
+      );
+      _loadConversations();
+    } catch (e) {
+      if (mounted) Toast.error(context, '$e');
+    }
+  }
+
+  /// 删除会话（删除聊天记录，需确认）
+  Future<void> _confirmDeleteConversation(
+      ConversationItem conv, String peerName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除聊天'),
+        content: Text('确定删除与「$peerName」的聊天吗？聊天记录将一并删除，无法恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref.read(apiClientProvider).delete(
+        ApiEndpoints.deleteConversation(conv.conversationId),
+      );
+      _loadConversations();
+    } catch (e) {
+      if (mounted) Toast.error(context, '$e');
+    }
+  }
+
   void _searchMessages() {
     showSearch(context: context, delegate: _MessageSearchDelegate(ref));
   }
@@ -285,7 +389,10 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                       '聊天';
                   final peerAvatar = conv.peerUser?['avatar'] as String?;
 
-                  return ListTile(
+                  return GestureDetector(
+                    onLongPressStart: (details) => _showConversationMenu(
+                        conv, peerName, details.globalPosition),
+                    child: ListTile(
                     leading: CircleAvatar(
                       backgroundColor: Colors.grey.shade200,
                       backgroundImage: peerAvatar != null &&
@@ -363,7 +470,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                       // 杩斿洖鍚庡埛鏂版秷鎭垪琛紙鏇存柊鏈鏁帮級
                       _loadConversations();
                     },
-                    onLongPress: () => _togglePin(conv),
+                    ),
                   );
                 },
               ),

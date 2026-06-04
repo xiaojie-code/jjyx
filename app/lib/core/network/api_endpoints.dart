@@ -66,6 +66,8 @@ class ApiEndpoints {
   static String clearConversation(int id) =>
       '/api/social/conversations/$id/messages';
   static String pinConversation(int id) => '/api/social/conversations/$id/pin';
+  static String hideConversation(int id) => '/api/social/conversations/$id/hide';
+  static String deleteConversation(int id) => '/api/social/conversations/$id';
   static String meetingJoin(int id) => '/api/social/meetings/$id/join';
   static String meetingLeave(int id) => '/api/social/meetings/$id/leave';
   static String meetingEnd(int id) => '/api/social/meetings/$id/end';

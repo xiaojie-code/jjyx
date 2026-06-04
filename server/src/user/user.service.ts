@@ -435,7 +435,7 @@ export class UserService {
       await this.matrixService.createFirstMatrix(userId);
     }
 
-    // 指定账号（333333/555555）深层推广树激活奖励。
+    // 指定账号（333333/666666）深层推广树激活奖励。
     await this.matrixService.grantSpecialTreeActivationReward(userId);
 
     // 激活后只自动添加客服联系人，总群需由客服邀请后进入

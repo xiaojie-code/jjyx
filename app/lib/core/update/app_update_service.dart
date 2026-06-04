@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -52,6 +53,11 @@ class AppUpdateService {
     bool manual = false,
   }) async {
     if (_checking || _dialogShowing) return;
+    // Web 平台不支持 Platform，也不支持 APK 安装，直接跳过
+    if (kIsWeb) {
+      if (manual && context.mounted) Toast.info(context, '当前平台暂不支持在线安装更新');
+      return;
+    }
     if (!Platform.isAndroid) {
       if (manual && context.mounted) Toast.info(context, '当前平台暂不支持在线安装更新');
       return;
