@@ -40,6 +40,10 @@
           <el-icon><Money /></el-icon>
           <span>提现管理</span>
         </el-menu-item>
+        <el-menu-item index="/recharge">
+          <el-icon><CreditCard /></el-icon>
+          <span>充值管理</span>
+        </el-menu-item>
         <el-menu-item index="/agents">
           <el-icon><Share /></el-icon>
           <span>分销管理</span>

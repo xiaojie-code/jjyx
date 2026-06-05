@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/utils/toast.dart';
@@ -17,18 +18,11 @@ class ContactsPage extends ConsumerStatefulWidget {
 class _ContactsPageState extends ConsumerState<ContactsPage> {
   List<Map<String, dynamic>> _contacts = [];
   bool _loading = true;
-  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadContacts();
-  }
-
-  @override
-  void dispose() {
-    _searchCtrl.dispose();
-    super.dispose();
   }
 
   Future<void> _loadContacts() async {
@@ -90,6 +84,139 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
     );
   }
 
+  /// 获取联系人显示名称：有备注显示"备注(账号)"，无备注显示昵称
+  String _displayName(Map<String, dynamic> c) {
+    final remark = (c['remark'] as String?)?.trim();
+    final account = c['account'] as String? ?? '';
+    final nickname = c['nickname'] as String? ?? '';
+    if (remark != null && remark.isNotEmpty) {
+      return '$remark($account)';
+    }
+    return nickname.isNotEmpty ? nickname : account;
+  }
+
+  /// 聊天标题用名称：有备注只显示备注（不显示账号），无备注显示昵称
+  String _chatTitle(Map<String, dynamic> c) {
+    final remark = (c['remark'] as String?)?.trim();
+    final nickname = c['nickname'] as String? ?? '';
+    final account = c['account'] as String? ?? '';
+    if (remark != null && remark.isNotEmpty) return remark;
+    return nickname.isNotEmpty ? nickname : account;
+  }
+
+  /// 长按联系人弹出操作菜单
+  void _showContactMenu(Map<String, dynamic> c, Offset position) {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        overlay.size.width - position.dx,
+        overlay.size.height - position.dy,
+      ),
+      items: const [
+        PopupMenuItem<String>(
+          value: 'remark',
+          child: Row(
+            children: [
+              Icon(Icons.edit_note, size: 18, color: Colors.black87),
+              SizedBox(width: 10),
+              Text('修改备注'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18, color: Colors.red),
+              SizedBox(width: 10),
+              Text('删除', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'remark') {
+        _showRemarkDialog(c);
+      } else if (value == 'delete') {
+        _confirmDeleteContact(c);
+      }
+    });
+  }
+
+  /// 修改备注弹窗
+  Future<void> _showRemarkDialog(Map<String, dynamic> c) async {
+    final ctrl = TextEditingController(text: c['remark'] as String? ?? '');
+    final newRemark = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('修改备注'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '输入备注名，留空则取消备注',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: const Text('保存')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (newRemark == null) return;
+    try {
+      await ref.read(apiClientProvider).put(
+        ApiEndpoints.contactRemark(c['userId']),
+        data: {'remark': newRemark},
+      );
+      if (mounted) {
+        Toast.success(context, '备注已更新');
+        _loadContacts();
+      }
+    } catch (e) {
+      if (mounted) Toast.error(context, '$e');
+    }
+  }
+
+  /// 删除联系人确认
+  Future<void> _confirmDeleteContact(Map<String, dynamic> c) async {
+    final displayName = _displayName(c);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除联系人'),
+        content: Text('确定删除「$displayName」？将同时删除聊天记录'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref
+          .read(apiClientProvider)
+          .delete(ApiEndpoints.contactDelete(c['userId']));
+      if (mounted) _loadContacts();
+    } catch (e) {
+      if (mounted) Toast.error(context, '$e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -125,72 +252,59 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                     itemCount: _contacts.length,
                     itemBuilder: (context, index) {
                       final c = _contacts[index];
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundImage:
-                              (c['avatar'] as String?)?.isNotEmpty == true
-                                  ? NetworkImage(c['avatar'])
-                                  : null,
-                          child: (c['avatar'] as String?)?.isEmpty != false
-                              ? const Icon(Icons.person)
-                              : null,
-                        ),
-                        title: Text(c['remark'] ?? c['nickname'] ?? ''),
-                        subtitle: Text(c['nickname'] ?? ''),
-                        onTap: () async {
-                          // 获取与该联系人的会话，跳转到聊天页面
-                          try {
-                            final result = await ref
-                                .read(apiClientProvider)
-                                .get<Map<String, dynamic>>(
-                                  '/api/social/conversations/with/${c['userId']}',
-                                );
-                            if (!context.mounted) return;
-                            if (result != null &&
-                                result['conversationId'] != null) {
-                              await Navigator.of(context, rootNavigator: true)
-                                  .push(MaterialPageRoute(
-                                builder: (_) => ChatPage(
-                                  conversationId:
-                                      result['conversationId'] as int,
-                                  title: c['remark'] ?? c['nickname'] ?? '聊天',
-                                  type: 1,
-                                ),
-                              ));
-                            } else {
-                              Toast.error(context, '获取会话失败，请重试');
+                      final avatar = c['avatar'] as String?;
+                      final displayName = _displayName(c);
+
+                      return GestureDetector(
+                        onLongPressStart: (details) =>
+                            _showContactMenu(c, details.globalPosition),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.grey.shade200,
+                            backgroundImage: avatar != null &&
+                                    avatar.isNotEmpty &&
+                                    !avatar.contains('default')
+                                ? NetworkImage(avatar.startsWith('http')
+                                    ? avatar
+                                    : '${AppConstants.apiBaseUrl}$avatar')
+                                : null,
+                            child: avatar == null ||
+                                    avatar.isEmpty ||
+                                    avatar.contains('default')
+                                ? const Icon(Icons.person,
+                                    color: Colors.grey)
+                                : null,
+                          ),
+                          title: Text(displayName),
+                          onTap: () async {
+                            try {
+                              final result = await ref
+                                  .read(apiClientProvider)
+                                  .get<Map<String, dynamic>>(
+                                    '/api/social/conversations/with/${c['userId']}',
+                                  );
+                              if (!context.mounted) return;
+                              if (result != null &&
+                                  result['conversationId'] != null) {
+                                await Navigator.of(context,
+                                        rootNavigator: true)
+                                    .push(MaterialPageRoute(
+                                  builder: (_) => ChatPage(
+                                    conversationId:
+                                        result['conversationId'] as int,
+                                    title: _chatTitle(c),
+                                    type: 1,
+                                  ),
+                                ));
+                              } else {
+                                Toast.error(context, '获取会话失败，请重试');
+                              }
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              Toast.error(context, '获取会话失败');
                             }
-                          } catch (e) {
-                            if (!context.mounted) return;
-                            Toast.error(context, '获取会话失败');
-                          }
-                        },
-                        onLongPress: () {
-                          showDialog(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text('删除联系人'),
-                              content: const Text('确定删除该联系人？将同时删除聊天记录'),
-                              actions: [
-                                TextButton(
-                                    onPressed: () => Navigator.pop(ctx),
-                                    child: const Text('取消')),
-                                TextButton(
-                                  onPressed: () async {
-                                    await ref.read(apiClientProvider).delete(
-                                        ApiEndpoints.contactDelete(
-                                            c['userId']));
-                                    if (!ctx.mounted) return;
-                                    Navigator.pop(ctx);
-                                    if (mounted) _loadContacts();
-                                  },
-                                  child: const Text('删除',
-                                      style: TextStyle(color: Colors.red)),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                          },
+                        ),
                       );
                     },
                   ),

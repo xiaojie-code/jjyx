@@ -20,12 +20,17 @@ export class AppService {
         force_update TINYINT NOT NULL DEFAULT 0,
         changelog TEXT NULL,
         file_size BIGINT NULL,
+        file_md5 VARCHAR(64) NULL,
         status TINYINT NOT NULL DEFAULT 1 COMMENT '1 enabled, 0 disabled',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_app_versions_platform_status_code (platform, status, version_code)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    // 兼容旧表：补充 file_md5 字段
+    try {
+      await this.dataSource.query(`ALTER TABLE app_versions ADD COLUMN file_md5 VARCHAR(64) NULL`);
+    } catch (_) {}
   }
 
   async getLatestAppVersion(platform = 'android') {
@@ -33,7 +38,7 @@ export class AppService {
     const rows = await this.dataSource.query(
       `SELECT id, platform, version_name AS versionName, version_code AS versionCode,
               download_url AS downloadUrl, force_update AS forceUpdate,
-              changelog, file_size AS fileSize, created_at AS createdAt
+              changelog, file_size AS fileSize, file_md5 AS fileMd5, created_at AS createdAt
        FROM app_versions
        WHERE platform = ? AND status = 1
        ORDER BY version_code DESC, id DESC
@@ -47,6 +52,7 @@ export class AppService {
       versionCode: Number(version.versionCode),
       forceUpdate: Number(version.forceUpdate) === 1,
       fileSize: version.fileSize == null ? null : Number(version.fileSize),
+      fileMd5: version.fileMd5 || null,
     };
   }
 }

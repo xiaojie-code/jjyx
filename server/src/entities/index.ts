@@ -14,12 +14,15 @@ export { OfflineMessage } from './offline-message.entity';
 export { Meeting } from './meeting.entity';
 export { MeetingParticipant } from './meeting-participant.entity';
 export { MeetingBan } from './meeting-ban.entity';
+export { ServiceNotification } from './service-notification.entity';
 
 // Game entities
 export { Game } from './game.entity';
 export { GameRecord } from './game-record.entity';
 export { HorseRoom } from './horse-room.entity';
 export { HorseBet } from './horse-bet.entity';
+export { HorseRaceMatch } from './horse-race-match.entity';
+export { HorseRacePlayer } from './horse-race-player.entity';
 
 // Economy entities
 export { Withdrawal } from './withdrawal.entity';
@@ -33,6 +36,7 @@ export { LotteryConfig } from './lottery-config.entity';
 export { BackpackItem } from './backpack-item.entity';
 export { ItemConfig } from './item-config.entity';
 export { SystemSwitch } from './system-switch.entity';
+export { RechargeOrder } from './recharge-order.entity';
 
 // Distribution entities
 export { Agent } from './agent.entity';

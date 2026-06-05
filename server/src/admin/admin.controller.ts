@@ -1,5 +1,10 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { mkdirSync } from 'fs';
+import { join, extname } from 'path';
 import { AdminService } from './admin.service';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { PaginationDto } from '../common/dto/pagination.dto';
 
 @Controller('admin')
@@ -63,6 +68,33 @@ export class AdminController {
   // 提现
   @Get('withdrawals') getWithdrawals(@Query() query: any) { return this.adminService.getWithdrawals(query); }
   @Put('withdrawals/:id') reviewWithdrawal(@Param('id', ParseIntPipe) id: number, @Body('approve') approve: boolean) { return this.adminService.reviewWithdrawal(id, approve); }
+
+  // 充值
+  @Get('recharge/orders') getRechargeOrders(@Query() query: any) { return this.adminService.getRechargeOrders(query); }
+  @Get('recharge/stats') getRechargeStats() { return this.adminService.getRechargeStats(); }
+  @Put('recharge/:id/review') reviewRecharge(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number, @Body() data: { action: 'approve' | 'reject'; remark?: string }) { return this.adminService.reviewRecharge(id, operatorId, data); }
+
+  // 充值收款码上传
+  @Post('recharge/qrcode')
+  @UseInterceptors(FileInterceptor('image', {
+    storage: diskStorage({
+      destination: (_req, _file, cb) => {
+        const dir = join(process.cwd(), 'uploads', 'recharge');
+        mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        const ext = extname(file.originalname || '.png') || '.png';
+        cb(null, `qrcode-${Date.now()}${ext}`);
+      },
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+  }))
+  uploadRechargeQrcode(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('请选择收款码图片');
+    const url = `/uploads/recharge/${file.filename}`;
+    return this.adminService.updateConfig('recharge_qrcode', url).then(() => ({ url }));
+  }
 
   // 系统配置
   @Get('configs') getConfigs() { return this.adminService.getConfigs(); }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
@@ -54,12 +55,24 @@ class GameWebViewState extends State<GameWebView> {
   bool _isLoading = true;
   bool _hasError = false;
   String _errorMessage = '';
+  final List<String> _debugLogs = [];
+  bool _debugPanelExpanded = false;
+  int _loadProgress = 0;
+  int _lastLoggedProgress = -10;
+
+  bool get _debugEnabled {
+    if (kDebugMode) return true;
+    final uri = Uri.tryParse(widget.gameUrl);
+    return uri?.queryParameters['debug'] == '1' ||
+        uri?.queryParameters['gameDebug'] == '1';
+  }
 
   @override
   void initState() {
     super.initState();
     // 根据游戏方向设置屏幕
-    if (widget.orientation == 'landscape') {
+    final orientation = widget.orientation.toLowerCase().trim();
+    if (orientation == 'landscape') {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
@@ -70,6 +83,36 @@ class GameWebViewState extends State<GameWebView> {
       ]);
     }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _addDebugLog('open ${_shortUrl(widget.gameUrl)}');
+    _addDebugLog('orientation ${widget.orientation}');
+  }
+
+  void _addDebugLog(String message) {
+    if (!_debugEnabled) return;
+
+    final now = DateTime.now();
+    final timestamp = '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}:'
+        '${now.second.toString().padLeft(2, '0')}';
+    final entry = '$timestamp $message';
+
+    if (!mounted) {
+      _debugLogs.add(entry);
+      return;
+    }
+
+    setState(() {
+      _debugLogs.add(entry);
+      if (_debugLogs.length > 120) {
+        _debugLogs.removeRange(0, _debugLogs.length - 120);
+      }
+    });
+  }
+
+  String _shortUrl(Object? url) {
+    final value = (url ?? '').toString();
+    if (value.length <= 160) return value;
+    return '${value.substring(0, 80)}...${value.substring(value.length - 60)}';
   }
 
   @override
@@ -88,6 +131,7 @@ class GameWebViewState extends State<GameWebView> {
 
   /// Reload the current game URL after an error.
   void _retry() {
+    _addDebugLog('retry');
     setState(() {
       _isLoading = true;
       _hasError = false;
@@ -132,51 +176,88 @@ class GameWebViewState extends State<GameWebView> {
         return false;
       },
       child: Scaffold(
+        backgroundColor: Colors.black,
+        resizeToAvoidBottomInset: false,
         body: Stack(
+          fit: StackFit.expand,
           children: [
             // WebView layer
             if (!_hasError)
-              InAppWebView(
-                initialUrlRequest: URLRequest(
-                  url: WebUri(widget.gameUrl),
-                ),
-                initialSettings: InAppWebViewSettings(
-                  javaScriptEnabled: true,
-                  mediaPlaybackRequiresUserGesture: false,
-                  allowsInlineMediaPlayback: true,
-                  userAgent:
-                      'CompetitiveGamePlatform/1.0 GameId/${widget.gameId}',
-                  supportZoom: false,
-                  verticalScrollBarEnabled: false,
-                  horizontalScrollBarEnabled: false,
-                  transparentBackground: true,
-                ),
-                onWebViewCreated: (controller) {
-                  _webViewController = controller;
-                  // Attach JSBridge to the controller — registers all JS handlers.
-                  widget.jsBridge.attach(controller);
-                },
-                onLoadStart: (controller, url) {
-                  setState(() {
-                    _isLoading = true;
-                    _hasError = false;
-                  });
-                },
-                onLoadStop: (controller, url) {
-                  setState(() => _isLoading = false);
-                  // Send user info to H5 once the page finishes loading.
-                  widget.jsBridge.sendInit(widget.userInfo);
-                },
-                onReceivedError: (controller, request, error) {
-                  // Only treat main frame errors as page-level failures.
-                  if (request.isForMainFrame ?? false) {
+              Positioned.fill(
+                child: InAppWebView(
+                  initialUrlRequest: URLRequest(
+                    url: WebUri(widget.gameUrl),
+                  ),
+                  initialSettings: InAppWebViewSettings(
+                    javaScriptEnabled: true,
+                    domStorageEnabled: true,
+                    databaseEnabled: true,
+                    mediaPlaybackRequiresUserGesture: false,
+                    allowsInlineMediaPlayback: true,
+                    userAgent:
+                        'CompetitiveGamePlatform/1.0 GameId/${widget.gameId}',
+                    supportZoom: false,
+                    verticalScrollBarEnabled: false,
+                    horizontalScrollBarEnabled: false,
+                    transparentBackground: false,
+                  ),
+                  onWebViewCreated: (controller) {
+                    _webViewController = controller;
+                    _addDebugLog('webview created');
+                    // Attach JSBridge to the controller — registers all JS handlers.
+                    widget.jsBridge.attach(controller);
+                  },
+                  onLoadStart: (controller, url) {
+                    _addDebugLog('load start ${_shortUrl(url)}');
                     setState(() {
-                      _isLoading = false;
-                      _hasError = true;
-                      _errorMessage = error.description;
+                      _isLoading = true;
+                      _hasError = false;
                     });
-                  }
-                },
+                  },
+                  onLoadStop: (controller, url) {
+                    _addDebugLog('load stop ${_shortUrl(url)}');
+                    setState(() => _isLoading = false);
+                    // Send user info to H5 once the page finishes loading.
+                    widget.jsBridge.sendInit(widget.userInfo);
+                  },
+                  onProgressChanged: (controller, progress) {
+                    if (progress != _loadProgress) {
+                      setState(() => _loadProgress = progress);
+                    }
+                    if (progress == 100 ||
+                        progress - _lastLoggedProgress >= 10) {
+                      _lastLoggedProgress = progress;
+                      _addDebugLog('progress $progress%');
+                    }
+                  },
+                  onConsoleMessage: (controller, consoleMessage) {
+                    final level =
+                        consoleMessage.messageLevel.toString().split('.').last;
+                    _addDebugLog(
+                      'console $level: '
+                      '${consoleMessage.message}',
+                    );
+                  },
+                  onReceivedHttpError: (controller, request, response) {
+                    _addDebugLog(
+                      'http ${response.statusCode} ${_shortUrl(request.url)}',
+                    );
+                  },
+                  onReceivedError: (controller, request, error) {
+                    _addDebugLog(
+                      'error ${error.type}: ${error.description} '
+                      '${_shortUrl(request.url)}',
+                    );
+                    // Only treat main frame errors as page-level failures.
+                    if (request.isForMainFrame ?? false) {
+                      setState(() {
+                        _isLoading = false;
+                        _hasError = true;
+                        _errorMessage = error.description;
+                      });
+                    }
+                  },
+                ),
               ),
 
             // Error state with retry
@@ -187,6 +268,8 @@ class GameWebViewState extends State<GameWebView> {
 
             // Exit button overlay at top-left
             _buildExitButton(),
+
+            _buildDebugTools(),
           ],
         ),
       ),
@@ -233,6 +316,98 @@ class GameWebViewState extends State<GameWebView> {
               label: const Text('重试'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDebugTools() {
+    if (!_debugEnabled) return const SizedBox.shrink();
+
+    if (!_debugPanelExpanded) {
+      return Positioned(
+        top: MediaQuery.of(context).padding.top + 8,
+        right: 8,
+        child: Material(
+          color: Colors.black54,
+          shape: const CircleBorder(),
+          child: IconButton(
+            tooltip: 'Debug logs',
+            icon: const Icon(Icons.bug_report, color: Colors.white),
+            onPressed: () {
+              setState(() => _debugPanelExpanded = true);
+            },
+          ),
+        ),
+      );
+    }
+
+    final maxHeight = MediaQuery.of(context).size.height * 0.38;
+    final logs = _debugLogs.isEmpty ? 'No logs yet' : _debugLogs.join('\n');
+
+    return Positioned(
+      left: 8,
+      right: 8,
+      bottom: 8,
+      child: Material(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 6, 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'WebView logs  $_loadProgress%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Clear logs',
+                      icon: const Icon(Icons.delete_outline,
+                          color: Colors.white70, size: 18),
+                      onPressed: () {
+                        setState(() => _debugLogs.clear());
+                      },
+                    ),
+                    IconButton(
+                      tooltip: 'Hide logs',
+                      icon: const Icon(Icons.close,
+                          color: Colors.white70, size: 18),
+                      onPressed: () {
+                        setState(() => _debugPanelExpanded = false);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: Colors.white24),
+              Flexible(
+                child: SingleChildScrollView(
+                  reverse: true,
+                  padding: const EdgeInsets.all(10),
+                  child: SelectableText(
+                    logs,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      height: 1.25,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, MoreThan } from 'typeorm';
 import { Socket } from 'socket.io';
 import { Message } from '../entities/message.entity';
 import { Conversation } from '../entities/conversation.entity';
@@ -13,6 +13,7 @@ import { ConversationMember } from '../entities/conversation-member.entity';
 import { OfflineMessage } from '../entities/offline-message.entity';
 import { UserSetting } from '../entities/user-setting.entity';
 import { FriendRequest } from '../entities/friend-request.entity';
+import { Friendship } from '../entities/friendship.entity';
 import { User } from '../entities/user.entity';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { CurrencyService } from '../currency/currency.service';
@@ -32,6 +33,8 @@ export class ChatService {
     private readonly settingRepo: Repository<UserSetting>,
     @InjectRepository(FriendRequest)
     private readonly friendRequestRepo: Repository<FriendRequest>,
+    @InjectRepository(Friendship)
+    private readonly friendRepo: Repository<Friendship>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly currencyService: CurrencyService,
@@ -101,6 +104,7 @@ export class ChatService {
     for (const off of offlines) {
       const msg = await this.msgRepo.findOne({ where: { id: off.messageId } });
       if (msg) {
+        const senderInfo = await this.getUserInfo(msg.senderId);
         client.emit('message:receive', {
           id: msg.id,
           conversationId: msg.conversationId,
@@ -108,7 +112,8 @@ export class ChatService {
           content: msg.content,
           msgType: msg.msgType,
           createdAt: msg.createdAt,
-          senderNickname: await this.getUserNickname(msg.senderId),
+          senderNickname: senderInfo.nickname,
+          senderAvatar: senderInfo.avatar,
         });
       }
       off.isPushed = true;
@@ -158,8 +163,11 @@ export class ChatService {
       // 群聊未审核通过的不显示（status=0待审核，status=2拒绝）
       if (conv.type === 2 && conv.status !== 1) continue;
 
+      // 最后一条消息也只取当前用户清除时间点之后的（删除/清空只影响本人）
       const lastMsg = await this.msgRepo.findOne({
-        where: { conversationId: m.conversationId },
+        where: m.clearedAt
+          ? { conversationId: m.conversationId, createdAt: MoreThan(m.clearedAt) }
+          : { conversationId: m.conversationId },
         order: { createdAt: 'DESC' },
       });
 
@@ -169,6 +177,7 @@ export class ChatService {
         nickname: string;
         avatar: string;
         account: string;
+        remark: string;
       } | null = null;
       if (conv.type === 1) {
         // 使用 QueryBuilder 精确查找对方成员（排除自己）
@@ -186,11 +195,16 @@ export class ChatService {
             select: ['id', 'nickname', 'avatar', 'account'],
           });
           if (user) {
+            // 查找当前用户对该好友的备注
+            const friendship = await this.friendRepo.findOne({
+              where: { userId, friendId: user.id },
+            });
             peerUser = {
               id: user.id,
               nickname: user.nickname,
               avatar: user.avatar,
               account: user.account,
+              remark: friendship?.remark || '',
             };
           }
         }
@@ -200,6 +214,7 @@ export class ChatService {
         conversationId: m.conversationId,
         type: conv.type,
         name: conv.name,
+        avatar: conv.avatar || '',
         isPinned: m.isPinned,
         unreadCount: m.unreadCount,
         peerUser,
@@ -233,9 +248,14 @@ export class ChatService {
     conversationId: number,
     pagination: PaginationDto,
   ) {
-    await this.ensureConversationMember(userId, conversationId);
+    const member = await this.ensureConversationMember(userId, conversationId);
+    // 构造查询条件：只显示当前用户清除时间点之后的消息（删除/清空只影响本人）
+    const where: any = { conversationId };
+    if (member.clearedAt) {
+      where.createdAt = MoreThan(member.clearedAt);
+    }
     const [list, total] = await this.msgRepo.findAndCount({
-      where: { conversationId },
+      where,
       order: { createdAt: 'DESC' },
       skip: (pagination.page - 1) * pagination.pageSize,
       take: pagination.pageSize,
@@ -317,13 +337,13 @@ export class ChatService {
     return this.msgRepo.save(msg);
   }
 
-  /** 清空会话消息 */
+  /** 清空会话消息（仅清空当前用户这一侧，不影响对方） */
   async clearConversation(userId: number, conversationId: number) {
     await this.ensureConversationMember(userId, conversationId);
-    await this.msgRepo.delete({ conversationId });
+    // 不物理删除消息，只记录当前用户的清除时间点
     await this.memberRepo.update(
       { conversationId, userId },
-      { unreadCount: 0 },
+      { unreadCount: 0, clearedAt: new Date() },
     );
   }
 
@@ -394,15 +414,19 @@ export class ChatService {
     return { message: '已不显示该聊天' };
   }
 
-  /** 删除会话（删除聊天记录 + 隐藏会话） */
+  /** 删除会话（仅删除当前用户这一侧的聊天记录，不影响对方） */
   async deleteConversation(userId: number, conversationId: number) {
     await this.ensureConversationMember(userId, conversationId);
-    // 删除该会话的所有消息
-    await this.msgRepo.delete({ conversationId });
-    // 隐藏会话并清零未读
+    // 不物理删除消息，只标记当前用户的清除时间点 + 隐藏会话
+    // 该用户后续只能看到 clearedAt 之后的新消息，对方记录不受影响
     await this.memberRepo.update(
       { conversationId, userId },
-      { isHidden: true, isPinned: false, unreadCount: 0 },
+      {
+        isHidden: true,
+        isPinned: false,
+        unreadCount: 0,
+        clearedAt: new Date(),
+      },
     );
     return { message: '已删除该聊天' };
   }
@@ -450,16 +474,20 @@ export class ChatService {
     let setting = await this.settingRepo.findOne({ where: { userId } });
     if (!setting) {
       setting = await this.settingRepo.save(
-        this.settingRepo.create({ userId, notificationEnabled: true }),
+        this.settingRepo.create({ userId, notificationEnabled: true, notificationSound: true, notificationPopup: true }),
       );
     }
-    return { notificationEnabled: setting.notificationEnabled };
+    return {
+      notificationEnabled: setting.notificationEnabled,
+      notificationSound: setting.notificationSound ?? true,
+      notificationPopup: setting.notificationPopup ?? true,
+    };
   }
 
   /** 更新用户设置 */
   async updateUserSettings(
     userId: number,
-    data: { notificationEnabled?: boolean },
+    data: { notificationEnabled?: boolean; notificationSound?: boolean; notificationPopup?: boolean },
   ) {
     let setting = await this.settingRepo.findOne({ where: { userId } });
     if (!setting) {
@@ -468,10 +496,18 @@ export class ChatService {
     if (data.notificationEnabled !== undefined) {
       setting.notificationEnabled = data.notificationEnabled;
     }
+    if (data.notificationSound !== undefined) {
+      setting.notificationSound = data.notificationSound;
+    }
+    if (data.notificationPopup !== undefined) {
+      setting.notificationPopup = data.notificationPopup;
+    }
     await this.settingRepo.save(setting);
     return {
       message: '设置已更新',
       notificationEnabled: setting.notificationEnabled,
+      notificationSound: setting.notificationSound,
+      notificationPopup: setting.notificationPopup,
     };
   }
 
@@ -542,6 +578,9 @@ export class ChatService {
       let systemPrompt = '你是一个友好的AI助手，具备联网搜索能力。回答简洁明了，使用中文回复。如果用户问的是需要最新信息的问题，你会先搜索互联网再回答。';
       if (searchContext) {
         systemPrompt += `\n\n【以下是刚从互联网搜索到的最新信息，请基于这些信息回答用户的问题，不要说你无法联网】：\n${searchContext}`;
+      } else if (needSearch) {
+        // 搜索失败时，让AI基于已有知识尽力回答，不要直接说"无法联网"
+        systemPrompt += '\n\n【提示：本次实时搜索暂时没有取得结果。请基于你已有的知识尽力回答用户问题，可以给出一般性的参考信息和建议，不要直接回复"我无法联网"或"我无法获取实时数据"这类话术。】';
       }
 
       const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -609,8 +648,21 @@ export class ChatService {
     return searchKeywords.some(kw => message.includes(kw));
   }
 
-  /** 联网搜索（抓取 Bing 搜索结果） */
+  /** 联网搜索：先抓 Bing，失败再抓 DuckDuckGo，提高成功率 */
   private async webSearch(query: string): Promise<string> {
+    // 先试 Bing
+    let results = await this.searchBing(query);
+    // Bing 没结果再试 DuckDuckGo
+    if (results.length === 0) {
+      results = await this.searchDuckDuckGo(query);
+    }
+    return results.length > 0
+      ? `以下是从网络搜索到的信息（${new Date().toLocaleDateString('zh-CN')}）：\n${results.slice(0, 5).join('\n\n')}`
+      : '';
+  }
+
+  /** 抓取 Bing 搜索结果摘要 */
+  private async searchBing(query: string): Promise<string[]> {
     try {
       const url = `https://cn.bing.com/search?q=${encodeURIComponent(query)}`;
       const response = await fetch(url, {
@@ -621,36 +673,70 @@ export class ChatService {
         },
         signal: AbortSignal.timeout(10000),
       });
-      if (!response.ok) return '';
+      if (!response.ok) return [];
       const html = await response.text();
 
-      // 提取 Bing 搜索结果摘要（在 <p class="b_lineclamp..."> 或 <span class="..."> 中）
       const results: string[] = [];
-      // Bing 的摘要通常在 b_caption > p 中
       const captionRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
       let match: RegExpExecArray | null;
       while ((match = captionRegex.exec(html)) !== null && results.length < 8) {
-        const text = match[1]
-          .replace(/<[^>]+>/g, '')
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&[^;]+;/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
+        const text = this.cleanHtmlText(match[1]);
         if (text.length > 40 && !text.includes('javascript') && !text.includes('cookie')) {
           results.push(text.slice(0, 300));
         }
       }
-
-      return results.length > 0
-        ? `以下是从网络搜索到的信息（${new Date().toLocaleDateString('zh-CN')}）：\n${results.slice(0, 5).join('\n\n')}`
-        : '';
+      return results;
     } catch {
-      return '';
+      return [];
     }
+  }
+
+  /** 抓取 DuckDuckGo HTML 搜索结果摘要（反爬较松，作为兜底） */
+  private async searchDuckDuckGo(query: string): Promise<string[]> {
+    try {
+      const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html',
+          'Accept-Language': 'zh-CN,zh;q=0.9',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `q=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) return [];
+      const html = await response.text();
+
+      const results: string[] = [];
+      // DuckDuckGo 摘要在 <a class="result__snippet">...</a>
+      const snippetRegex = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+      let match: RegExpExecArray | null;
+      while ((match = snippetRegex.exec(html)) !== null && results.length < 8) {
+        const text = this.cleanHtmlText(match[1]);
+        if (text.length > 30) {
+          results.push(text.slice(0, 300));
+        }
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  /** 清理 HTML 标签和转义字符 */
+  private cleanHtmlText(raw: string): string {
+    return raw
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&[^;]+;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /** 获取AI聊天历史 */
@@ -684,6 +770,18 @@ export class ChatService {
       select: ['nickname', 'account'],
     });
     return user?.nickname || user?.account || `用户${userId}`;
+  }
+
+  /** 获取用户基本信息（昵称+头像） */
+  async getUserInfo(userId: number): Promise<{ nickname: string; avatar: string }> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: ['nickname', 'avatar', 'account'],
+    });
+    return {
+      nickname: user?.nickname || user?.account || `用户${userId}`,
+      avatar: user?.avatar || '',
+    };
   }
 
   private async ensureConversationMember(

@@ -12,4 +12,21 @@
  * @license   http://www.opensource.org/licenses/mit-license.php MIT License
  */
 
-return [];
+return  [
+    'default' => 'mysql',
+    'connections' => [
+        'mysql' => [
+            'driver'      => 'mysql',
+            'host'        => '127.0.0.1',
+            'port'        => '3306',
+            'database'    => 'killer_game',
+            'username'    => 'gamesocket',
+            'password'    => 'gamesocket123456',
+            'charset'     => 'utf8mb4',
+            'collation'   => 'utf8mb4_general_ci',
+            'prefix'      => '',
+            'strict'      => true,
+            'engine'      => null,
+        ],
+    ],
+];

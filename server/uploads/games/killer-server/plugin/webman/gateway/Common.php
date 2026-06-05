@@ -1,471 +1,863 @@
 <?php
 
 namespace plugin\webman\gateway;
-use support\Db;
+
 use GatewayWorker\Lib\Gateway;
+use support\Db;
 use support\Redis;
 
 class Common
 {
+    const MODE_AI = 'ai';
+    const MODE_REAL = 'real';
 
-    // 计算杀手去哪个房间
-    static function killer(){
-        $expect = Common::getnowexpect();
-        
-        // $room['killer_to_smallroomid'] = (int)1;
-        $key = 'killer_'.$expect;
-        $room['killer_to_smallroomid'] = Redis::get($key);
-        if(!$room['killer_to_smallroomid']){
-            $room['killer_to_smallroomid'] = rand(1,8);  //开出的房间号    需要更新为控制开奖
-            Redis::set($key,$room['killer_to_smallroomid']); 
-            $record = [
-                'samllroomid'=> $room['killer_to_smallroomid'],
-                'roomname'=>Common::smallroomname($room['killer_to_smallroomid']),
-                'expect'=>$expect,
-                'addtime'=>date('Y-m-d H:i:s',time())
-            ];
-            Db::table("wa_killer_record")->insert($record);
+    protected static $columnCache = [];
+    protected static $schemaPrepared = false;
 
-            // 把每个投注记录 改掉杀手的结果
-            $touzhus = Db::table("wa_touzhu")->where(['expect'=>$expect])->get();
-            $touzhu = Common::object_array($touzhus);
-            if($touzhu){
-                $handle = Common::handlekiller($touzhu,$expect,$room['killer_to_smallroomid']);
-            }
-            // 发放瓜分的收益
-            // 查询本期 所有投注的人
-
-            // $touzhus = Db::table("wa_touzhu")->where(['expect'=>$expect])->sum("coin"); //本期投注所有金额
-            // $guafen = (int)Db::table("wa_touzhu")->where(['expect'=>$expect,'tzid'=>$room['killer_to_smallroomid']])->sum("coin"); //本期 杀手 瓜分金额
-            
-            // $ifkong = $realuser = (array)Db::table("wa_touzhu")->where(['expect'=>$expect,'isrobot'=>0,'ifyouxiao'=>1])->first();
-            // if($ifkong){
-            //     $realuser = (array)Db::table("wa_touzhu")->where(['expect'=>$expect,'isrobot'=>0,'ifyouxiao'=>1])->get();   //所有真人投注列表
-            //     $touzhu = Common::object_array($realuser);
-            //      if($touzhu){
-            //         foreach ($touzhu as $k => $v){
-            //             // var_dump($v);
-            //             $user = Db::table("wa_users")->where('id',$v[0]['uid'])->first();
-            //             // var_dump($user);die;
-            //             // 投注金额占总金额的多少
-            //             $newcoin = $user->coin * $guafen / $touzhus;
-            //             Db::table("wa_users")->where(['id'=>$v['uid']])->update(['coin'=>$newcoin]);
-            //             // 前端请求余额更新
-            //         }
-            //    }
-            // }
-          
-            // var_dump($touzhu);
-           
+    static function normalizeMode($data = null)
+    {
+        $mode = '';
+        if (is_array($data)) {
+            $mode = $data['mode'] ?? ($data['match_mode'] ?? ($data['gameMode'] ?? ''));
+        } elseif (is_string($data)) {
+            $mode = $data;
         }
-        
-        // 得改为每个房间的开奖
 
-        
-        $room['tzcoin'] = (int)Db::table("wa_touzhu")->where(['expect'=>$expect,'tzid'=>$room['killer_to_smallroomid']])->sum("coin");
+        $mode = strtolower(trim((string)$mode));
+        if (in_array($mode, ['real', 'pvp', 'online', '真人', '真人模式'], true)) {
+            return self::MODE_REAL;
+        }
+
+        return self::MODE_AI;
+    }
+
+    static function getDataMode($data, $uid = null, $client_id = null)
+    {
+        if (is_array($data) && (isset($data['mode']) || isset($data['match_mode']) || isset($data['gameMode']))) {
+            return self::normalizeMode($data);
+        }
+
+        if ($client_id) {
+            $mode = self::getClientSelectedMode($client_id);
+            if ($mode) {
+                return $mode;
+            }
+        }
+
+        if ($uid) {
+            return self::getUserRoomMode($uid);
+        }
+
+        return self::MODE_AI;
+    }
+
+    static function roomGroup($roomid, $mode = self::MODE_AI)
+    {
+        $mode = self::normalizeMode($mode);
+        return $mode === self::MODE_REAL ? 'real_' . $roomid : (string)$roomid;
+    }
+
+    static function roomNumsKey($roomid, $mode = self::MODE_AI)
+    {
+        $mode = self::normalizeMode($mode);
+        return $mode === self::MODE_REAL ? 'roomnums_real_' . $roomid : 'roomnums_' . $roomid;
+    }
+
+    static function setUserRoomMode($uid, $mode)
+    {
+        Redis::set('killer_mode_' . $uid, self::normalizeMode($mode));
+    }
+
+    static function getUserRoomMode($uid)
+    {
+        $mode = Redis::get('killer_mode_' . $uid);
+        return self::normalizeMode($mode ?: self::MODE_AI);
+    }
+
+    static function setClientSelectedMode($client_id, $mode)
+    {
+        Redis::set('killer_client_selected_mode_' . $client_id, self::normalizeMode($mode));
+    }
+
+    static function getClientSelectedMode($client_id)
+    {
+        $mode = Redis::get('killer_client_selected_mode_' . $client_id);
+        return $mode ? self::normalizeMode($mode) : '';
+    }
+
+    static function clearClientSelectedMode($client_id)
+    {
+        Redis::del('killer_client_selected_mode_' . $client_id);
+    }
+
+    static function acquireLock($key, $ttl = 5)
+    {
+        $token = bin2hex(random_bytes(16));
+        if (Redis::setnx($key, $token)) {
+            Redis::expire($key, $ttl);
+            return $token;
+        }
+
+        return false;
+    }
+
+    static function releaseLock($key, $token)
+    {
+        if (!$token) {
+            return;
+        }
+
+        if ((string)Redis::get($key) === (string)$token) {
+            Redis::del($key);
+        }
+    }
+
+    static function ensureKillerSchema()
+    {
+        if (self::$schemaPrepared) {
+            return;
+        }
+
+        self::addColumnIfMissing('wa_touzhu', 'mode', "ALTER TABLE `wa_touzhu` ADD COLUMN `mode` varchar(16) NOT NULL DEFAULT 'ai' AFTER `isrobot`");
+        self::addColumnIfMissing('wa_touzhu', 'rewards', "ALTER TABLE `wa_touzhu` ADD COLUMN `rewards` int(11) NOT NULL DEFAULT 0");
+        self::addColumnIfMissing('wa_touzhu', 'resultid', "ALTER TABLE `wa_touzhu` ADD COLUMN `resultid` int(11) DEFAULT NULL");
+        self::addColumnIfMissing('wa_touzhu', 'resultname', "ALTER TABLE `wa_touzhu` ADD COLUMN `resultname` varchar(64) DEFAULT NULL");
+        self::addColumnIfMissing('wa_touzhu', 'ifyouxiao', "ALTER TABLE `wa_touzhu` ADD COLUMN `ifyouxiao` tinyint(1) NOT NULL DEFAULT 1");
+
+        self::$schemaPrepared = true;
+    }
+
+    static function addColumnIfMissing($table, $column, $sql)
+    {
+        if (self::columnExists($table, $column)) {
+            return;
+        }
+
+        try {
+            Db::statement($sql);
+            self::$columnCache[$table . '.' . $column] = true;
+        } catch (\Throwable $e) {
+            self::$columnCache[$table . '.' . $column] = false;
+        }
+    }
+
+    static function columnExists($table, $column)
+    {
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, self::$columnCache)) {
+            return self::$columnCache[$key];
+        }
+
+        try {
+            $safeColumn = str_replace(['\\', "'"], ['\\\\', "\\'"], $column);
+            $rows = Db::select("SHOW COLUMNS FROM `{$table}` LIKE '{$safeColumn}'");
+            self::$columnCache[$key] = !empty($rows);
+        } catch (\Throwable $e) {
+            self::$columnCache[$key] = false;
+        }
+
+        return self::$columnCache[$key];
+    }
+
+    static function appendModeField($data, $mode)
+    {
+        self::ensureKillerSchema();
+        if (self::columnExists('wa_touzhu', 'mode')) {
+            $data['mode'] = self::normalizeMode($mode);
+        }
+        return $data;
+    }
+
+    static function applyModeWhere($query, $mode)
+    {
+        self::ensureKillerSchema();
+        if (self::columnExists('wa_touzhu', 'mode')) {
+            $query->where('mode', self::normalizeMode($mode));
+        }
+        return $query;
+    }
+
+    static function killer($settle = false)
+    {
+        self::ensureKillerSchema();
+
+        $expect = self::getnowexpect();
+        $key = 'killer_' . $expect;
+        $killerRoomId = Redis::get($key);
+
+        if (!$killerRoomId) {
+            $killerRoomId = rand(1, 8);
+            Redis::set($key, $killerRoomId);
+
+            $record = [
+                'samllroomid' => $killerRoomId,
+                'roomname' => self::smallroomname($killerRoomId),
+                'expect' => $expect,
+                'addtime' => date('Y-m-d H:i:s', time())
+            ];
+            Db::table('wa_killer_record')->insert($record);
+        }
+
+        $room = [
+            'killer_to_smallroomid' => (int)$killerRoomId,
+            'tzcoin' => (int)Db::table('wa_touzhu')
+                ->where(['expect' => $expect, 'tzid' => $killerRoomId, 'ifyouxiao' => 1])
+                ->sum('coin')
+        ];
+
+        if ($settle) {
+            $room['settlement'] = self::settleKiller($expect, (int)$killerRoomId);
+        }
+
         return $room;
     }
 
-    // 处理开奖事宜
-    static function handlekiller($list,$expect,$roomid){
-       
-        $roomname = Common::smallroomname($roomid);
-        foreach ($list as $k =>$v){
-            // var_dump($v);
-            // if($v['tzid']==$roomid){
-            //     $up = Db::table("wa_touzhu")->where(['id'=>$v['id'],'ifyouxiao'=>1])->update(['resultid'=>$roomid,'resultname'=>$roomname,'status'=>1]);
-            // }else{
-            //     $up = Db::table("wa_touzhu")->where(['id'=>$v['id'],'ifyouxiao'=>1])->update(['resultid'=>$roomid,'resultname'=>$roomname,'status'=>2]);
-            // }
-
-        }
-    }
-
-    static function checktoken($client_id,$uid,$token){
-       $user = Db::table('wa_users')->where("id",$uid)->value('token');
-    //    var_dump($user,$token);
-       if(!$user){
-            $data=[
-                'code'=>10020,
-                'msg'=>'用户不存在',
-                'info'=>''
-            ];
-            Gateway::sendToClient($client_id,Common::returndata('usernotexit',$data));
-            exit();
-            return 10020;
-       }
-       if($user && $user!= $token){
-        $data=[
-            'code'=>700,
-            'msg'=>'您的登录已过期，请重新登录',
-            'info'=>''
-        ];
-            Gateway::sendToClient($client_id,Common::returndata('tokenexpire',$data));
-            exit();
-            return 700;
-       }
-       return 1;
-
-    }
-
-    static function returndata($action,$data)
+    static function handlekiller($list, $expect, $roomid)
     {
-        $returndata=[
-            'action'=>$action,
-            'data'=>$data
-        ];
-       return json_encode($returndata,JSON_UNESCAPED_SLASHES);
+        return self::settleKiller($expect, (int)$roomid);
     }
 
-    // 获取开启的支付方式
-    static function getpaytypelist(){
-        $config = Db::table("wa_options")->where("name","system_config")->select("value")->get();
-        $config= json_decode($config,1);
-        $config = json_decode($config[0]['value'],1);
-
-        $data['alipay']=$config['menu']['alipaystatus'];
-        $data['wxpay']=$config['menu']['wxpaystatus'];
-        $data['usdt']=$config['menu']['usdtstatus'];
-        return $data;
-    }
-    static function getbaseconfig(){
-        $config = Db::table("wa_options")->where("name","system_config")->select("value")->get();
-        $config= json_decode($config,1);
-        $config = json_decode($config[0]['value'],1);
-        return $config;
-    }
-
-    // 获取用户信息
-    static function getuserinfo($uid){
-        $ifexit = Db::table("wa_users")->where("id",$uid)->first();
-        $user['id']=$ifexit->id;
-        $user['username']=$ifexit->username;
-        $user['nickname']=$ifexit->nickname;
-        $user['coin']=$ifexit->score;
-        $user['money']=$ifexit->money;
-        $user['isrobot']=$ifexit->isrobot;
-        $user['status']=$ifexit->status;
-        $user['roomid']=$ifexit->roomid;
-        return $user;
-    }
-
-    // 记录用户金币日志
-    static function usercoin_record($data){
-        $in = Db::table("wa_usercoin_record")->insert($data);
-        if($in){
-            return 1;
-        }else{
-            return 0;
-        }
-    }
-
-    // 操作用户金币   type : 0 减少  ；  1增加
-    static function updateusercoin($uid,$coin,$type ){
-        $userinfo = Common::getuserinfo($uid);
-        if($type==0){
-            $newcoin = $userinfo['coin']-$coin;
-        }else{
-            $newcoin = $userinfo['coin']+$coin;
-        }
-        
-        $up = Db::table("wa_users")->where("id",$uid)->update(['score'=>$newcoin]);
-        if($up){
-            return 1;
-        }else{
-            return 0;
-        }
-    
-    }
-
-    // 更新人员小房间位置信息
-    static function upposition($uid,$smallroomid){
-        $expect = Common::getnowexpect();
-        $key = "position_".$uid; 
-        Redis::set($key, $smallroomid);
-    }
-
-    static function robotmove(){
-        $robots =  Db::table("wa_users")->where(['isrobot'=>1,'roomid'=>0])->get()->toArray();
-    
-        $list_robots = Common::object_array($robots);
-        $expect = Common::getnowexpect();
-        // 每次挪动几个机器人
-        $nums = rand(2,6);
-        $arr = array_rand($list_robots,$nums);
-        // var_dump($arr);die;
-        foreach($arr as $keyt){
-            $list[] = $list_robots[$keyt];
-        }
-        // var_dump($list);
-        $list_robots = $list;
-        foreach($list_robots as $k =>$v){
-            // 记录机器人当前位置
-            $key = "robotpositon_".$expect.'_'.$v['id'];
-            $to['smallroomid']=rand(1,8);
-            Redis::set($key,$to['smallroomid']);
-            $to['uid']=(string)$v['id'];
-           
-                $res2=[
-                    'code'=>1,
-                    'msg'=>'用户投注挪动了小房间位置',
-                    'info'=>$to
-                ];               
-            // 广播机器人位置变化信息
-            Gateway::sendToGroup(2,Common::returndata('usertouzhu',$res2));
-            // 机器人模拟投注   并广播房间内投注数据变化
-            $config =self::getbaseconfig();
-            // var_dump($config);die;
-            $coin = rand($config['logo']['robotmin'],$config['logo']['robotmax']);
-            $touzhu=[
-                'uid'=>$v['id'],
-                'expect'=>$expect,
-                'tzid'=>$to['smallroomid'],
-                'tzname'=>Common::smallroomname($to['smallroomid']),
-                'coin'=>$coin,
-                'addtime'=>date('Y-m-d H:i:s',time()),
-                'status'=>0,
-                'roomid'=>2,
-                'isrobot'=>1
-            ];
-            $iftouzhu = Db::table("wa_touzhu")->where(['expect'=>$expect,'uid'=>$v['id']])->first();
-            if($iftouzhu){
-                $del = Db::table("wa_touzhu")->where(['expect'=>$expect,'uid'=>$v['id']])->update(['ifyouxiao'=>0]);
-               
+    static function settleKiller($expect, $killerRoomId)
+    {
+        $settledKey = 'killer_settled_' . $expect;
+        $settled = Redis::get($settledKey);
+        if ($settled) {
+            $decoded = json_decode($settled, true);
+            if (is_array($decoded)) {
+                return $decoded;
             }
-                
-            $in = Db::table("wa_touzhu")->insert($touzhu);
-            
-            // 发送群组socket 更新房间内
-            $res=[
-                'code'=>1,
-                'msg'=>'小房间投注总额更新',
-                'info'=>Common::getroom_coin_list(2,$expect)
-            ];
-            
-            Gateway::sendToGroup(2,Common::returndata('updatesmallcoin',$res));
         }
-        
-    }
-    // 获取机器人位置信息
-    static function getrobotposition($uid){
-        $expect = Common::getnowexpect();
-        $key = "robotpositon_".$expect.'_'.$uid;
-    
-        $p = Redis::get($key);
-        if(!$p){
-            return "0";
-        }else{
-            return $p;
-        }
-    }    
 
-    // 获取人员房间位置信息
-    static function getposition($uid){
-        $expect = Common::getnowexpect();
-        $key = "position_".$uid; 
-        $p = Redis::get($key);
-        if(!$p){
-            return "0";
-        }else{
-            return $p;
+        $records = Db::table('wa_touzhu')
+            ->where(['expect' => $expect, 'ifyouxiao' => 1, 'status' => 0])
+            ->get();
+        $records = self::object_array($records);
+
+        $summary = [
+            'expect' => $expect,
+            'killer_room_id' => (int)$killerRoomId,
+            'killer_room_name' => self::smallroomname($killerRoomId),
+            'groups' => [],
+            'winners' => [],
+            'losers' => [],
+            'winner_count' => 0,
+            'loser_count' => 0,
+            'reward_total' => 0,
+            'real_lost_pool' => 0
+        ];
+
+        if (!$records) {
+            Redis::set($settledKey, json_encode($summary, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            return $summary;
         }
+
+        $groups = [];
+        foreach ($records as $record) {
+            $mode = self::normalizeMode($record['mode'] ?? self::MODE_AI);
+            $roomid = (int)($record['roomid'] ?? 0);
+            $groupKey = $mode . '_' . $roomid;
+            if (!isset($groups[$groupKey])) {
+                $groups[$groupKey] = [
+                    'mode' => $mode,
+                    'roomid' => $roomid,
+                    'records' => []
+                ];
+            }
+            $groups[$groupKey]['records'][] = $record;
+        }
+
+        foreach ($groups as $groupKey => $group) {
+            $realLostPool = 0;
+            $winnerStakePool = 0;
+            $winners = [];
+
+            foreach ($group['records'] as $record) {
+                $coin = max(0, (int)($record['coin'] ?? 0));
+                $isRobot = (int)($record['isrobot'] ?? 0) === 1;
+                $isKilled = (int)$record['tzid'] === (int)$killerRoomId;
+
+                if ($isKilled) {
+                    if (!$isRobot) {
+                        $realLostPool += $coin;
+                    }
+                } elseif (!$isRobot) {
+                    $winnerStakePool += $coin;
+                    $winners[] = $record;
+                }
+            }
+
+            $rewardMap = self::buildRewardMap($winners, $winnerStakePool, $realLostPool);
+            $winnerList = [];
+            $loserList = [];
+            $robotWinnerCount = 0;
+            $robotLoserCount = 0;
+
+            foreach ($group['records'] as $record) {
+                $id = (int)$record['id'];
+                $uid = (int)$record['uid'];
+                $coin = max(0, (int)($record['coin'] ?? 0));
+                $isRobot = (int)($record['isrobot'] ?? 0) === 1;
+                $isKilled = (int)$record['tzid'] === (int)$killerRoomId;
+                $reward = $rewardMap[$id] ?? 0;
+
+                $update = [
+                    'resultid' => (int)$killerRoomId,
+                    'resultname' => self::smallroomname($killerRoomId),
+                    'status' => $isKilled ? 2 : 1,
+                    'rewards' => $isKilled ? 0 : $reward
+                ];
+
+                Db::table('wa_touzhu')->where(['id' => $id, 'status' => 0])->update($update);
+
+                if (!$isKilled && !$isRobot && $reward > 0) {
+                    self::updateusercoin($uid, $reward, 1);
+                    self::usercoin_record([
+                        'uid' => $uid,
+                        'coin' => $reward,
+                        'type' => 1,
+                        'remark' => '大逃杀第' . $expect . '期幸存奖励，投注' . $coin . '金币，奖励' . $reward . '金币',
+                        'addtime' => date('Y/m/d H:i:s', time())
+                    ]);
+                }
+
+                if ($isKilled) {
+                    if ($isRobot) {
+                        $robotLoserCount++;
+                    } else {
+                        $loserList[] = self::settlementPlayerInfo($record, 0, true);
+                    }
+                } else {
+                    if ($isRobot) {
+                        $robotWinnerCount++;
+                    } else {
+                        $winnerList[] = self::settlementPlayerInfo($record, $reward, false);
+                    }
+                }
+            }
+
+            $groupSummary = [
+                'mode' => $group['mode'],
+                'roomid' => $group['roomid'],
+                'winner_count' => count($winners),
+                'loser_count' => count($loserList),
+                'robot_winner_count' => $robotWinnerCount,
+                'robot_loser_count' => $robotLoserCount,
+                'real_lost_pool' => $realLostPool,
+                'reward_total' => array_sum($rewardMap),
+                'winners' => $winnerList,
+                'losers' => $loserList
+            ];
+
+            $summary['groups'][] = $groupSummary;
+            $summary['winners'] = array_merge($summary['winners'], $winnerList);
+            $summary['losers'] = array_merge($summary['losers'], $loserList);
+            $summary['winner_count'] += $groupSummary['winner_count'];
+            $summary['loser_count'] += $groupSummary['loser_count'];
+            $summary['reward_total'] += $groupSummary['reward_total'];
+            $summary['real_lost_pool'] += $groupSummary['real_lost_pool'];
+        }
+
+        Redis::set($settledKey, json_encode($summary, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        return $summary;
     }
-    static function joinrobots(){
-        $robots =  Db::table("wa_users")->where(['isrobot'=>1,'roomid'=>0])->get()->toArray();
-        $list_robots = Common::object_array($robots);
-        foreach($list_robots as $k=>$v){
-            $v['client_id']="7f00000108ff00000003";
-            $v['uid']=(string)$v['id'];
-            $v['userinfo']=Common::getuserinfo($v['id']);
-            // 增加每个人的位置信息
-            $v['position']=Common::getrobotposition($v['id']);
-            $new[]=$v;
+
+    static function settlementPlayerInfo($record, $reward, $isKilled)
+    {
+        $userinfo = self::getuserinfo($record['uid']);
+        return [
+            'uid' => (int)$record['uid'],
+            'username' => $userinfo['username'] ?? '',
+            'nickname' => $userinfo['nickname'] ?? '',
+            'roomid' => (int)($record['roomid'] ?? 0),
+            'mode' => self::normalizeMode($record['mode'] ?? self::MODE_AI),
+            'smallroomid' => (int)($record['tzid'] ?? 0),
+            'smallroomname' => $record['tzname'] ?? self::smallroomname($record['tzid'] ?? 0),
+            'coin' => max(0, (int)($record['coin'] ?? 0)),
+            'reward' => max(0, (int)$reward),
+            'status' => $isKilled ? 2 : 1
+        ];
+    }
+
+    static function buildRewardMap($winners, $winnerStakePool, $realLostPool)
+    {
+        $rewardMap = [];
+        if (!$winners || $winnerStakePool <= 0) {
+            return $rewardMap;
         }
+
+        $shareTotal = 0;
+        foreach ($winners as $winner) {
+            $id = (int)$winner['id'];
+            $coin = max(0, (int)$winner['coin']);
+            $share = $realLostPool > 0 ? (int)floor($realLostPool * $coin / $winnerStakePool) : 0;
+            $rewardMap[$id] = $coin + $share;
+            $shareTotal += $share;
+        }
+
+        $remainder = $realLostPool - $shareTotal;
+        if ($remainder > 0) {
+            usort($winners, function ($a, $b) {
+                $coinCompare = (int)$b['coin'] <=> (int)$a['coin'];
+                if ($coinCompare !== 0) {
+                    return $coinCompare;
+                }
+                return (int)$a['id'] <=> (int)$b['id'];
+            });
+
+            foreach ($winners as $winner) {
+                if ($remainder <= 0) {
+                    break;
+                }
+                $rewardMap[(int)$winner['id']]++;
+                $remainder--;
+            }
+        }
+
+        return $rewardMap;
+    }
+
+    static function checktoken($client_id, $uid, $token)
+    {
+        $userToken = Db::table('wa_users')->where('id', $uid)->value('token');
+        if (!$userToken) {
+            $data = [
+                'code' => 10020,
+                'msg' => '用户不存在',
+                'info' => ''
+            ];
+            Gateway::sendToClient($client_id, self::returndata('usernotexit', $data));
+            return 10020;
+        }
+
+        if ((string)$userToken !== (string)$token) {
+            $data = [
+                'code' => 700,
+                'msg' => '登录已过期，请重新登录',
+                'info' => ''
+            ];
+            Gateway::sendToClient($client_id, self::returndata('tokenexpire', $data));
+            return 700;
+        }
+
+        return 1;
+    }
+
+    static function returndata($action, $data)
+    {
+        return json_encode([
+            'action' => $action,
+            'data' => $data
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    static function getpaytypelist()
+    {
+        $config = self::getbaseconfig();
+        return [
+            'alipay' => $config['menu']['alipaystatus'] ?? 0,
+            'wxpay' => $config['menu']['wxpaystatus'] ?? 0,
+            'usdt' => $config['menu']['usdtstatus'] ?? 0
+        ];
+    }
+
+    static function getbaseconfig()
+    {
+        $value = Db::table('wa_options')->where('name', 'system_config')->value('value');
+        $config = json_decode((string)$value, true);
+        return is_array($config) ? $config : [];
+    }
+
+    static function getuserinfo($uid)
+    {
+        $ifexit = Db::table('wa_users')->where('id', $uid)->first();
+        if (!$ifexit) {
+            return [
+                'id' => (int)$uid,
+                'username' => '',
+                'nickname' => '',
+                'coin' => 0,
+                'money' => 0,
+                'isrobot' => 0,
+                'status' => 0,
+                'roomid' => 0
+            ];
+        }
+
+        return [
+            'id' => $ifexit->id,
+            'username' => $ifexit->username,
+            'nickname' => $ifexit->nickname,
+            'coin' => $ifexit->score,
+            'money' => $ifexit->money,
+            'isrobot' => $ifexit->isrobot,
+            'status' => $ifexit->status,
+            'roomid' => $ifexit->roomid
+        ];
+    }
+
+    static function usercoin_record($data)
+    {
+        return Db::table('wa_usercoin_record')->insert($data) ? 1 : 0;
+    }
+
+    static function updateusercoin($uid, $coin, $type)
+    {
+        $coin = max(0, (int)$coin);
+        if ($coin <= 0) {
+            return 1;
+        }
+
+        if ($type == 0) {
+            $affected = Db::table('wa_users')
+                ->where('id', $uid)
+                ->where('score', '>=', $coin)
+                ->decrement('score', $coin);
+        } else {
+            $affected = Db::table('wa_users')->where('id', $uid)->increment('score', $coin);
+        }
+
+        return $affected ? 1 : 0;
+    }
+
+    static function upposition($uid, $smallroomid)
+    {
+        $expect = self::getnowexpect();
+        Redis::set('position_' . $expect . '_' . $uid, $smallroomid);
+        return 1;
+    }
+
+    static function robotmove($roomid = 2, $mode = self::MODE_AI)
+    {
+        $mode = self::normalizeMode($mode);
+        if ($mode !== self::MODE_AI) {
+            return [];
+        }
+
+        self::ensureKillerSchema();
+
+        $robots = Db::table('wa_users')->where(['isrobot' => 1, 'roomid' => 0])->get()->toArray();
+        $listRobots = self::object_array($robots);
+        if (!$listRobots) {
+            return [];
+        }
+
+        $expect = self::getnowexpect();
+        $nums = min(rand(2, 6), count($listRobots));
+        $keys = array_rand($listRobots, $nums);
+        if (!is_array($keys)) {
+            $keys = [$keys];
+        }
+
+        $moved = [];
+        foreach ($keys as $keyt) {
+            $v = $listRobots[$keyt];
+            $smallroomid = rand(1, 8);
+            $positionKey = self::robotPositionKey($expect, $roomid, $mode, $v['id']);
+            Redis::set($positionKey, $smallroomid);
+
+            $to = [
+                'uid' => (string)$v['id'],
+                'smallroomid' => $smallroomid
+            ];
+
+            Gateway::sendToGroup(self::roomGroup($roomid, $mode), self::returndata('usertouzhu', [
+                'code' => 1,
+                'msg' => '用户投注位置变更',
+                'info' => $to
+            ]));
+
+            $config = self::getbaseconfig();
+            $robotMin = (int)($config['logo']['robotmin'] ?? 10);
+            $robotMax = (int)($config['logo']['robotmax'] ?? 100);
+            if ($robotMin > $robotMax) {
+                $tmp = $robotMin;
+                $robotMin = $robotMax;
+                $robotMax = $tmp;
+            }
+            $coin = rand(max(1, $robotMin), max(1, $robotMax));
+
+            $query = Db::table('wa_touzhu')->where([
+                'expect' => $expect,
+                'uid' => $v['id'],
+                'roomid' => $roomid,
+                'ifyouxiao' => 1
+            ]);
+            $query = self::applyModeWhere($query, $mode);
+            $exists = $query->first();
+
+            $touzhu = self::appendModeField([
+                'uid' => $v['id'],
+                'expect' => $expect,
+                'tzid' => $smallroomid,
+                'tzname' => self::smallroomname($smallroomid),
+                'coin' => $coin,
+                'addtime' => date('Y-m-d H:i:s', time()),
+                'status' => 0,
+                'roomid' => $roomid,
+                'isrobot' => 1,
+                'ifyouxiao' => 1
+            ], $mode);
+
+            if ($exists) {
+                Db::table('wa_touzhu')->where('id', $exists->id)->update($touzhu);
+            } else {
+                Db::table('wa_touzhu')->insert($touzhu);
+            }
+
+            Gateway::sendToGroup(self::roomGroup($roomid, $mode), self::returndata('updatesmallcoin', [
+                'code' => 1,
+                'msg' => '小房间投注总额更新',
+                'info' => self::getroom_coin_list($roomid, $expect, $mode)
+            ]));
+
+            $moved[] = $to;
+        }
+
+        return $moved;
+    }
+
+    static function robotmoveForActiveRooms()
+    {
+        $rooms = Db::table('wa_rooms')->where('status', 1)->get();
+        $rooms = self::object_array($rooms);
+        $moved = [];
+
+        foreach ($rooms as $room) {
+            $roomid = (int)($room['id'] ?? 0);
+            if ($roomid <= 0) {
+                continue;
+            }
+
+            $group = self::roomGroup($roomid, self::MODE_AI);
+            if (Gateway::getClientCountByGroup($group) <= 0) {
+                continue;
+            }
+
+            $moved[$roomid] = self::robotmove($roomid, self::MODE_AI);
+        }
+
+        return $moved;
+    }
+
+    static function robotPositionKey($expect, $roomid, $mode, $uid)
+    {
+        return 'robotpositon_' . $expect . '_' . self::normalizeMode($mode) . '_' . $roomid . '_' . $uid;
+    }
+
+    static function getrobotposition($uid, $roomid = 2, $mode = self::MODE_AI)
+    {
+        $expect = self::getnowexpect();
+        $p = Redis::get(self::robotPositionKey($expect, $roomid, $mode, $uid));
+        return $p ?: '0';
+    }
+
+    static function getposition($uid)
+    {
+        $expect = self::getnowexpect();
+        $p = Redis::get('position_' . $expect . '_' . $uid);
+        return $p ?: '0';
+    }
+
+    static function joinrobots($roomid = 2, $mode = self::MODE_AI)
+    {
+        if (self::normalizeMode($mode) !== self::MODE_AI) {
+            return [];
+        }
+
+        $robots = Db::table('wa_users')->where(['isrobot' => 1, 'roomid' => 0])->get()->toArray();
+        $listRobots = self::object_array($robots);
+        $new = [];
+
+        foreach ($listRobots as $v) {
+            $v['client_id'] = 'robot_' . $v['id'];
+            $v['uid'] = (string)$v['id'];
+            $v['userinfo'] = self::getuserinfo($v['id']);
+            $v['position'] = self::getrobotposition($v['id'], $roomid, $mode);
+            $v['mode'] = self::MODE_AI;
+            $new[] = $v;
+        }
+
         return $new;
     }
 
+    static function object_array($array)
+    {
+        if (is_object($array)) {
+            $array = (array)$array;
+        }
 
-    static  function object_array($array){
-        if(is_object($array)){
-          $array = (array)$array;
+        if (is_array($array)) {
+            foreach ($array as $key => $value) {
+                $array[$key] = self::object_array($value);
+            }
         }
-        if(is_array($array)){
-          foreach($array as $key=>$value){
-            $array[$key] = self::object_array($value);
-          }
-        }
+
         return $array;
-      }
-
-
-    // 进入房间
-    static function enterroom($client_id,$roomid,$userinfo){
-        // 设备绑定UID
-        $key = 'binduid_'.$client_id;  //绑定uid写入redis
-        $useredis = Redis::set($key,$userinfo['id']);
-        Gateway::bindUid($client_id,$userinfo['id']);
-        // socket 加入群组
-        Gateway::joinGroup($client_id, $roomid);
-        // 更新用户所在房间
-        self::changeuserroomid($userinfo['id'],$roomid);
-        // 增加房间在线人数
-        self::uproom_nums($roomid,1,1);
-
     }
 
-    // 离开房间
+    static function enterroom($client_id, $roomid, $userinfo, $mode = self::MODE_AI)
+    {
+        $mode = self::normalizeMode($mode);
+        $group = self::roomGroup($roomid, $mode);
 
-    static function leaveroom($client_id,$roomid,$userinfo){
+        Redis::set('binduid_' . $client_id, $userinfo['id']);
+        Gateway::bindUid($client_id, $userinfo['id']);
 
-        // socket 离开群组
-        Gateway::leaveGroup($client_id, $roomid);
-        // 更新用户所在房间
-        self::changeuserroomid($userinfo['id'],0);
-        // 减少房间在线人数
-        self::uproom_nums($roomid,0,1);
+        $oldRoom = Redis::get('killer_client_room_' . $client_id);
+        $oldMode = Redis::get('killer_client_mode_' . $client_id);
+        $oldGroup = $oldRoom ? self::roomGroup($oldRoom, $oldMode ?: self::MODE_AI) : '';
 
+        if ($oldRoom && $oldGroup !== $group) {
+            Gateway::leaveGroup($client_id, $oldGroup);
+            self::uproom_nums($oldRoom, 0, 1, $oldMode ?: self::MODE_AI);
+        }
+
+        Gateway::joinGroup($client_id, $group);
+        self::changeuserroomid($userinfo['id'], $roomid);
+        self::setUserRoomMode($userinfo['id'], $mode);
+
+        Redis::set('killer_client_room_' . $client_id, $roomid);
+        Redis::set('killer_client_mode_' . $client_id, $mode);
+
+        if (!$oldRoom || $oldGroup !== $group) {
+            self::uproom_nums($roomid, 1, 1, $mode);
+        }
     }
 
-    // 更新用户所在房间信息
-    static function changeuserroomid($uid,$roomid){
-        Db::table("wa_users")->where("id",$uid)->update(['roomid'=>$roomid]);
+    static function leaveroom($client_id, $roomid, $userinfo, $mode = null)
+    {
+        $mode = $mode ? self::normalizeMode($mode) : self::getUserRoomMode($userinfo['id']);
+        $group = self::roomGroup($roomid, $mode);
+
+        Gateway::leaveGroup($client_id, $group);
+        self::changeuserroomid($userinfo['id'], 0);
+        self::uproom_nums($roomid, 0, 1, $mode);
+
+        Redis::set('killer_client_room_' . $client_id, '');
+        Redis::set('killer_client_mode_' . $client_id, '');
+        Redis::set('killer_mode_' . $userinfo['id'], self::MODE_AI);
     }
 
+    static function changeuserroomid($uid, $roomid)
+    {
+        Db::table('wa_users')->where('id', $uid)->update(['roomid' => $roomid]);
+    }
 
-    // 获取当前房间人数
-    static function getroom_nums($roomid){
-        $key = "roomnums_".$roomid;  //房间人数key
+    static function getroom_nums($roomid, $mode = self::MODE_AI)
+    {
+        $key = self::roomNumsKey($roomid, $mode);
         $nums = Redis::get($key);
-        if(!$nums){
+        if (!$nums) {
             Redis::set($key, 0);
             return 0;
         }
-        return $nums;
+        return (int)$nums;
     }
 
-    // 获取当前时间的期号
-    static function getnowexpect(){
-        $hour = date("H");
-		$min =date("i");
-		// $hour = 1;
-		// $min =15;
-		$a = $hour*60+$min;
+    static function getnowexpect()
+    {
+        $hour = date('H');
+        $min = date('i');
+        $a = $hour * 60 + $min;
 
-		if($a<1000 && $a>100){
-			$a='0'.$a;
-		}
-		if($a<100){
-			$a='00'.$a;
-		}
-		return date('Ymd').$a;
-    }
-    // 根据旗号获取时间
-    static function gettimebyexpect($expect){
-		// var_dump($expect);die;
-		// $date = date('Ymd');
-		$a = substr($expect,8);
-		$year = substr($expect,0,4);
-		$month = substr($expect,4,2);
-		$day = substr($expect,6,2);
-		// var_dump($year,$month,$day);die;
-		$date = $year.'/'.$month.'/'.$day;
-		// var_dump($date);die;
-		if($a[0]=="0"){
-			$a = mb_substr($a,1);
-		}
-		$hour = intval(floor($a/60));
-		$min = $a%60;
-		$time  = strtotime($date.' '.$hour.':'.$min);
-		
-		// $time  = $date.' '.$hour.':'.$min;
-		return date('Y/m/d H:i',$time);
-
-	}
-
-    // 获取当前房间内某一期的投注金额 小房间金额列表
-    static function getroom_coin_list($roomid,$expect){
-        for($i=0;$i<9;$i++){
-            $room['smallroomid']=$i;
-            $room['allcoin'] =  (int)Db::table("wa_touzhu")->where(['roomid'=>$roomid,'tzid'=>$i,'expect'=>$expect,'ifyouxiao'=>1])->sum("coin");
-            $new[]=$room;
+        if ($a < 1000 && $a > 100) {
+            $a = '0' . $a;
         }
+        if ($a < 100) {
+            $a = '00' . $a;
+        }
+
+        return date('Ymd') . $a;
+    }
+
+    static function gettimebyexpect($expect)
+    {
+        $a = substr($expect, 8);
+        $year = substr($expect, 0, 4);
+        $month = substr($expect, 4, 2);
+        $day = substr($expect, 6, 2);
+        $date = $year . '/' . $month . '/' . $day;
+
+        if (isset($a[0]) && $a[0] === '0') {
+            $a = mb_substr($a, 1);
+        }
+
+        $hour = intval(floor($a / 60));
+        $min = $a % 60;
+        $time = strtotime($date . ' ' . $hour . ':' . $min);
+        return date('Y/m/d H:i', $time);
+    }
+
+    static function getroom_coin_list($roomid, $expect, $mode = self::MODE_AI)
+    {
+        self::ensureKillerSchema();
+
+        $new = [];
+        for ($i = 0; $i < 9; $i++) {
+            $query = Db::table('wa_touzhu')->where([
+                'roomid' => $roomid,
+                'tzid' => $i,
+                'expect' => $expect,
+                'ifyouxiao' => 1
+            ]);
+            $query = self::applyModeWhere($query, $mode);
+
+            $new[] = [
+                'smallroomid' => $i,
+                'allcoin' => (int)$query->sum('coin')
+            ];
+        }
+
         return $new;
     }
 
-    // 增加房间在线人数  type:0 减少；  1增加；    num 执行数量
-    static function uproom_nums($roomid,$type,$num){
-        $key = "roomnums_".$roomid; 
-        $nums = Redis::get($key);
-        if($type==1){
-            if(!$nums){
-                Redis::set($key, 1);
-                return 1;
-            }else{
-                $nums = $nums+$num;
-                Redis::set($key, $nums);
-                return $nums;
-            }
-        }else{
-            if(!$nums){
-                Redis::set($key, 0);
-                return 1;
-            }else{
-                if($nums>$num){
-                    $nums = $nums-$num;
-                }else{
-                    $nums = 0;
-                }
-                
-                Redis::set($key, $nums);
-                return $nums;
-            }
+    static function uproom_nums($roomid, $type, $num, $mode = self::MODE_AI)
+    {
+        $key = self::roomNumsKey($roomid, $mode);
+        $nums = (int)(Redis::get($key) ?: 0);
+
+        if ($type == 1) {
+            $nums += $num;
+        } else {
+            $nums = max(0, $nums - $num);
         }
+
+        Redis::set($key, $nums);
+        return $nums;
     }
 
-    // 获取小房间的名字
-    static function smallroomname($id){
-        switch ($id) {
+    static function smallroomname($id)
+    {
+        switch ((string)$id) {
             case '0':
-                $name = "开始位置";
-                break;
+                return '开始位置';
             case '1':
-                $name = "厂长室";
-                break;
+                return '厂长室';
             case '2':
-                $name = "休息室";
-                break;
+                return '休息室';
             case '3':
-                $name = "杂物间";
-                break;
+                return '杂物间';
             case '4':
-                $name = "谈话室";
-                break;
+                return '谈话室';
             case '5':
-                $name = "茶水间";
-                break;
+                return '茶水间';
             case '6':
-                $name = "工作室";
-                break;
+                return '工作室';
             case '7':
-                $name = "洗衣房";
-                break;
+                return '洗衣房';
             case '8':
-                $name = "音乐室";
-                break;
-          
+                return '音乐室';
+            default:
+                return '';
         }
-        // var_dump($id,$name);
-        $result = isset($name) ? $name : '';
-        return $result;
     }
 
-    // 获取我的投注记录
-    static function getmytzinfo($uid){
-        $info['allcoin']=(string)Db::table("wa_touzhu")->where(['uid'=>$uid,'ifyouxiao'=>1])->sum("coin");
-        $info['reward']=(string)Db::table("wa_touzhu")->where(['uid'=>$uid,'ifyouxiao'=>1,'status'=>1])->sum("rewards");
-        $info['list']=Db::table("wa_touzhu")->where(['uid'=>$uid,'ifyouxiao'=>1])->orderByDesc('id',true)->limit(60)->get();
+    static function getmytzinfo($uid)
+    {
+        $info = [];
+        $info['allcoin'] = (string)Db::table('wa_touzhu')->where(['uid' => $uid, 'ifyouxiao' => 1])->sum('coin');
+        $info['reward'] = (string)Db::table('wa_touzhu')->where(['uid' => $uid, 'ifyouxiao' => 1, 'status' => 1])->sum('rewards');
+        $info['list'] = Db::table('wa_touzhu')->where(['uid' => $uid, 'ifyouxiao' => 1])->orderByDesc('id')->limit(60)->get();
         return $info;
     }
-
-
 }

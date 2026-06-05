@@ -2,8 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
+import '../../core/network/api_client.dart';
+import '../../core/network/api_endpoints.dart';
+import '../../core/utils/notification_service.dart';
+import '../../core/utils/in_app_notification.dart';
+import '../../core/update/app_update_service.dart';
+import '../../core/update/update_state.dart';
 import 'providers/badge_provider.dart';
 import '../chat/providers/chat_provider.dart';
+import '../chat/pages/chat_page.dart';
 import '../auth/providers/auth_provider.dart';
 
 /// 主页面框架 - 底部 TabBar（消息、联系人、游戏、我的）
@@ -16,16 +23,24 @@ class MainShell extends ConsumerStatefulWidget {
   ConsumerState<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends ConsumerState<MainShell> {
+class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserver {
+  bool _isAppInForeground = true;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // 确保用户信息已加载
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (ref.read(authProvider).user == null) {
         ref.read(authProvider.notifier).loadProfile();
       }
       ref.read(badgeProvider.notifier).loadBadges();
+      _loadNotificationSettings();
+      // 登录后请求通知权限
+      NotificationService.instance.requestPermission();
+      // 静默检测应用更新（用于"我的"红点提示）
+      AppUpdateService.checkSilently(ref);
     });
     // 建立 Socket 连接（先注册监听器，再连接，避免离线消息在监听器注册前到达）
     final socket = ref.read(socketServiceProvider);
@@ -33,16 +48,98 @@ class _MainShellState extends ConsumerState<MainShell> {
     socket.addMessageListener(_onNewMessage);
     // 监听好友申请，更新红点
     socket.addFriendRequestListener(_onFriendRequest);
+    // 监听服务通知，提示音 + 后台弹窗
+    socket.addServiceNotificationListener(_onServiceNotification);
     // 最后再连接（连接成功后会推送离线消息，此时监听器已就绪）
     socket.connect();
+
+    // 设置通知点击回调
+    NotificationService.instance.onTap = _onNotificationTap;
+    // 设置应用内横幅回调
+    NotificationService.instance.onInAppBanner = _showInAppBanner;
+  }
+
+  void _showInAppBanner({
+    required int conversationId,
+    required String title,
+    required String content,
+    String? avatar,
+  }) {
+    if (!mounted) return;
+    InAppNotification.show(
+      context: context,
+      title: title,
+      content: content,
+      avatar: avatar,
+      onTap: () => _onNotificationTap(conversationId, title),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isAppInForeground = state == AppLifecycleState.resumed;
+  }
+
+  Future<void> _loadNotificationSettings() async {
+    try {
+      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+        ApiEndpoints.userSettings,
+      );
+      if (result != null) {
+        NotificationService.instance.updateSettings(
+          master: result['notificationEnabled'] as bool? ?? true,
+          sound: result['notificationSound'] as bool? ?? true,
+          popup: result['notificationPopup'] as bool? ?? true,
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _onNotificationTap(int conversationId, String title) {
+    // 点击通知跳转到对应会话
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+      builder: (_) => ChatPage(
+        conversationId: conversationId,
+        title: title,
+      ),
+    ));
   }
 
   void _onNewMessage(ChatMessage msg) {
     if (!mounted) return;
-    // 只有当用户不在该会话的聊天页面时才增加未读数
+    // 只有当用户不在该会话的聊天页面时才增加未读数和推送通知
     final socket = ref.read(socketServiceProvider);
+    // 过滤掉自己发的消息（群邀请等 includeSender 消息）
+    final myId = ref.read(authProvider).user?.id ?? 0;
+    if (myId > 0 && msg.senderId == myId) return;
     if (socket.activeConversationId != msg.conversationId) {
       ref.read(badgeProvider.notifier).incrementUnread();
+
+      // 触发新消息通知（声音+弹窗）
+      final senderName = socket.senderNicknameCache[msg.senderId] ?? '新消息';
+      final senderAvatar = socket.senderAvatarCache[msg.senderId];
+      String content;
+      switch (msg.msgType) {
+        case 2:
+          content = '[语音]';
+          break;
+        case 4:
+          content = '[图片]';
+          break;
+        case 3:
+          content = '[系统消息]';
+          break;
+        default:
+          content = msg.content.length > 50 ? '${msg.content.substring(0, 50)}...' : msg.content;
+      }
+      NotificationService.instance.onNewMessage(
+        conversationId: msg.conversationId,
+        senderName: senderName,
+        content: content,
+        avatar: senderAvatar,
+        isAppInForeground: _isAppInForeground,
+      );
     }
   }
 
@@ -51,12 +148,28 @@ class _MainShellState extends ConsumerState<MainShell> {
     ref.read(badgeProvider.notifier).incrementFriendRequests();
   }
 
+  /// 收到服务通知（提现/建群/充值申请）：提示音 + 后台系统通知
+  void _onServiceNotification(Map<String, dynamic> data) {
+    final title = data['title']?.toString() ?? '服务通知';
+    final content = data['content']?.toString() ?? '';
+    NotificationService.instance.onNewMessage(
+      conversationId: -1,
+      senderName: title,
+      content: content,
+      isAppInForeground: _isAppInForeground,
+      // 服务通知不弹应用内横幅，仅提示音/后台系统通知
+      bannerSuppressed: true,
+    );
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     try {
       final socket = ref.read(socketServiceProvider);
       socket.removeMessageListener(_onNewMessage);
       socket.removeFriendRequestListener(_onFriendRequest);
+      socket.removeServiceNotificationListener(_onServiceNotification);
     } catch (_) {}
     super.dispose();
   }
@@ -94,6 +207,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   @override
   Widget build(BuildContext context) {
     final badges = ref.watch(badgeProvider);
+    final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
 
     return Scaffold(
       body: widget.child,
@@ -125,9 +239,9 @@ class _MainShellState extends ConsumerState<MainShell> {
             activeIcon: Icon(Icons.store),
             label: '商城',
           ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
+          BottomNavigationBarItem(
+            icon: _buildDotIcon(Icons.person_outline, hasUpdate),
+            activeIcon: _buildDotIcon(Icons.person, hasUpdate),
             label: '我的',
           ),
         ],

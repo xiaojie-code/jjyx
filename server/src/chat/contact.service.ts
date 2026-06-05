@@ -15,6 +15,7 @@ import { ConversationMember } from '../entities/conversation-member.entity';
 import { Message } from '../entities/message.entity';
 import { User } from '../entities/user.entity';
 import { ChatGateway } from './chat.gateway';
+import { ServiceNotificationService } from '../notification/service-notification.service';
 
 @Injectable()
 export class ContactService implements OnModuleInit {
@@ -35,6 +36,7 @@ export class ContactService implements OnModuleInit {
     private readonly userRepo: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly chatGateway: ChatGateway,
+    private readonly serviceNotificationService: ServiceNotificationService,
   ) {}
 
   /** 启动时只确保系统总群存在，并把 admin 设置为客服/群主 */
@@ -167,7 +169,6 @@ export class ContactService implements OnModuleInit {
   }
 
   /** 联系人列表 */
-  /** 联系人列表 */
   async getContacts(userId: number) {
     const friends = await this.friendRepo.find({ where: { userId } });
     const result = [];
@@ -178,6 +179,7 @@ export class ContactService implements OnModuleInit {
           friendshipId: f.id,
           userId: user.id,
           nickname: user.nickname,
+          account: user.account,
           avatar: user.avatar,
           remark: f.remark,
           status: user.status,
@@ -308,6 +310,17 @@ export class ContactService implements OnModuleInit {
     );
     await this.memberRepo.save(members);
 
+    // 给管理员发送服务通知
+    const creator = await this.userRepo.findOne({ where: { id: creatorId } });
+    const creatorName = creator?.nickname?.trim() || creator?.account?.trim() || `用户${creatorId}`;
+    await this.serviceNotificationService.notifyAdmin({
+      type: 'group',
+      title: '新的建群申请',
+      content: `${creatorName} 申请创建群聊「${groupName}」，共 ${allIds.length} 名成员，等待审核`,
+      fromUserId: creatorId,
+      payload: { conversationId: conv.id, groupName, memberCount: allIds.length },
+    });
+
     return { conversationId: conv.id, name: groupName, message: '建群申请已提交，等待管理员审核' };
   }
 
@@ -365,6 +378,17 @@ export class ContactService implements OnModuleInit {
     if (!member) throw new ForbiddenException('你不是该群成员');
     await this.memberRepo.update(member.id, { groupNickname: nickname?.trim() || null });
     return { message: '群昵称已更新' };
+  }
+
+  /** 更新群头像（仅群主可操作） */
+  async updateGroupAvatar(userId: number, conversationId: number, avatarPath: string) {
+    const conv = await this.convRepo.findOne({ where: { id: conversationId, type: 2 } });
+    if (!conv) throw new NotFoundException('群聊不存在');
+    if (Number(conv.creatorId) !== Number(userId)) {
+      throw new ForbiddenException('仅群主可更换群头像');
+    }
+    await this.convRepo.update(conversationId, { avatar: avatarPath });
+    return { message: '群头像已更新', avatar: avatarPath };
   }
 
   /** 解散群聊 */

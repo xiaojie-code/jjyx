@@ -14,6 +14,7 @@ import { ChatModule } from './chat/chat.module';
 import { GameModule } from './game/game.module';
 import { AdminModule } from './admin/admin.module';
 import { MatrixModule } from './matrix/matrix.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -78,6 +79,9 @@ import { MatrixModule } from './matrix/matrix.module';
 
     // Matrix promotion module
     MatrixModule,
+
+    // Service notification module (单向服务通知)
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

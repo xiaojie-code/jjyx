@@ -114,6 +114,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void _onNewMessage(ChatMessage msg) {
     if (!mounted) return;
     if (msg.conversationId == widget.conversationId) {
+      // 从 socket 缓存中更新发送者头像信息
+      final socketService = ref.read(socketServiceProvider);
+      final cachedAvatar = socketService.senderAvatarCache[msg.senderId];
+      final cachedNickname = socketService.senderNicknameCache[msg.senderId];
+      if (msg.senderId > 0 && (cachedAvatar != null || cachedNickname != null)) {
+        final existing = _senderCache[msg.senderId] ?? {};
+        _senderCache[msg.senderId] = {
+          ...existing,
+          if (cachedNickname != null) 'nickname': cachedNickname,
+          if (cachedAvatar != null) 'avatar': cachedAvatar,
+        };
+      }
       if (mounted && !_messages.any((item) => item.id == msg.id)) {
         setState(() => _messages.add(msg));
       }

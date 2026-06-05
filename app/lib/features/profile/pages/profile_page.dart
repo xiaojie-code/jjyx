@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/router/app_router.dart';
+import '../../../core/update/app_update_service.dart';
+import '../../../core/update/update_state.dart';
 import '../../auth/providers/auth_provider.dart';
 import 'activate_page.dart';
-import 'backpack_page.dart';
 import 'edit_avatar_page.dart';
 import 'edit_nickname_page.dart';
 import 'promotion_reward_page.dart';
+import 'recharge_page.dart';
 import 'settings_page.dart';
 import 'synthesize_page.dart';
 import 'withdraw_page.dart';
@@ -25,6 +27,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   void initState() {
     super.initState();
     Future.microtask(() => ref.read(authProvider.notifier).loadProfile());
+    // 静默检测更新（用于红点提示）
+    Future.microtask(() => AppUpdateService.checkSilently(ref));
   }
 
   void _push(Widget page) {
@@ -38,13 +42,14 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     final user = authState.user;
     final profile = authState.profile;
     final currency = profile?.currency;
+    final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('我的'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: _buildDotIcon(Icons.settings, hasUpdate),
             onPressed: () => _push(const SettingsPage()),
           ),
         ],
@@ -114,14 +119,14 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                       () => _push(const ActivatePage()),
                     ),
                     _buildMenuItem(
+                      Icons.payment,
+                      '充值',
+                      () => _push(const RechargePage()),
+                    ),
+                    _buildMenuItem(
                       Icons.group_add,
                       '推广奖励',
                       () => _push(const PromotionRewardPage()),
-                    ),
-                    _buildMenuItem(
-                      Icons.backpack,
-                      '我的背包',
-                      () => _push(const BackpackPage()),
                     ),
                     _buildMenuItem(
                       Icons.sync,
@@ -209,6 +214,30 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       title: Text(title),
       trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
+    );
+  }
+
+  /// 带红点的图标
+  Widget _buildDotIcon(IconData icon, bool show) {
+    if (!show) return Icon(icon);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(icon),
+        Positioned(
+          right: -2,
+          top: -2,
+          child: Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              color: Colors.red,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 1),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

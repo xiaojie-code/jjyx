@@ -6,7 +6,7 @@ return  [
             'driver'      => 'mysql',
             'host'        => '127.0.0.1',
             'port'        => '3306',
-            'database'    => 'gamesocket',
+            'database'    => 'killer_game',
             'username'    => 'gamesocket',
             'password'    => 'gamesocket123456',
             'charset'     => 'utf8mb4',

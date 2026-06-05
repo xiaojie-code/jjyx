@@ -5,150 +5,217 @@ namespace plugin\webman\gateway;
 use GatewayWorker\Lib\Gateway;
 use plugin\webman\gateway\Option;
 use plugin\webman\gateway\Taosha;
-use Workerman\Timer;
-// use support\Request;
 use support\Redis;
-use support\Db;
-
+use Workerman\Timer;
 
 class Events
 {
-
     public static function onWorkerStart($worker)
     {
-
-        if($worker->id === 0){  //只有进程id是0的才执行该定时器
-            $key = 'timer2';
-            $timer = Redis::get($key);
-            // echo ("当前定时器状态".$timer);
-            if($timer==0){
-                Timer::add(1, function(){
-                    Taosha::timer();   //定时发送各个时间阶段的通知
-                });
-                Redis::set($key, 1); // echo('定时器启动');
-            }
-            
+        if ($worker->id === 0) {
+            Timer::add(1, function () {
+                Taosha::timer();
+            });
         }
     }
-        
 
     public static function onConnect($client_id)
     {
-        // // 向当前client_id发送数据
-        // Gateway::sendToAll("$client_id 刚刚上线");
     }
 
     public static function onWebSocketConnect($client_id, $data)
-    { 
-        Gateway::sendToAll("$client_id 上线了");
+    {
+        $mode = self::modeFromHandshake($data);
+        if ($mode) {
+            Common::setClientSelectedMode($client_id, $mode);
+        }
+
+        Gateway::sendToClient($client_id, Common::returndata('connected', [
+            'client_id' => $client_id,
+            'mode' => $mode ?: Common::MODE_AI
+        ]));
     }
 
-    public static function onMessage($client_id,$message)
-    {   
-        var_dump($message);
-        $data=is_array($message) ? $message : json_decode($message,1);
-        // if($data['type'] ? $data['type'] : ''){
-        //     exit();
-        // }
-        
-        $action= $data['action'] ? $data['action'] :'other';
+    public static function onMessage($client_id, $message)
+    {
+        $data = is_array($message) ? $message : json_decode($message, true);
+        if (!is_array($data)) {
+            Gateway::sendToClient($client_id, Common::returndata('error', [
+                'code' => 400,
+                'msg' => 'invalid message',
+                'info' => ''
+            ]));
+            return;
+        }
+
+        $action = $data['action'] ?? 'other';
+        $payload = $data['data'] ?? [];
+        $payload = self::applyClientMode($client_id, $action, $payload);
 
         switch ($action) {
             case 'getconfig':
                 $config = Option::getconfig();
-                Gateway::sendToClient($client_id,Common::returndata('returnconfig',$config));
+                Gateway::sendToClient($client_id, Common::returndata('returnconfig', $config));
                 break;
-            //注册 
             case 'userreg':
-                $reg = User::userreg($data['data']);
-                
-                Gateway::sendToClient($client_id,Common::returndata('returnuserreg',$reg));
+                $reg = User::userreg($payload);
+                Gateway::sendToClient($client_id, Common::returndata('returnuserreg', $reg));
                 break;
-            // 登录
             case 'login':
-                $res = User::userlogin($data['data']);
-                if($res['code']==1){
-                    $key = 'binduid_'.$client_id;  //绑定uid写入redis
-                    $useredis = Redis::set($key,$res['info']['userinfo']['id']);
-                    Gateway::bindUid($client_id,$res['info']['userinfo']['id']);
+                $res = User::userlogin($payload);
+                if (($res['code'] ?? 0) == 1) {
+                    $uid = $res['info']['userinfo']['id'];
+                    Redis::set('binduid_' . $client_id, $uid);
+                    Gateway::bindUid($client_id, $uid);
                 }
-                
-                Gateway::sendToClient($client_id,Common::returndata('returnlogin',$res));
+                Gateway::sendToClient($client_id, Common::returndata('returnlogin', $res));
                 break;
             case 'getchargerules':
-                $res = User::getchargerules($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('chargerules',$res));
+                $res = User::getchargerules($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('chargerules', $res));
                 break;
             case 'charge':
-                // 充值
-                $res = User::charge($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('payinfo',$res));
+                $res = User::charge($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('payinfo', $res));
                 break;
             case 'getdrawrule':
-                // 获取提现规则
-                $res = User::drawrules($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('drawrules',$res));
+                $res = User::drawrules($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('drawrules', $res));
                 break;
             case 'withdraw':
-                // 提现
-                $res = User::withdraw($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('withdrawinfo',$res));
+                $res = User::withdraw($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('withdrawinfo', $res));
                 break;
-
             case 'enterroom':
-                $res = Taosha::enterroom($client_id,$data['data']);
-
-                $key = 'binduid_'.$client_id;  //绑定uid写入redis
-                $useredis = Redis::set($key,$data['data']['uid']);
-                
-                Gateway::sendToClient($client_id,Common::returndata('returnenterroom',$res));
+                $res = Taosha::enterroom($client_id, $payload);
+                if (($res['code'] ?? 0) == 1 && isset($payload['uid'])) {
+                    Redis::set('binduid_' . $client_id, $payload['uid']);
+                }
+                Gateway::sendToClient($client_id, Common::returndata('returnenterroom', $res));
                 break;
             case 'leaveroom':
-                $res = Taosha::leaveroom($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('returnleaveroom',$res));
+                $res = Taosha::leaveroom($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('returnleaveroom', $res));
                 break;
             case 'touzhu':
-                $res = Taosha::touzhu($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('returntouzhu',$res));
+                $res = Taosha::touzhu($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('returntouzhu', $res));
                 break;
-            case 'robotenterroom':
-                
-               break;
             case 'changesmallroom':
-                $res = Taosha::changesmallroom($client_id,$data['data']);
-                // Gateway::sendToClient($client_id,Common::returndata('returnchangesmallroom',$res));
+                $res = Taosha::changesmallroom($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('returnchangesmallroom', $res));
                 break;
             case 'getrecord':
-                $res = Taosha::getrecord($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('returnrecord',$res));
+                $res = Taosha::getrecord($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('returnrecord', $res));
                 break;
             case 'getbalance':
-                $res = User::getbalance($client_id,$data['data']);
-                Gateway::sendToClient($client_id,Common::returndata('returngetbalance',$res));
-                break;
+                $res = User::getbalance($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('returngetbalance', $res));
                 break;
         }
-
-        // Gateway::sendToClient($client_id, "未定义事件名");
     }
 
-    
     public static function onClose($client_id)
     {
-        // 向所有人发送 
-        // GateWay::sendToAll("$client_id logout");
-
-        // 离开房间的操作
-        // $res = Taosha::onCloseleaveroom($client_id);  
-        $key = "binduid_".$client_id;  //房间人数key
-        $uid = Redis::get($key);
-        // var_dump($key,$uid);die;
-        if($uid){
-            $res = Taosha::onCloseleaveroom($client_id,$uid); 
-            GateWay::sendToAll(Common::returndata('anyleaveroom_toall',$res));
+        $uid = Redis::get('binduid_' . $client_id);
+        if ($uid) {
+            $res = Taosha::onCloseleaveroom($client_id, $uid);
+            Gateway::sendToAll(Common::returndata('anyleaveroom_toall', $res));
         }
-      
+
+        Common::clearClientSelectedMode($client_id);
     }
 
+    protected static function applyClientMode($client_id, $action, $payload)
+    {
+        if (!is_array($payload)) {
+            $payload = [];
+        }
 
+        $modeActions = ['enterroom', 'leaveroom', 'touzhu', 'changesmallroom', 'getrecord'];
+        if (!in_array($action, $modeActions, true)) {
+            return $payload;
+        }
+
+        if (isset($payload['mode']) || isset($payload['match_mode']) || isset($payload['gameMode'])) {
+            $mode = Common::normalizeMode($payload);
+            $payload['mode'] = $mode;
+            Common::setClientSelectedMode($client_id, $mode);
+            return $payload;
+        }
+
+        $mode = Common::getClientSelectedMode($client_id);
+        if ($mode) {
+            $payload['mode'] = $mode;
+        }
+
+        return $payload;
+    }
+
+    protected static function modeFromHandshake($data)
+    {
+        if (!is_array($data)) {
+            return '';
+        }
+
+        $mode = self::modeFromArray($data['get'] ?? []);
+        if ($mode) {
+            return $mode;
+        }
+
+        $server = $data['server'] ?? [];
+        if (!is_array($server)) {
+            return '';
+        }
+
+        $mode = self::modeFromQuery($server['QUERY_STRING'] ?? '');
+        if ($mode) {
+            return $mode;
+        }
+
+        $mode = self::modeFromUrl($server['REQUEST_URI'] ?? '');
+        if ($mode) {
+            return $mode;
+        }
+
+        return self::modeFromUrl($server['HTTP_REFERER'] ?? '');
+    }
+
+    protected static function modeFromUrl($url)
+    {
+        $url = (string)$url;
+        if ($url === '') {
+            return '';
+        }
+
+        $query = parse_url($url, PHP_URL_QUERY);
+        return self::modeFromQuery($query ?: '');
+    }
+
+    protected static function modeFromQuery($query)
+    {
+        if (!$query) {
+            return '';
+        }
+
+        $params = [];
+        parse_str((string)$query, $params);
+        return self::modeFromArray($params);
+    }
+
+    protected static function modeFromArray($data)
+    {
+        if (!is_array($data)) {
+            return '';
+        }
+
+        foreach (['mode', 'match_mode', 'matchMode', 'gameMode'] as $key) {
+            if (isset($data[$key]) && (string)$data[$key] !== '') {
+                return Common::normalizeMode((string)$data[$key]);
+            }
+        }
+
+        return '';
+    }
 }

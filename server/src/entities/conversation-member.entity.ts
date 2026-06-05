@@ -28,6 +28,9 @@ export class ConversationMember {
   @Column({ type: 'boolean', default: false, name: 'is_hidden', comment: '是否不显示该会话（不删除记录）' })
   isHidden: boolean;
 
+  @Column({ type: 'datetime', nullable: true, name: 'cleared_at', comment: '该用户清空聊天记录的时间点，仅显示此时间之后的消息' })
+  clearedAt: Date | null;
+
   @Column({ type: 'int', default: 0, name: 'unread_count' })
   unreadCount: number;
 

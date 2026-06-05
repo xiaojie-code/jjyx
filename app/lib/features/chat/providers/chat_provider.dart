@@ -41,6 +41,7 @@ class ConversationItem {
   final int conversationId;
   final int? type;
   final String? name;
+  final String? avatar;
   bool isPinned;
   final int unreadCount;
   final ChatMessage? lastMessage;
@@ -50,6 +51,7 @@ class ConversationItem {
     required this.conversationId,
     this.type,
     this.name,
+    this.avatar,
     this.isPinned = false,
     this.unreadCount = 0,
     this.lastMessage,
@@ -69,11 +71,13 @@ class SocketService {
   final List<Function(int userId)> _offlineListeners = [];
   final List<Function()> _friendRequestListeners = [];
   final List<Function()> _conversationNewListeners = [];
+  final List<Function(Map<String, dynamic>)> _serviceNotificationListeners = [];
   final List<Function()> _connectListeners = [];
   final List<Function()> _connectionStateListeners = [];
 
-  // 发送者昵称缓存（从Socket推送中获取）
+  // 发送者信息缓存（从Socket推送中获取）
   final Map<int, String> senderNicknameCache = {};
+  final Map<int, String> senderAvatarCache = {};
 
   // 当前正在查看的会话ID（用于判断是否需要增加未读数）
   int? activeConversationId;
@@ -140,11 +144,15 @@ class SocketService {
       debugPrint('[Socket] 收到消息: $data');
       final map = Map<String, dynamic>.from(data);
       final msg = ChatMessage.fromJson(map);
-      // 缓存发送者昵称
+      // 缓存发送者昵称和头像
       final senderId = msg.senderId;
       final senderNickname = map['senderNickname']?.toString();
+      final senderAvatar = map['senderAvatar']?.toString();
       if (senderNickname != null && senderId > 0) {
         senderNicknameCache[senderId] = senderNickname;
+      }
+      if (senderAvatar != null && senderId > 0) {
+        senderAvatarCache[senderId] = senderAvatar;
       }
       for (final listener in _messageListeners) {
         listener(msg);
@@ -194,6 +202,18 @@ class SocketService {
     _socket!.on('conversation:new', (data) {
       for (final listener in _conversationNewListeners) {
         listener();
+      }
+    });
+
+    _socket!.on('service:notification', (data) {
+      Map<String, dynamic> map;
+      try {
+        map = Map<String, dynamic>.from(data as Map);
+      } catch (_) {
+        map = <String, dynamic>{};
+      }
+      for (final listener in _serviceNotificationListeners) {
+        listener(map);
       }
     });
 
@@ -330,6 +350,11 @@ class SocketService {
       _conversationNewListeners.add(listener);
   void removeConversationNewListener(Function() listener) =>
       _conversationNewListeners.remove(listener);
+  void addServiceNotificationListener(Function(Map<String, dynamic>) listener) =>
+      _serviceNotificationListeners.add(listener);
+  void removeServiceNotificationListener(
+          Function(Map<String, dynamic>) listener) =>
+      _serviceNotificationListeners.remove(listener);
   void addConnectListener(Function() listener) =>
       _connectListeners.add(listener);
   void removeConnectListener(Function() listener) =>

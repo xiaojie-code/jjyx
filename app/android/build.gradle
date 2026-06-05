@@ -18,6 +18,7 @@ subprojects {
                     namespace = project.group.toString()
                 }
                 compileSdkVersion 34
+                buildToolsVersion '35.0.0'
             }
         }
     }

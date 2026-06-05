@@ -30,6 +30,16 @@ class ApiEndpoints {
   static const String aiChat = '/api/social/ai/chat';
   static const String userSettings = '/api/social/settings';
 
+  // ==================== 服务通知 ====================
+  static const String serviceNotifications = '/api/notifications';
+  static const String serviceNotificationsUnread = '/api/notifications/unread-count';
+  static const String serviceNotificationsReadAll = '/api/notifications/read-all';
+
+  // ==================== 充值 ====================
+  static const String rechargeInfo = '/api/recharge/info';
+  static const String rechargeSubmit = '/api/recharge/submit';
+  static const String rechargeOrders = '/api/recharge/orders';
+
   // ==================== 游戏服务 ====================
   static const String gameList = '/api/game/list';
   static const String lotteryConfig = '/api/game/lottery/config';
@@ -52,6 +62,7 @@ class ApiEndpoints {
   static String contactRemark(int id) => '/api/social/contacts/$id/remark';
   static String contactDelete(int id) => '/api/social/contacts/$id';
   static String groupDetail(int id) => '/api/social/groups/$id';
+  static String groupAvatar(int id) => '/api/social/groups/$id/avatar';
   static String groupMembers(int id) => '/api/social/groups/$id/members';
   static String groupInvitation(int id) => '/api/social/groups/invitations/$id';
   static String groupMemberRole(int id, int userId) =>

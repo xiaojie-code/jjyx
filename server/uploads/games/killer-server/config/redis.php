@@ -15,7 +15,7 @@
 return [
     'default' => [
         'host' => '127.0.0.1',
-        'password' => 'taiwanzhao05',
+        'password' => '',
         'port' => 6379,
         'database' => 0,
     ],

@@ -8,6 +8,7 @@ export interface AppVersionForm {
   forceUpdate: boolean
   changelog?: string
   fileSize?: number | null
+  fileMd5?: string
   status: number
 }
 

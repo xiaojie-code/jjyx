@@ -14,6 +14,7 @@ import { SystemConfig } from '../entities/system-config.entity';
 import { DailyDeduction } from '../entities/daily-deduction.entity';
 import { generateSn } from '../common/utils/sn-generator';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { ServiceNotificationService } from '../notification/service-notification.service';
 import * as bcrypt from 'bcryptjs';
 
 type CurrencyType = 'points' | 'gold' | 'silver' | 'special' | 'reward' | 'invite';
@@ -36,6 +37,7 @@ export class CurrencyService {
     @InjectRepository(DailyDeduction)
     private readonly deductionRepo: Repository<DailyDeduction>,
     private readonly dataSource: DataSource,
+    private readonly serviceNotificationService: ServiceNotificationService,
   ) {}
 
   /** 获取用户货币余额 */
@@ -367,6 +369,15 @@ export class CurrencyService {
     });
     await this.withdrawalRepo.save(withdrawal);
 
+    // 给管理员发送服务通知
+    await this.serviceNotificationService.notifyAdmin({
+      type: 'withdrawal',
+      title: '新的提现申请',
+      content: `${accountName.trim()} 申请提现 ${amount} 元（实际到账 ${actualAmount} 元），收款方式：${paymentMethod}`,
+      fromUserId: userId,
+      payload: { withdrawalId: withdrawal.id, amount, actualAmount },
+    });
+
     return { message: '提现申请已提交，请等待审核' };
   }
 
@@ -491,6 +502,10 @@ export class CurrencyService {
       { configKey: 'ai_api_key', configName: '云AI API Key', configValue: '', description: '云AI服务密钥，例如 SiliconFlow / DeepSeek 的 API Key' },
       { configKey: 'ai_base_url', configName: '云AI接口地址', configValue: 'https://api.siliconflow.cn/v1', description: '兼容 OpenAI Chat Completions 的接口地址' },
       { configKey: 'ai_model', configName: '云AI模型', configValue: 'deepseek-ai/DeepSeek-V3', description: '云AI使用的模型名称' },
+      { configKey: 'recharge_qrcode', configName: '充值收款码', configValue: '', description: '充值页展示的收款二维码图片地址（后台上传）' },
+      { configKey: 'recharge_payee_name', configName: '充值收款人', configValue: '', description: '充值页展示的收款人姓名' },
+      { configKey: 'recharge_notice', configName: '充值说明', configValue: '请先扫码付款，再填写姓名和手机号提交，管理员核实后会通过短信发送激活码。', description: '充值页展示的操作说明' },
+      { configKey: 'recharge_packages', configName: '充值套餐', configValue: '', description: '充值套餐档位，多个用英文逗号分隔，如 100,200,500' },
     ];
     for (const d of defaults) {
       const exists = await this.configRepo.findOne({ where: { configKey: d.configKey } });

@@ -254,7 +254,7 @@ export class ChatController {
   @Put('settings')
   async updateSettings(
     @CurrentUser('id') userId: number,
-    @Body() data: { notificationEnabled?: boolean },
+    @Body() data: { notificationEnabled?: boolean; notificationSound?: boolean; notificationPopup?: boolean },
   ) {
     return this.chatService.updateUserSettings(userId, data);
   }

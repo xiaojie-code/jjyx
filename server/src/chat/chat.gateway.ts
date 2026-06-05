@@ -7,16 +7,19 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ChatService } from './chat.service';
+import { ServiceNotificationService } from '../notification/service-notification.service';
 
 @WebSocketGateway({
   cors: { origin: '*', credentials: true },
   namespace: '/chat',
 })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
   @WebSocketServer() server: Server;
   private readonly logger = new Logger(ChatGateway.name);
   // userId -> socketId 集合。同一账号可能同时存在多个窗口/设备连接。
@@ -25,7 +28,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly jwtService: JwtService,
     private readonly chatService: ChatService,
+    private readonly serviceNotificationService: ServiceNotificationService,
   ) {}
+
+  /** 注册服务通知实时推送通道 */
+  onModuleInit() {
+    this.serviceNotificationService.registerPusher((recipientId, payload) => {
+      this.notifyUser(Number(recipientId), 'service:notification', payload);
+    });
+  }
 
   /** 连接时验证 JWT */
   async handleConnection(client: Socket) {
@@ -153,6 +164,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `推送给用户 ${memberId}, socketId: ${socketIds.length > 0 ? socketIds.join(',') : '离线'}`,
       );
       if (socketIds.length > 0) {
+        const senderInfo = await this.chatService.getUserInfo(msg.senderId);
         for (const socketId of socketIds) {
           this.server.to(socketId).emit('message:receive', {
             id: msg.id,
@@ -161,9 +173,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             content: msg.content,
             msgType: msg.msgType,
             createdAt: msg.createdAt,
-            senderNickname: await this.chatService.getUserNickname(
-              msg.senderId,
-            ),
+            senderNickname: senderInfo.nickname,
+            senderAvatar: senderInfo.avatar,
           });
         }
       } else {

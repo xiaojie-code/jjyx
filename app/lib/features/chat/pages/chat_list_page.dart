@@ -7,8 +7,10 @@ import '../../../core/network/api_endpoints.dart';
 import '../../../core/utils/toast.dart';
 import '../providers/chat_provider.dart';
 import '../../main/providers/badge_provider.dart';
+import '../../auth/providers/auth_provider.dart';
 import 'chat_page.dart';
 import 'ai_chat_page.dart';
+import 'service_notification_page.dart';
 
 class ChatListPage extends ConsumerStatefulWidget {
   const ChatListPage({super.key});
@@ -21,17 +23,22 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     with WidgetsBindingObserver {
   List<ConversationItem> _conversations = [];
   bool _loading = true;
+  int _serviceUnread = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadConversations();
+    _loadServiceUnread();
     // Register listeners before connecting so offline messages are not missed.
     ref.read(socketServiceProvider).addMessageListener(_onNewMessageInList);
     ref
         .read(socketServiceProvider)
         .addConversationNewListener(_onConversationNew);
+    ref
+        .read(socketServiceProvider)
+        .addServiceNotificationListener(_onServiceNotification);
     ref.read(socketServiceProvider).addConnectListener(_onSocketConnected);
     ref.read(socketServiceProvider).connect();
   }
@@ -46,6 +53,9 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       ref
           .read(socketServiceProvider)
           .removeConversationNewListener(_onConversationNew);
+      ref
+          .read(socketServiceProvider)
+          .removeServiceNotificationListener(_onServiceNotification);
       ref.read(socketServiceProvider).removeConnectListener(_onSocketConnected);
     } catch (_) {}
     super.dispose();
@@ -56,7 +66,19 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     // 浠庡悗鍙版仮澶嶆椂鍒锋柊浼氳瘽鍒楄〃
     if (state == AppLifecycleState.resumed) {
       _loadConversations();
+      _loadServiceUnread();
     }
+  }
+
+  /// 加载服务通知未读数（仅管理员有意义，普通用户一般为0）
+  Future<void> _loadServiceUnread() async {
+    try {
+      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+            ApiEndpoints.serviceNotificationsUnread,
+          );
+      if (!mounted) return;
+      setState(() => _serviceUnread = result?['count'] as int? ?? 0);
+    } catch (_) {}
   }
 
   void _onNewMessageInList(ChatMessage msg) {
@@ -72,6 +94,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           conversationId: old.conversationId,
           type: old.type,
           name: old.name,
+          avatar: old.avatar,
           isPinned: old.isPinned,
           unreadCount: old.unreadCount + 1,
           peerUser: old.peerUser,
@@ -86,6 +109,15 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   void _onConversationNew() {
     if (!mounted) return;
     _loadConversations();
+  }
+
+  /// 收到服务通知实时推送：刷新未读角标（提示音由 MainShell 统一处理）
+  void _onServiceNotification(Map<String, dynamic> data) {
+    if (!mounted) return;
+    // 本地先 +1，保证角标即时更新
+    setState(() => _serviceUnread += 1);
+    // 再从服务器拉准确未读数
+    _loadServiceUnread();
   }
 
   void _onSocketConnected() {
@@ -108,6 +140,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           conversationId: map['conversationId'] as int,
           type: map['type'] as int?,
           name: map['name'] as String?,
+          avatar: map['avatar'] as String?,
           isPinned: map['isPinned'] as bool? ?? false,
           unreadCount: map['unreadCount'] as int? ?? 0,
           peerUser: map['peerUser'] != null
@@ -159,6 +192,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       ConversationItem conv, String peerName, Offset position) {
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
+    // 单聊才显示"修改备注"
+    final isSingleChat = conv.type != 2 && conv.peerUser != null;
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -183,6 +218,17 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
             ],
           ),
         ),
+        if (isSingleChat)
+          const PopupMenuItem<String>(
+            value: 'remark',
+            child: Row(
+              children: [
+                Icon(Icons.edit_note, size: 18, color: Colors.black87),
+                SizedBox(width: 10),
+                Text('修改备注'),
+              ],
+            ),
+          ),
         const PopupMenuItem<String>(
           value: 'hide',
           child: Row(
@@ -207,12 +253,57 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     ).then((value) {
       if (value == 'pin') {
         _togglePin(conv);
+      } else if (value == 'remark') {
+        _showRemarkDialog(conv);
       } else if (value == 'hide') {
         _hideConversation(conv);
       } else if (value == 'delete') {
         _confirmDeleteConversation(conv, peerName);
       }
     });
+  }
+
+  /// 修改备注（单聊）
+  Future<void> _showRemarkDialog(ConversationItem conv) async {
+    final friendId = conv.peerUser?['id'] as int?;
+    if (friendId == null) return;
+    final currentRemark = conv.peerUser?['remark'] as String? ?? '';
+    final ctrl = TextEditingController(text: currentRemark);
+    final newRemark = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('修改备注'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '输入备注名，留空则取消备注',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: const Text('保存')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (newRemark == null) return;
+    try {
+      await ref.read(apiClientProvider).put(
+            ApiEndpoints.contactRemark(friendId),
+            data: {'remark': newRemark},
+          );
+      if (mounted) {
+        Toast.success(context, '备注已更新');
+        _loadConversations();
+      }
+    } catch (e) {
+      if (mounted) Toast.error(context, '$e');
+    }
   }
 
   /// 不显示会话（不删除记录）
@@ -330,6 +421,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
   @override
   Widget build(BuildContext context) {
+    final isAdmin = ref.watch(authProvider).user?.account == 'admin';
+    final headerCount = isAdmin ? 3 : 2;
     return Scaffold(
       appBar: AppBar(
         title: const Text('消息'),
@@ -343,7 +436,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           : RefreshIndicator(
               onRefresh: _loadConversations,
               child: ListView.builder(
-                itemCount: _conversations.length + 2, // +2 for AI entry + digital human
+                itemCount: _conversations.length + headerCount,
                 itemBuilder: (context, index) {
                   // 浜慉I 鍏ュ彛锛堥《閮級
                   if (index == 0) {
@@ -382,12 +475,71 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                     );
                   }
 
-                  final conv = _conversations[index - 2];
-                  final peerName = conv.peerUser?['nickname'] ??
-                      conv.peerUser?['account'] ??
-                      conv.name ??
-                      '聊天';
-                  final peerAvatar = conv.peerUser?['avatar'] as String?;
+                  // 服务通知入口（仅管理员）
+                  if (isAdmin && index == 2) {
+                    return ListTile(
+                      leading: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          CircleAvatar(
+                            backgroundColor: Colors.orange.shade100,
+                            child: const Icon(Icons.notifications,
+                                color: Colors.orange),
+                          ),
+                          if (_serviceUnread > 0)
+                            Positioned(
+                              right: -4,
+                              top: -4,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 1),
+                                decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    borderRadius: BorderRadius.circular(10)),
+                                constraints: const BoxConstraints(
+                                    minWidth: 16, minHeight: 16),
+                                child: Text(
+                                  _serviceUnread > 99
+                                      ? '99+'
+                                      : '$_serviceUnread',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 10),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      title: const Text('服务通知',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: const Text('提现、建群、充值等申请提醒'),
+                      onTap: () async {
+                        await Navigator.of(context, rootNavigator: true)
+                            .push(MaterialPageRoute(
+                          builder: (_) => const ServiceNotificationPage(),
+                        ));
+                        _loadServiceUnread();
+                      },
+                    );
+                  }
+
+                  final conv = _conversations[index - headerCount];
+                  final peerName = (conv.peerUser?['remark'] as String?)
+                              ?.trim()
+                              .isNotEmpty ==
+                          true
+                      ? conv.peerUser!['remark']
+                      : conv.peerUser?['nickname'] ??
+                          conv.peerUser?['account'] ??
+                          conv.name ??
+                          '聊天';
+                  // 确定头像：群聊用群头像，单聊用对方头像
+                  final String? displayAvatar;
+                  if (conv.type == 2) {
+                    displayAvatar = conv.avatar;
+                  } else {
+                    displayAvatar = conv.peerUser?['avatar'] as String?;
+                  }
 
                   return GestureDetector(
                     onLongPressStart: (details) => _showConversationMenu(
@@ -395,14 +547,14 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                     child: ListTile(
                     leading: CircleAvatar(
                       backgroundColor: Colors.grey.shade200,
-                      backgroundImage: peerAvatar != null &&
-                              peerAvatar.isNotEmpty &&
-                              !peerAvatar.contains('default')
-                          ? NetworkImage(peerAvatar.startsWith('http') ? peerAvatar : '${AppConstants.apiBaseUrl}$peerAvatar')
+                      backgroundImage: displayAvatar != null &&
+                              displayAvatar.isNotEmpty &&
+                              !displayAvatar.contains('default')
+                          ? NetworkImage(displayAvatar.startsWith('http') ? displayAvatar : '${AppConstants.apiBaseUrl}$displayAvatar')
                           : null,
-                      child: peerAvatar == null ||
-                              peerAvatar.isEmpty ||
-                              peerAvatar.contains('default')
+                      child: displayAvatar == null ||
+                              displayAvatar.isEmpty ||
+                              displayAvatar.contains('default')
                           ? Icon(conv.type == 2 ? Icons.group : Icons.person,
                               color: Colors.grey.shade600)
                           : null,

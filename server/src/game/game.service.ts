@@ -26,14 +26,15 @@ export class GameService {
 
   /** 游戏列表 */
   async getGameList() {
-    return this.gameRepo.find({ where: { status: 1 }, order: { sortOrder: 'ASC' } });
+    const games = await this.gameRepo.find({ where: { status: 1 }, order: { sortOrder: 'ASC' } });
+    return games.map((game) => this.withResolvedOrientation(game));
   }
 
   /** 游戏详情 */
   async getGameDetail(id: number) {
     const game = await this.gameRepo.findOne({ where: { id } });
     if (!game) throw new NotFoundException('游戏不存在');
-    return game;
+    return this.withResolvedOrientation(game);
   }
 
   /** 启动游戏（检查激活+扣入场费+扣下注） */
@@ -59,7 +60,26 @@ export class GameService {
       });
     }
 
-    return { gameUrl: game.gameUrl, gameId: game.id, name: game.name, orientation: game.orientation || 'landscape' };
+    return {
+      gameUrl: game.gameUrl,
+      gameId: game.id,
+      name: game.name,
+      orientation: this.resolveGameOrientation(game),
+    };
+  }
+
+  private resolveGameOrientation(game: Game) {
+    const gameUrl = (game.gameUrl || '').toLowerCase();
+    if (gameUrl.includes('/killer')) return 'portrait';
+    if (gameUrl.includes('/saima')) return 'landscape';
+    return game.orientation === 'portrait' ? 'portrait' : 'landscape';
+  }
+
+  private withResolvedOrientation(game: Game) {
+    return {
+      ...game,
+      orientation: this.resolveGameOrientation(game),
+    };
   }
 
   /** 游戏结算回调 */

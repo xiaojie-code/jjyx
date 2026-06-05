@@ -22,6 +22,8 @@ import { ConversationMember } from '../entities/conversation-member.entity';
 import { Message } from '../entities/message.entity';
 import { Meeting } from '../entities/meeting.entity';
 import { CurrencyService } from '../currency/currency.service';
+import { RechargeService } from '../currency/recharge.service';
+import { ServiceNotificationService } from '../notification/service-notification.service';
 import { MeetingService } from '../chat/meeting.service';
 import { MeetingGateway } from '../chat/meeting.gateway';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -60,6 +62,8 @@ export class AdminService {
     private currencyService: CurrencyService,
     private meetingService: MeetingService,
     private meetingGateway: MeetingGateway,
+    private rechargeService: RechargeService,
+    private serviceNotificationService: ServiceNotificationService,
     private dataSource: DataSource,
   ) {}
 
@@ -211,12 +215,16 @@ export class AdminService {
         force_update TINYINT NOT NULL DEFAULT 0,
         changelog TEXT NULL,
         file_size BIGINT NULL,
+        file_md5 VARCHAR(64) NULL,
         status TINYINT NOT NULL DEFAULT 1 COMMENT '1 enabled, 0 disabled',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_app_versions_platform_status_code (platform, status, version_code)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    try {
+      await this.dataSource.query(`ALTER TABLE app_versions ADD COLUMN file_md5 VARCHAR(64) NULL`);
+    } catch (_) {}
   }
 
   async getAppVersions() {
@@ -224,8 +232,8 @@ export class AdminService {
     return this.dataSource.query(
       `SELECT id, platform, version_name AS versionName, version_code AS versionCode,
               download_url AS downloadUrl, force_update AS forceUpdate,
-              changelog, file_size AS fileSize, status, created_at AS createdAt,
-              updated_at AS updatedAt
+              changelog, file_size AS fileSize, file_md5 AS fileMd5, status,
+              created_at AS createdAt, updated_at AS updatedAt
        FROM app_versions
        ORDER BY platform ASC, version_code DESC, id DESC
        LIMIT 200`,
@@ -239,6 +247,7 @@ export class AdminService {
     const versionCode = Number(data.versionCode);
     const downloadUrl = String(data.downloadUrl || '').trim();
     const changelog = String(data.changelog || '').trim();
+    const fileMd5 = String(data.fileMd5 || '').trim().toLowerCase() || null;
     const fileSize = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
       ? null
       : Number(data.fileSize);
@@ -250,8 +259,8 @@ export class AdminService {
     if (!downloadUrl) throw new BadRequestException('下载地址不能为空');
     await this.dataSource.query(
       `INSERT INTO app_versions
-        (platform, version_name, version_code, download_url, force_update, changelog, file_size, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (platform, version_name, version_code, download_url, force_update, changelog, file_size, file_md5, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         platform,
         versionName,
@@ -260,6 +269,7 @@ export class AdminService {
         data.forceUpdate ? 1 : 0,
         changelog || null,
         Number.isFinite(fileSize as number) ? fileSize : null,
+        fileMd5,
         data.status === 0 ? 0 : 1,
       ],
     );
@@ -275,6 +285,7 @@ export class AdminService {
     const versionCode = Number(data.versionCode);
     const downloadUrl = String(data.downloadUrl || '').trim();
     const changelog = String(data.changelog || '').trim();
+    const fileMd5 = String(data.fileMd5 || '').trim().toLowerCase() || null;
     const fileSize = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
       ? null
       : Number(data.fileSize);
@@ -287,7 +298,7 @@ export class AdminService {
     await this.dataSource.query(
       `UPDATE app_versions
        SET platform = ?, version_name = ?, version_code = ?, download_url = ?,
-           force_update = ?, changelog = ?, file_size = ?, status = ?, updated_at = NOW()
+           force_update = ?, changelog = ?, file_size = ?, file_md5 = ?, status = ?, updated_at = NOW()
        WHERE id = ?`,
       [
         platform,
@@ -297,6 +308,7 @@ export class AdminService {
         data.forceUpdate ? 1 : 0,
         changelog || null,
         Number.isFinite(fileSize as number) ? fileSize : null,
+        fileMd5,
         data.status === 0 ? 0 : 1,
         id,
       ],
@@ -409,6 +421,17 @@ export class AdminService {
   }
   async reviewWithdrawal(id: number, approve: boolean) {
     return this.currencyService.reviewWithdrawal(id, approve);
+  }
+
+  // ===== 充值订单管理 =====
+  async getRechargeOrders(query: any) {
+    return this.rechargeService.adminList(query);
+  }
+  async reviewRecharge(id: number, operatorId: number, data: { action: 'approve' | 'reject'; remark?: string }) {
+    return this.rechargeService.adminReview(id, operatorId, data);
+  }
+  async getRechargeStats() {
+    return this.rechargeService.adminStats();
   }
 
   // ===== 系统配置 =====

@@ -1,5 +1,9 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:dio/dio.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/utils/toast.dart';
@@ -25,6 +29,8 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
   late String _groupName;
   String _announcement = '';
   String _myGroupNickname = '';
+  String _groupAvatar = '';
+  int _creatorId = 0;
   final _memberSearchCtrl = TextEditingController();
 
   @override
@@ -73,9 +79,61 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
         setState(() {
           _announcement = result['announcement']?.toString() ?? '';
           _myGroupNickname = result['myGroupNickname']?.toString() ?? '';
+          _groupAvatar = result['avatar']?.toString() ?? '';
+          _creatorId = int.tryParse(result['creatorId']?.toString() ?? '') ?? 0;
         });
       }
     } catch (_) {}
+  }
+
+  /// 群主更换群头像
+  Future<void> _changeGroupAvatar() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从相册选择'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            if (!kIsWeb)
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('拍照'),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 80,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      final filename = picked.name.isNotEmpty ? picked.name : 'group_avatar.jpg';
+      final formData = FormData.fromMap({
+        'avatar': MultipartFile.fromBytes(bytes, filename: filename),
+      });
+      final result = await ref.read(apiClientProvider).upload<Map<String, dynamic>>(
+        ApiEndpoints.groupAvatar(widget.conversationId),
+        formData: formData,
+      );
+      if (mounted && result != null) {
+        setState(() => _groupAvatar = result['avatar']?.toString() ?? '');
+        Toast.success(context, '群头像已更新');
+      }
+    } catch (e) {
+      if (mounted) Toast.error(context, '更换群头像失败：$e');
+    }
   }
 
   Future<void> _editAnnouncement() async {
@@ -404,16 +462,46 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // 缇や俊鎭?
+                // 群信息
                 Container(
                   padding: const EdgeInsets.all(16),
                   color: Colors.white,
                   child: Row(
                     children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundColor: Colors.blue.shade100,
-                        child: const Icon(Icons.group, color: Colors.blue),
+                      GestureDetector(
+                        onTap: iAmOwner ? _changeGroupAvatar : null,
+                        child: Stack(
+                          children: [
+                            CircleAvatar(
+                              radius: 24,
+                              backgroundColor: Colors.blue.shade100,
+                              backgroundImage: _groupAvatar.isNotEmpty &&
+                                      !_groupAvatar.contains('default')
+                                  ? NetworkImage(_groupAvatar.startsWith('http')
+                                      ? _groupAvatar
+                                      : '${AppConstants.apiBaseUrl}$_groupAvatar')
+                                  : null,
+                              child: _groupAvatar.isEmpty ||
+                                      _groupAvatar.contains('default')
+                                  ? const Icon(Icons.group, color: Colors.blue)
+                                  : null,
+                            ),
+                            if (iAmOwner)
+                              Positioned(
+                                right: 0,
+                                bottom: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.grey.shade300),
+                                  ),
+                                  child: const Icon(Icons.camera_alt, size: 12, color: Colors.grey),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(

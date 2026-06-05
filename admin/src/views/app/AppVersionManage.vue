@@ -54,6 +54,9 @@
         <el-form-item label="文件大小">
           <el-input-number v-model="form.fileSize" :min="0" :precision="0" style="width: 100%" />
         </el-form-item>
+        <el-form-item label="文件MD5">
+          <el-input v-model="form.fileMd5" placeholder="选填，APK文件的MD5值，用于校验下载完整性（小写）" />
+        </el-form-item>
         <el-form-item label="强制更新">
           <el-switch v-model="form.forceUpdate" />
         </el-form-item>
@@ -98,6 +101,7 @@ const form = reactive<AppVersionForm>({
   forceUpdate: false,
   changelog: '',
   fileSize: null,
+  fileMd5: '',
   status: 1,
 })
 
@@ -125,6 +129,7 @@ function resetForm() {
     forceUpdate: false,
     changelog: '',
     fileSize: null,
+    fileMd5: '',
     status: 1,
   })
 }
@@ -144,6 +149,7 @@ function openEdit(row: any) {
     forceUpdate: Number(row.forceUpdate) === 1 || row.forceUpdate === true,
     changelog: row.changelog || '',
     fileSize: row.fileSize == null ? null : Number(row.fileSize),
+    fileMd5: row.fileMd5 || '',
     status: Number(row.status ?? 1),
   })
   dialogVisible.value = true

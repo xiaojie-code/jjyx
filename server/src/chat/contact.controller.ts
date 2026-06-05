@@ -1,4 +1,8 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { mkdirSync } from 'fs';
+import { join, extname } from 'path';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ContactService } from './contact.service';
 
@@ -70,6 +74,31 @@ export class ContactController {
     @Body('name') name: string,
   ) {
     return this.contactService.updateGroup(userId, id, name);
+  }
+
+  @Post('groups/:id/avatar')
+  @UseInterceptors(FileInterceptor('avatar', {
+    storage: diskStorage({
+      destination: (_req, _file, cb) => {
+        const dir = join(process.cwd(), 'uploads', 'group-avatars');
+        mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        const ext = extname(file.originalname || '.jpg') || '.jpg';
+        cb(null, `${Date.now()}-${Math.floor(Math.random() * 1e9)}${ext}`);
+      },
+    }),
+    limits: { fileSize: 2 * 1024 * 1024 },
+  }))
+  updateGroupAvatar(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('请选择群头像图片');
+    const avatarPath = `/uploads/group-avatars/${file.filename}`;
+    return this.contactService.updateGroupAvatar(userId, id, avatarPath);
   }
 
   @Get('groups/:id/info')

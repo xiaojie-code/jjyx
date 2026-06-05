@@ -1,14 +1,12 @@
 package com.llfbandit.record;
 
-import androidx.annotation.Nullable;
-
 import java.io.File;
 
 public class Utils {
   private Utils() {
   }
 
-  public static <T> T firstNonNull(@Nullable T first, @Nullable T second) {
+  public static <T> T firstNonNull(T first, T second) {
     return first != null ? first : checkNotNull(second);
   }
 

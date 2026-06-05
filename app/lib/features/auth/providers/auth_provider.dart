@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/storage/token_storage.dart';
+import '../../../core/utils/notification_service.dart';
 import '../../chat/providers/chat_provider.dart';
 import '../models/user_model.dart';
 
@@ -105,6 +106,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = userData != null ? UserModel.fromJson(userData) : null;
       state = AuthState(user: user);
       if (token != null) _socketService.connect();
+      // 登录成功后请求通知权限
+      NotificationService.instance.requestPermission();
       return true;
     } catch (e) {
       final errStr = e.toString();

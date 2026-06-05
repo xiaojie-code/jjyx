@@ -36,7 +36,16 @@ async function bootstrap() {
     fallthrough: false,
     setHeaders: (res, filePath) => {
       // Unity WebGL gzip 压缩文件需要正确的 Content-Encoding
-      if (filePath.endsWith('.js.gz')) {
+      if (filePath.endsWith('.framework.js.unityweb')) {
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Type', 'application/javascript');
+      } else if (filePath.endsWith('.wasm.unityweb')) {
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Type', 'application/wasm');
+      } else if (filePath.endsWith('.data.unityweb')) {
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Type', 'application/octet-stream');
+      } else if (filePath.endsWith('.js.gz')) {
         res.setHeader('Content-Encoding', 'gzip');
         res.setHeader('Content-Type', 'application/javascript');
       } else if (filePath.endsWith('.wasm.gz')) {

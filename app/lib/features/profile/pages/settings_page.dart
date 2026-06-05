@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/update/app_update_service.dart';
+import '../../../core/update/update_state.dart';
+import '../../../core/utils/notification_service.dart';
 import '../../../core/utils/toast.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -14,6 +16,8 @@ class SettingsPage extends ConsumerStatefulWidget {
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   bool _notificationEnabled = true;
+  bool _notificationSound = true;
+  bool _notificationPopup = true;
   bool _loading = true;
 
   @override
@@ -29,8 +33,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           );
       setState(() {
         _notificationEnabled = result?['notificationEnabled'] as bool? ?? true;
+        _notificationSound = result?['notificationSound'] as bool? ?? true;
+        _notificationPopup = result?['notificationPopup'] as bool? ?? true;
         _loading = false;
       });
+      // 同步到通知服务内存状态
+      NotificationService.instance.updateSettings(
+        master: _notificationEnabled,
+        sound: _notificationSound,
+        popup: _notificationPopup,
+      );
     } catch (_) {
       setState(() => _loading = false);
     }
@@ -38,6 +50,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Future<void> _toggleNotification(bool value) async {
     setState(() => _notificationEnabled = value);
+    NotificationService.instance.updateSettings(master: value);
     try {
       await ref.read(apiClientProvider).put(
         ApiEndpoints.userSettings,
@@ -45,6 +58,37 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       );
     } catch (e) {
       setState(() => _notificationEnabled = !value);
+      NotificationService.instance.updateSettings(master: !value);
+      if (mounted) Toast.error(context, '$e');
+    }
+  }
+
+  Future<void> _toggleSound(bool value) async {
+    setState(() => _notificationSound = value);
+    NotificationService.instance.updateSettings(sound: value);
+    try {
+      await ref.read(apiClientProvider).put(
+        ApiEndpoints.userSettings,
+        data: {'notificationSound': value},
+      );
+    } catch (e) {
+      setState(() => _notificationSound = !value);
+      NotificationService.instance.updateSettings(sound: !value);
+      if (mounted) Toast.error(context, '$e');
+    }
+  }
+
+  Future<void> _togglePopup(bool value) async {
+    setState(() => _notificationPopup = value);
+    NotificationService.instance.updateSettings(popup: value);
+    try {
+      await ref.read(apiClientProvider).put(
+        ApiEndpoints.userSettings,
+        data: {'notificationPopup': value},
+      );
+    } catch (e) {
+      setState(() => _notificationPopup = !value);
+      NotificationService.instance.updateSettings(popup: !value);
       if (mounted) Toast.error(context, '$e');
     }
   }
@@ -163,13 +207,33 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: Text('新消息通知', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                ),
                 SwitchListTile(
                   title: const Text('消息提醒'),
-                  subtitle: const Text('开启后接收消息时弹窗提示'),
+                  subtitle: const Text('消息提醒总开关'),
                   value: _notificationEnabled,
                   onChanged: _toggleNotification,
                 ),
+                SwitchListTile(
+                  title: const Text('声音提醒'),
+                  subtitle: const Text('收到新消息时播放提示音'),
+                  value: _notificationSound,
+                  onChanged: _notificationEnabled ? _toggleSound : null,
+                ),
+                SwitchListTile(
+                  title: const Text('弹窗提醒'),
+                  subtitle: const Text('应用在后台时显示通知弹窗'),
+                  value: _notificationPopup,
+                  onChanged: _notificationEnabled ? _togglePopup : null,
+                ),
                 const Divider(height: 1),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: Text('账号安全', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                ),
                 ListTile(
                   leading: const Icon(Icons.lock_reset),
                   title: const Text('修改密码'),
@@ -181,9 +245,32 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ListTile(
                   leading: const Icon(Icons.system_update_alt),
                   title: const Text('检查更新'),
-                  subtitle: const Text('检测是否有新的安装包版本'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => AppUpdateService.checkForUpdate(context, ref, manual: true),
+                  subtitle: Text(
+                    ref.watch(updateStateProvider).hasUpdate
+                        ? '发现新版本 v${ref.watch(updateStateProvider).availableVersionName}'
+                        : '检测是否有新的安装包版本',
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (ref.watch(updateStateProvider).hasUpdate)
+                        Container(
+                          width: 9,
+                          height: 9,
+                          margin: const EdgeInsets.only(right: 8),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
+                  onTap: () {
+                    // 用户查看更新，标记红点为已读
+                    ref.read(updateStateProvider.notifier).markSeen();
+                    AppUpdateService.checkForUpdate(context, ref, manual: true);
+                  },
                 ),
               ],
             ),

@@ -70,6 +70,12 @@ const router = createRouter({
           meta: { title: '提现管理', icon: 'Money' },
         },
         {
+          path: 'recharge',
+          name: 'RechargeManage',
+          component: () => import('@/views/recharge/RechargeManage.vue'),
+          meta: { title: '充值管理', icon: 'CreditCard' },
+        },
+        {
           path: 'agents',
           name: 'Agents',
           component: () => import('@/views/agents/AgentList.vue'),

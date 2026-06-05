@@ -21,6 +21,7 @@ import { ContactService } from './contact.service';
 import { ContactController } from './contact.controller';
 import { AuthModule } from '../auth/auth.module';
 import { CurrencyModule } from '../currency/currency.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { CurrencyModule } from '../currency/currency.module';
     ]),
     AuthModule,
     CurrencyModule,
+    NotificationModule,
   ],
   controllers: [ChatController, ContactController, MeetingController],
   providers: [

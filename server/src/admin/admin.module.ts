@@ -24,6 +24,7 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { CurrencyModule } from '../currency/currency.module';
 import { ChatModule } from '../chat/chat.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { ChatModule } from '../chat/chat.module';
     ]),
     CurrencyModule,
     ChatModule,
+    NotificationModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],
