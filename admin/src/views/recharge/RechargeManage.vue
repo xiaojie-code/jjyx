@@ -115,6 +115,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { dateTimeFormatter } from '@/utils/format'
+import { resolveMediaUrl } from '@/utils/media'
 import {
   getRechargeOrders,
   getRechargeStats,
@@ -141,11 +142,9 @@ const cfg = reactive<Record<string, string>>({
   recharge_notice: '',
 })
 
-const apiBase = import.meta.env.VITE_API_BASE || ''
 const qrcodeUrl = computed(() => {
   const v = cfg.recharge_qrcode
-  if (!v) return ''
-  return v.startsWith('http') ? v : `${apiBase}${v}`
+  return resolveMediaUrl(v)
 })
 
 async function loadOrders() {

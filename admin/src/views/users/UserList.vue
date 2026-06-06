@@ -36,7 +36,7 @@
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column label="头像" width="70" align="center">
           <template #default="{ row }">
-            <el-avatar :size="32" :src="row.avatar" icon="UserFilled" />
+            <el-avatar :size="32" :src="resolveAvatarUrl(row.avatar)" icon="UserFilled" />
           </template>
         </el-table-column>
         <el-table-column prop="account" label="账号" width="120" />
@@ -145,6 +145,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getUserList, getUserStats, updateUser, updateUserStatus, addUserCurrency } from '@/api/user'
 import { dateTimeFormatter } from '@/utils/format'
+import { resolveAvatarUrl } from '@/utils/media'
 
 const loading = ref(false)
 const userList = ref<any[]>([])

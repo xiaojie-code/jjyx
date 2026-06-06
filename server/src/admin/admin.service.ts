@@ -240,37 +240,88 @@ export class AdminService {
     );
   }
 
-  async createAppVersion(data: any) {
-    await this.ensureAppVersionsTable();
-    const platform = (data.platform || 'android').trim();
+  private parseAppVersionPayload(data: any) {
+    const platform = String(data.platform || 'android').trim().toLowerCase();
     const versionName = String(data.versionName || '').trim();
     const versionCode = Number(data.versionCode);
     const downloadUrl = String(data.downloadUrl || '').trim();
     const changelog = String(data.changelog || '').trim();
-    const fileMd5 = String(data.fileMd5 || '').trim().toLowerCase() || null;
-    const fileSize = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
+    const fileMd5Text = String(data.fileMd5 || '').trim().toLowerCase();
+    const fileMd5 = fileMd5Text || null;
+    const fileSizeValue = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
       ? null
       : Number(data.fileSize);
+
     if (!platform) throw new BadRequestException('平台不能为空');
+    if (platform !== 'android') throw new BadRequestException('当前仅支持Android版本');
     if (!versionName) throw new BadRequestException('版本名称不能为空');
     if (!Number.isInteger(versionCode) || versionCode <= 0) {
       throw new BadRequestException('版本号必须是大于0的整数');
     }
     if (!downloadUrl) throw new BadRequestException('下载地址不能为空');
+    this.validateAppDownloadUrl(downloadUrl);
+    if (fileSizeValue !== null && (!Number.isInteger(fileSizeValue) || fileSizeValue <= 0)) {
+      throw new BadRequestException('文件大小必须是大于0的整数');
+    }
+    if (fileMd5 && !/^[a-f0-9]{32}$/.test(fileMd5)) {
+      throw new BadRequestException('文件MD5必须是32位十六进制字符串');
+    }
+
+    return {
+      platform,
+      versionName,
+      versionCode,
+      downloadUrl,
+      changelog: changelog || null,
+      fileSize: fileSizeValue,
+      fileMd5,
+      forceUpdate: data.forceUpdate ? 1 : 0,
+      status: Number(data.status) === 0 ? 0 : 1,
+    };
+  }
+
+  private validateAppDownloadUrl(downloadUrl: string) {
+    const lowerPath = downloadUrl.split(/[?#]/)[0].toLowerCase();
+    if (!lowerPath.endsWith('.apk')) {
+      throw new BadRequestException('下载地址必须指向.apk安装包');
+    }
+
+    if (downloadUrl.startsWith('/')) {
+      if (downloadUrl.startsWith('//')) {
+        throw new BadRequestException('下载地址不能使用协议相对地址，请填写http/https或/downloads路径');
+      }
+      return;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(downloadUrl);
+    } catch (_) {
+      throw new BadRequestException('下载地址格式不正确，请填写http/https直链或/downloads路径');
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+      throw new BadRequestException('下载地址必须是http或https链接');
+    }
+  }
+
+  async createAppVersion(data: any) {
+    await this.ensureAppVersionsTable();
+    const payload = this.parseAppVersionPayload(data);
     await this.dataSource.query(
       `INSERT INTO app_versions
         (platform, version_name, version_code, download_url, force_update, changelog, file_size, file_md5, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        platform,
-        versionName,
-        versionCode,
-        downloadUrl,
-        data.forceUpdate ? 1 : 0,
-        changelog || null,
-        Number.isFinite(fileSize as number) ? fileSize : null,
-        fileMd5,
-        data.status === 0 ? 0 : 1,
+        payload.platform,
+        payload.versionName,
+        payload.versionCode,
+        payload.downloadUrl,
+        payload.forceUpdate,
+        payload.changelog,
+        payload.fileSize,
+        payload.fileMd5,
+        payload.status,
       ],
     );
     return { message: '版本已发布' };
@@ -280,36 +331,22 @@ export class AdminService {
     await this.ensureAppVersionsTable();
     const rows = await this.dataSource.query('SELECT id FROM app_versions WHERE id = ? LIMIT 1', [id]);
     if (rows.length === 0) throw new NotFoundException('版本不存在');
-    const platform = (data.platform || 'android').trim();
-    const versionName = String(data.versionName || '').trim();
-    const versionCode = Number(data.versionCode);
-    const downloadUrl = String(data.downloadUrl || '').trim();
-    const changelog = String(data.changelog || '').trim();
-    const fileMd5 = String(data.fileMd5 || '').trim().toLowerCase() || null;
-    const fileSize = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
-      ? null
-      : Number(data.fileSize);
-    if (!platform) throw new BadRequestException('平台不能为空');
-    if (!versionName) throw new BadRequestException('版本名称不能为空');
-    if (!Number.isInteger(versionCode) || versionCode <= 0) {
-      throw new BadRequestException('版本号必须是大于0的整数');
-    }
-    if (!downloadUrl) throw new BadRequestException('下载地址不能为空');
+    const payload = this.parseAppVersionPayload(data);
     await this.dataSource.query(
       `UPDATE app_versions
        SET platform = ?, version_name = ?, version_code = ?, download_url = ?,
            force_update = ?, changelog = ?, file_size = ?, file_md5 = ?, status = ?, updated_at = NOW()
        WHERE id = ?`,
       [
-        platform,
-        versionName,
-        versionCode,
-        downloadUrl,
-        data.forceUpdate ? 1 : 0,
-        changelog || null,
-        Number.isFinite(fileSize as number) ? fileSize : null,
-        fileMd5,
-        data.status === 0 ? 0 : 1,
+        payload.platform,
+        payload.versionName,
+        payload.versionCode,
+        payload.downloadUrl,
+        payload.forceUpdate,
+        payload.changelog,
+        payload.fileSize,
+        payload.fileMd5,
+        payload.status,
         id,
       ],
     );

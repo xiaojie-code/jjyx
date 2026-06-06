@@ -35,7 +35,7 @@ class BadgeNotifier extends StateNotifier<BadgeState> {
   BadgeNotifier(this._api) : super(const BadgeState());
 
   /// 从服务器加载未读数
-  Future<void> loadBadges() async {
+  Future<void> loadBadges({bool includeServiceNotifications = false}) async {
     try {
       final result = await _api.get<Map<String, dynamic>>('/api/social/badges');
       if (result != null) {
@@ -44,8 +44,15 @@ class BadgeNotifier extends StateNotifier<BadgeState> {
           pendingFriendRequests: result['pendingRequests'] as int? ?? 0,
         );
       }
-      await loadServiceNotifications();
+      if (includeServiceNotifications) {
+        await loadServiceNotifications();
+      } else {
+        state = state.copyWith(serviceNotificationCount: 0);
+      }
     } catch (_) {
+      if (!includeServiceNotifications) {
+        state = state.copyWith(serviceNotificationCount: 0);
+      }
       // 接口失败时不影响使用，静默处理
     }
   }
@@ -78,11 +85,11 @@ class BadgeNotifier extends StateNotifier<BadgeState> {
 
   /// 直接设置未读消息数
   void setUnreadCount(int count) {
-    state = state.copyWith(unreadMessageCount: count);
+    state = state.copyWith(unreadMessageCount: count < 0 ? 0 : count);
   }
 
   void setServiceNotificationCount(int count) {
-    state = state.copyWith(serviceNotificationCount: count);
+    state = state.copyWith(serviceNotificationCount: count < 0 ? 0 : count);
   }
 
   void incrementServiceNotifications() {

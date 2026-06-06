@@ -54,12 +54,54 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   ChatMessage? _replyingTo; // 引用回复的目标消息
 
   static const List<String> _emojis = [
-    '😀', '😂', '🤣', '😊', '😍', '🥰', '😘', '😜',
-    '🤔', '😎', '🤗', '😴', '😭', '😡', '🥺', '😱',
-    '👍', '👎', '👏', '🙏', '💪', '🤝', '✌️', '🤞',
-    '❤️', '💔', '🔥', '⭐', '🎉', '🎊', '💯', '✅',
-    '👋', '🙈', '🙉', '🙊', '💀', '👻', '🤡', '💩',
-    '🐶', '🐱', '🐼', '🦊', '🌹', '🌸', '☀️', '🌙',
+    '😀',
+    '😂',
+    '🤣',
+    '😊',
+    '😍',
+    '🥰',
+    '😘',
+    '😜',
+    '🤔',
+    '😎',
+    '🤗',
+    '😴',
+    '😭',
+    '😡',
+    '🥺',
+    '😱',
+    '👍',
+    '👎',
+    '👏',
+    '🙏',
+    '💪',
+    '🤝',
+    '✌️',
+    '🤞',
+    '❤️',
+    '💔',
+    '🔥',
+    '⭐',
+    '🎉',
+    '🎊',
+    '💯',
+    '✅',
+    '👋',
+    '🙈',
+    '🙉',
+    '🙊',
+    '💀',
+    '👻',
+    '🤡',
+    '💩',
+    '🐶',
+    '🐱',
+    '🐼',
+    '🦊',
+    '🌹',
+    '🌸',
+    '☀️',
+    '🌙',
   ];
   AudioPlayer? _audioPlayer;
   StreamSubscription<void>? _playerCompleteSub;
@@ -118,7 +160,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final socketService = ref.read(socketServiceProvider);
       final cachedAvatar = socketService.senderAvatarCache[msg.senderId];
       final cachedNickname = socketService.senderNicknameCache[msg.senderId];
-      if (msg.senderId > 0 && (cachedAvatar != null || cachedNickname != null)) {
+      if (msg.senderId > 0 &&
+          (cachedAvatar != null || cachedNickname != null)) {
         final existing = _senderCache[msg.senderId] ?? {};
         _senderCache[msg.senderId] = {
           ...existing,
@@ -182,9 +225,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _hasMore = true;
       final result =
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-                ApiEndpoints.conversationMessages(widget.conversationId),
-                queryParameters: {'page': '1', 'pageSize': '30'},
-              );
+        ApiEndpoints.conversationMessages(widget.conversationId),
+        queryParameters: {'page': '1', 'pageSize': '30'},
+      );
       final total = result?['total'] as int? ?? 0;
       setState(() {
         _messages = ((result?['list'] as List?) ?? []).map((e) {
@@ -208,7 +251,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _socketService.markAsRead(widget.conversationId, _messages.last.id);
         if (mounted) {
           Future.delayed(const Duration(milliseconds: 300), () {
-            if (mounted) ref.read(badgeProvider.notifier).loadBadges();
+            if (mounted) {
+              final authState = ref.read(authProvider);
+              ref.read(badgeProvider.notifier).loadBadges(
+                    includeServiceNotifications:
+                        authState.user != null || authState.profile != null,
+                  );
+            }
           });
         }
       }
@@ -225,9 +274,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final nextPage = _page + 1;
       final result =
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-                ApiEndpoints.conversationMessages(widget.conversationId),
-                queryParameters: {'page': '$nextPage', 'pageSize': '30'},
-              );
+        ApiEndpoints.conversationMessages(widget.conversationId),
+        queryParameters: {'page': '$nextPage', 'pageSize': '30'},
+      );
       final newMessages = ((result?['list'] as List?) ?? []).map((e) {
         final map = Map<String, dynamic>.from(e);
         return ChatMessage.fromJson(map);
@@ -430,19 +479,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  Future<void> _toggleVoiceRecording() async {
-    if (_isMuted) return;
-    if (!_voiceRecordingSupported) {
-      if (mounted) Toast.warning(context, '电脑端暂不支持录音');
-      return;
-    }
-    if (_isRecordingVoice) {
-      await _stopAndSendVoice();
-    } else {
-      await _startVoiceRecording();
-    }
-  }
-
   Future<void> _startVoiceRecording() async {
     if (!_voiceRecordingSupported) return;
     // 先立即更新UI状态
@@ -584,25 +620,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void _retrySend(ChatMessage msg) {
     setState(() => msg.status = 1);
     ref.read(socketServiceProvider).sendMessage(
-          msg.conversationId,
-          msg.content,
-          msg.msgType,
-          onFail: () {
-            if (mounted) setState(() => msg.status = -1);
-          },
-          onSuccess: (ack) {
-            if (!mounted) return;
-            final realId = int.tryParse(ack['id']?.toString() ?? '') ?? 0;
-            final createdAt = ack['createdAt']?.toString();
-            setState(() {
-              if (realId > 0) msg.id = realId;
-              msg.status = 1;
-              if (createdAt != null && createdAt.isNotEmpty) {
-                msg.createdAt = createdAt;
-              }
-            });
-          },
-        );
+      msg.conversationId,
+      msg.content,
+      msg.msgType,
+      onFail: () {
+        if (mounted) setState(() => msg.status = -1);
+      },
+      onSuccess: (ack) {
+        if (!mounted) return;
+        final realId = int.tryParse(ack['id']?.toString() ?? '') ?? 0;
+        final createdAt = ack['createdAt']?.toString();
+        setState(() {
+          if (realId > 0) msg.id = realId;
+          msg.status = 1;
+          if (createdAt != null && createdAt.isNotEmpty) {
+            msg.createdAt = createdAt;
+          }
+        });
+      },
+    );
   }
 
   Future<void> _showMessageActions(ChatMessage msg, bool isMe) async {
@@ -650,7 +686,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
     if (result == 'delete') {
       try {
-        await ref.read(apiClientProvider).delete(ApiEndpoints.deleteMessage(msg.id));
+        await ref
+            .read(apiClientProvider)
+            .delete(ApiEndpoints.deleteMessage(msg.id));
         setState(() => _messages.remove(msg));
       } catch (e) {
         if (mounted) Toast.error(context, '$e');
@@ -666,7 +704,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _recallMessage(ChatMessage msg) async {
     try {
-      await ref.read(apiClientProvider).post('/api/social/messages/${msg.id}/recall');
+      await ref
+          .read(apiClientProvider)
+          .post('/api/social/messages/${msg.id}/recall');
       // 从列表中替换为撤回消息
       setState(() {
         final idx = _messages.indexOf(msg);
@@ -790,9 +830,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           // 获取当前积分余额
           int currentPoints = 0;
           try {
-            final balance = await ref.read(apiClientProvider).get<Map<String, dynamic>>('/api/currency/balance');
-            currentPoints = (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0).toInt();
+            final balance = await ref
+                .read(apiClientProvider)
+                .get<Map<String, dynamic>>('/api/currency/balance');
+            currentPoints =
+                (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0)
+                    .toInt();
           } catch (_) {}
+          if (!mounted) return;
           confirmText = '发起会议将消耗10000积分\n当前积分余额：$currentPoints';
         }
         final start = await showDialog<bool>(
@@ -837,15 +882,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   ImageProvider? _avatarImage(String? avatar) {
-    if (avatar == null || avatar.isEmpty || avatar.contains('default')) return null;
-    final url = avatar.startsWith('http') ? avatar : '${AppConstants.apiBaseUrl}$avatar';
+    if (avatar == null || avatar.isEmpty || avatar.contains('default')) {
+      return null;
+    }
+    final url = avatar.startsWith('http')
+        ? avatar
+        : '${AppConstants.apiBaseUrl}$avatar';
     return NetworkImage(url);
   }
 
   Widget _messageContent(ChatMessage msg) {
     if (msg.msgType == 6) {
       // 撤回消息
-      return Text('该消息已被撤回', style: TextStyle(fontSize: 13, color: Colors.grey.shade500, fontStyle: FontStyle.italic));
+      return Text('该消息已被撤回',
+          style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade500,
+              fontStyle: FontStyle.italic));
     }
     if (msg.msgType == 2) {
       return _voiceMessageContent(_VoicePayload.fromContent(msg.content));
@@ -905,7 +958,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _groupInviteNotice(Map<dynamic, dynamic> data) {
-    final invitationId = int.tryParse(data['invitationId']?.toString() ?? '') ?? 0;
+    final invitationId =
+        int.tryParse(data['invitationId']?.toString() ?? '') ?? 0;
     final groupName = data['groupName']?.toString() ?? '群聊';
     final text = data['text']?.toString() ?? '邀请你加入群聊：$groupName';
     final status = int.tryParse(data['status']?.toString() ?? '0') ?? 0;
@@ -939,27 +993,34 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   groupName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 6),
-          Text(text, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+          Text(text,
+              style: const TextStyle(fontSize: 13, color: Colors.black87)),
           const SizedBox(height: 10),
           if (handled)
-            Text(statusText, style: const TextStyle(fontSize: 13, color: Colors.black54))
+            Text(statusText,
+                style: const TextStyle(fontSize: 13, color: Colors.black54))
           else
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 OutlinedButton(
-                  onPressed: invitationId > 0 ? () => _handleGroupInvitation(invitationId, false) : null,
+                  onPressed: invitationId > 0
+                      ? () => _handleGroupInvitation(invitationId, false)
+                      : null,
                   child: const Text('拒绝'),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: invitationId > 0 ? () => _handleGroupInvitation(invitationId, true) : null,
+                  onPressed: invitationId > 0
+                      ? () => _handleGroupInvitation(invitationId, true)
+                      : null,
                   child: const Text('同意'),
                 ),
               ],
@@ -972,9 +1033,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Future<void> _handleGroupInvitation(int invitationId, bool accept) async {
     try {
       await ref.read(apiClientProvider).put(
-            ApiEndpoints.groupInvitation(invitationId),
-            data: {'accept': accept},
-          );
+        ApiEndpoints.groupInvitation(invitationId),
+        data: {'accept': accept},
+      );
       if (!mounted) return;
       setState(() => _handledInvitationStatus[invitationId] = accept ? 1 : 2);
       Toast.success(context, accept ? '已加入群聊' : '已拒绝邀请');
@@ -1001,13 +1062,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           const Icon(Icons.person_add, size: 16, color: Colors.blue),
           const SizedBox(width: 6),
           Flexible(
-            child: Text(text, style: const TextStyle(fontSize: 13, color: Colors.black54)),
+            child: Text(text,
+                style: const TextStyle(fontSize: 13, color: Colors.black54)),
           ),
           if (_canManageGroup && memberId > 0) ...[
             const SizedBox(width: 8),
             GestureDetector(
               onTap: () => _showRemoveMemberDialog(memberId, memberName),
-              child: const Text('移出', style: TextStyle(fontSize: 12, color: Colors.red)),
+              child: const Text('移出',
+                  style: TextStyle(fontSize: 12, color: Colors.red)),
             ),
           ],
         ],
@@ -1022,7 +1085,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         title: const Text('移出群聊'),
         content: Text('确定将"$memberName"移出群聊？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('移出', style: TextStyle(color: Colors.red)),
@@ -1033,8 +1098,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (confirm != true || !mounted) return;
     try {
       await ref.read(apiClientProvider).delete(
-        '/api/social/groups/${widget.conversationId}/members/$memberId',
-      );
+            '/api/social/groups/${widget.conversationId}/members/$memberId',
+          );
       if (mounted) Toast.success(context, '已移出');
     } catch (e) {
       if (mounted) Toast.error(context, '$e');
@@ -1154,7 +1219,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       if (_loadingMore && index == 0) {
                         return const Padding(
                           padding: EdgeInsets.all(8),
-                          child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+                          child: Center(
+                              child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2))),
                         );
                       }
                       final msgIndex = _loadingMore ? index - 1 : index;
@@ -1180,11 +1250,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               CircleAvatar(
                                 radius: 18,
                                 backgroundColor: Colors.grey.shade300,
-                                backgroundImage: _avatarImage(sender?['avatar'] as String?),
-                                child: _avatarImage(sender?['avatar'] as String?) == null
+                                backgroundImage:
+                                    _avatarImage(sender?['avatar'] as String?),
+                                child: _avatarImage(
+                                            sender?['avatar'] as String?) ==
+                                        null
                                     ? Text(
-                                        senderName.isNotEmpty ? senderName[0].toUpperCase() : '?',
-                                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                                        senderName.isNotEmpty
+                                            ? senderName[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold),
                                       )
                                     : null,
                               ),
@@ -1274,9 +1351,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               CircleAvatar(
                                 radius: 18,
                                 backgroundColor: Colors.blue.shade200,
-                                backgroundImage: _avatarImage(ref.read(authProvider).user?.avatar),
-                                child: _avatarImage(ref.read(authProvider).user?.avatar) == null
-                                    ? const Icon(Icons.person, size: 18, color: Colors.white)
+                                backgroundImage: _avatarImage(
+                                    ref.read(authProvider).user?.avatar),
+                                child: _avatarImage(ref
+                                            .read(authProvider)
+                                            .user
+                                            ?.avatar) ==
+                                        null
+                                    ? const Icon(Icons.person,
+                                        size: 18, color: Colors.white)
                                     : null,
                               ),
                             ],
@@ -1300,12 +1383,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     child: Text(
                       '回复：${_replyingTo!.content.length > 30 ? '${_replyingTo!.content.substring(0, 30)}...' : _replyingTo!.content}',
                       style: const TextStyle(fontSize: 12, color: Colors.blue),
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   GestureDetector(
                     onTap: () => setState(() => _replyingTo = null),
-                    child: const Icon(Icons.close, size: 16, color: Colors.grey),
+                    child:
+                        const Icon(Icons.close, size: 16, color: Colors.grey),
                   ),
                 ],
               ),
@@ -1322,7 +1407,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   Icon(Icons.mic, color: Colors.red, size: 20),
                   SizedBox(width: 6),
                   Text('松开发送，上滑取消',
-                      style: TextStyle(fontSize: 13, color: Colors.red, fontWeight: FontWeight.w500)),
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.red,
+                          fontWeight: FontWeight.w500)),
                 ],
               ),
             ),
@@ -1347,11 +1435,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       _showVoiceButton ? Icons.keyboard : Icons.mic_none,
                       color: _isMuted ? Colors.grey : Colors.blueGrey,
                     ),
-                    onPressed: _isMuted ? null : () => setState(() => _showVoiceButton = !_showVoiceButton),
+                    onPressed: _isMuted
+                        ? null
+                        : () => setState(
+                            () => _showVoiceButton = !_showVoiceButton),
                   ),
                 // 输入框或按住说话按钮
                 Expanded(
-                  child: _showVoiceButton && _voiceRecordingSupported && !_isMuted
+                  child: _showVoiceButton &&
+                          _voiceRecordingSupported &&
+                          !_isMuted
                       ? Listener(
                           onPointerDown: (event) {
                             _voiceStartY = event.localPosition.dy;
@@ -1359,7 +1452,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           },
                           onPointerMove: (event) {
                             setState(() {
-                              _voiceCancelOffset = event.localPosition.dy - _voiceStartY;
+                              _voiceCancelOffset =
+                                  event.localPosition.dy - _voiceStartY;
                             });
                           },
                           onPointerUp: (_) {
@@ -1373,7 +1467,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           child: Container(
                             height: 40,
                             decoration: BoxDecoration(
-                              color: _isRecordingVoice ? Colors.grey.shade300 : Colors.grey.shade100,
+                              color: _isRecordingVoice
+                                  ? Colors.grey.shade300
+                                  : Colors.grey.shade100,
                               borderRadius: BorderRadius.circular(6),
                             ),
                             alignment: Alignment.center,
@@ -1384,7 +1480,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               style: TextStyle(
                                 fontSize: 14,
                                 color: _isRecordingVoice
-                                    ? (_voiceCancelOffset < -80 ? Colors.red : Colors.black87)
+                                    ? (_voiceCancelOffset < -80
+                                        ? Colors.red
+                                        : Colors.black87)
                                     : Colors.black54,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -1397,7 +1495,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           decoration: InputDecoration(
                             hintText: _isMuted ? '您已被禁言' : '输入消息...',
                             border: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                            contentPadding:
+                                const EdgeInsets.symmetric(horizontal: 12),
                           ),
                           maxLines: null,
                           textInputAction: TextInputAction.send,
@@ -1406,10 +1505,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ),
                 IconButton(
                   icon: Icon(
-                    _showEmojiPicker ? Icons.keyboard : Icons.emoji_emotions_outlined,
+                    _showEmojiPicker
+                        ? Icons.keyboard
+                        : Icons.emoji_emotions_outlined,
                     color: _isMuted ? Colors.grey : Colors.amber,
                   ),
-                  onPressed: _isMuted ? null : () => setState(() => _showEmojiPicker = !_showEmojiPicker),
+                  onPressed: _isMuted
+                      ? null
+                      : () =>
+                          setState(() => _showEmojiPicker = !_showEmojiPicker),
                 ),
                 IconButton(
                   icon: Icon(Icons.send,
@@ -1441,7 +1545,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       );
                     },
                     child: Center(
-                      child: Text(_emojis[index], style: const TextStyle(fontSize: 24)),
+                      child: Text(_emojis[index],
+                          style: const TextStyle(fontSize: 24)),
                     ),
                   );
                 },

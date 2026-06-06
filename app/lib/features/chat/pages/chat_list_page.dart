@@ -24,13 +24,14 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   List<ConversationItem> _conversations = [];
   bool _loading = true;
   int _serviceUnread = 0;
+  bool _serviceUnreadLoaded = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadConversations();
-    _loadServiceUnread();
+    _syncServiceUnread();
     // Register listeners before connecting so offline messages are not missed.
     ref.read(socketServiceProvider).addMessageListener(_onNewMessageInList);
     ref
@@ -66,12 +67,47 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     // 浠庡悗鍙版仮澶嶆椂鍒锋柊浼氳瘽鍒楄〃
     if (state == AppLifecycleState.resumed) {
       _loadConversations();
-      _loadServiceUnread();
+      _syncServiceUnread();
     }
   }
 
   /// 加载服务通知未读数（仅管理员有意义，普通用户一般为0）
+  bool get _canUseServiceNotifications =>
+      ref.read(authProvider).user != null ||
+      ref.read(authProvider).profile != null;
+
+  bool get _hasKnownUser =>
+      ref.read(authProvider).user != null ||
+      ref.read(authProvider).profile != null;
+
+  void _syncServiceUnread() {
+    if (_canUseServiceNotifications) {
+      _loadServiceUnread();
+      return;
+    }
+    if (!_hasKnownUser) {
+      if (mounted) {
+        setState(() => _serviceUnread = 0);
+      } else {
+        _serviceUnread = 0;
+      }
+      ref.read(badgeProvider.notifier).setServiceNotificationCount(0);
+      return;
+    }
+    _serviceUnreadLoaded = true;
+    if (mounted) {
+      setState(() => _serviceUnread = 0);
+    } else {
+      _serviceUnread = 0;
+    }
+    ref.read(badgeProvider.notifier).setServiceNotificationCount(0);
+  }
+
   Future<void> _loadServiceUnread() async {
+    if (!_canUseServiceNotifications) {
+      _syncServiceUnread();
+      return;
+    }
     try {
       final result =
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
@@ -79,7 +115,10 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
               );
       if (!mounted) return;
       final count = result?['count'] as int? ?? 0;
-      setState(() => _serviceUnread = count);
+      setState(() {
+        _serviceUnread = count;
+        _serviceUnreadLoaded = true;
+      });
       ref.read(badgeProvider.notifier).setServiceNotificationCount(count);
     } catch (_) {}
   }
@@ -117,6 +156,10 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   /// 收到服务通知实时推送：刷新未读角标（提示音由 MainShell 统一处理）
   void _onServiceNotification(Map<String, dynamic> data) {
     if (!mounted) return;
+    if (!_canUseServiceNotifications) {
+      _syncServiceUnread();
+      return;
+    }
     // 本地先 +1，保证角标即时更新
     setState(() => _serviceUnread += 1);
     // 再从服务器拉准确未读数
@@ -248,7 +291,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
             children: [
               Icon(Icons.delete_outline, size: 18, color: Colors.red),
               SizedBox(width: 10),
-              Text('删除该聊天', style: TextStyle(color: Colors.red)),
+              Text('移除该聊天', style: TextStyle(color: Colors.red)),
             ],
           ),
         ),
@@ -327,8 +370,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除聊天'),
-        content: Text('确定删除与「$peerName」的聊天吗？聊天记录将一并删除，无法恢复。'),
+        title: const Text('移除聊天'),
+        content: Text('确定将与「$peerName」的聊天从列表移除吗？聊天记录不会删除。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -336,7 +379,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除', style: TextStyle(color: Colors.red)),
+            child: const Text('移除', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -424,8 +467,16 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
   @override
   Widget build(BuildContext context) {
-    final isAdmin = ref.watch(authProvider).user?.isAdmin == true;
-    final headerCount = isAdmin ? 3 : 2;
+    final authState = ref.watch(authProvider);
+    final isAdmin = authState.user?.isAdmin == true ||
+        authState.profile?.user.isAdmin == true;
+    final showServiceNotifications = isAdmin || _serviceUnread > 0;
+    if (_hasKnownUser && !_serviceUnreadLoaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadServiceUnread();
+      });
+    }
+    final headerCount = showServiceNotifications ? 3 : 2;
     return Scaffold(
       appBar: AppBar(
         title: const Text('消息'),
@@ -479,7 +530,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                   }
 
                   // 服务通知入口（仅管理员）
-                  if (isAdmin && index == 2) {
+                  if (showServiceNotifications && index == 2) {
                     return ListTile(
                       leading: Stack(
                         clipBehavior: Clip.none,
@@ -515,7 +566,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                       ),
                       title: const Text('服务通知',
                           style: TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: const Text('提现、建群、充值等申请提醒'),
+                      subtitle: const Text('业务处理结果和系统提醒'),
                       onTap: () async {
                         await Navigator.of(context, rootNavigator: true)
                             .push(MaterialPageRoute(

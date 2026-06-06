@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../constants/app_constants.dart';
 import '../network/api_client.dart';
 import '../utils/toast.dart';
 import 'update_state.dart';
@@ -33,12 +34,16 @@ class AppVersionInfo {
   final int? fileSize;
   final String? fileMd5;
 
+  String get resolvedDownloadUrl => _resolveDownloadUrl(downloadUrl);
+  bool get hasUsableDownloadUrl => resolvedDownloadUrl.isNotEmpty;
+
   factory AppVersionInfo.fromJson(Map<String, dynamic> json) {
     return AppVersionInfo(
       versionName: json['versionName']?.toString() ?? '',
       versionCode: int.tryParse(json['versionCode']?.toString() ?? '0') ?? 0,
       downloadUrl: json['downloadUrl']?.toString() ?? '',
-      forceUpdate: json['forceUpdate'] == true || json['forceUpdate']?.toString() == '1',
+      forceUpdate:
+          json['forceUpdate'] == true || json['forceUpdate']?.toString() == '1',
       changelog: json['changelog']?.toString(),
       fileSize: int.tryParse(json['fileSize']?.toString() ?? ''),
       fileMd5: json['fileMd5']?.toString().trim().toLowerCase(),
@@ -46,10 +51,32 @@ class AppVersionInfo {
   }
 }
 
+String _resolveDownloadUrl(String rawUrl) {
+  final value = rawUrl.trim();
+  if (value.isEmpty) return '';
+
+  final uri = Uri.tryParse(value);
+  if (uri == null) return '';
+  if (uri.hasScheme) {
+    final scheme = uri.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https' ? uri.toString() : '';
+  }
+
+  final baseValue = AppConstants.downloadBaseUrl.trim().isNotEmpty
+      ? AppConstants.downloadBaseUrl.trim()
+      : AppConstants.apiBaseUrl.trim();
+  final base =
+      Uri.tryParse(baseValue.endsWith('/') ? baseValue : '$baseValue/');
+  if (base == null || !base.hasScheme || base.host.isEmpty) return '';
+
+  return base.resolve(value).toString();
+}
+
 class AppUpdateService {
   AppUpdateService._();
 
-  static const _installerChannel = MethodChannel('com.example.app/apk_installer');
+  static const _installerChannel =
+      MethodChannel('com.example.app/apk_installer');
   static const _notifChannel = MethodChannel('com.example.app/notifications');
   static bool _checking = false;
   static bool _dialogShowing = false;
@@ -62,7 +89,8 @@ class AppUpdateService {
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentCode = int.tryParse(packageInfo.buildNumber) ?? 0;
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
         '/api/app/version',
         queryParameters: {'platform': 'android'},
       );
@@ -71,7 +99,7 @@ class AppUpdateService {
         return;
       }
       final latest = AppVersionInfo.fromJson(result);
-      if (latest.versionCode > currentCode && latest.downloadUrl.isNotEmpty) {
+      if (latest.versionCode > currentCode && latest.hasUsableDownloadUrl) {
         ref
             .read(updateStateProvider.notifier)
             .setAvailable(latest.versionCode, latest.versionName);
@@ -102,7 +130,8 @@ class AppUpdateService {
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentCode = int.tryParse(packageInfo.buildNumber) ?? 0;
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
         '/api/app/version',
         queryParameters: {'platform': 'android'},
       );
@@ -113,9 +142,14 @@ class AppUpdateService {
         return;
       }
       final latest = AppVersionInfo.fromJson(result);
-      if (latest.versionCode <= currentCode || latest.downloadUrl.isEmpty) {
+      if (latest.versionCode <= currentCode) {
         ref.read(updateStateProvider.notifier).clearAvailable();
         if (manual) Toast.info(context, '当前已是最新版本');
+        return;
+      }
+      if (!latest.hasUsableDownloadUrl) {
+        ref.read(updateStateProvider.notifier).clearAvailable();
+        if (manual) Toast.error(context, '新版本下载地址配置错误，请联系管理员');
         return;
       }
       // 更新红点状态
@@ -132,7 +166,8 @@ class AppUpdateService {
     }
   }
 
-  static Future<void> _showUpdateDialog(BuildContext context, AppVersionInfo version) async {
+  static Future<void> _showUpdateDialog(
+      BuildContext context, AppVersionInfo version) async {
     _dialogShowing = true;
     try {
       await showDialog<void>(
@@ -147,7 +182,8 @@ class AppUpdateService {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (version.changelog?.trim().isNotEmpty == true) ...[
-                  const Text('更新内容', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const Text('更新内容',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   Text(version.changelog!.trim()),
                 ] else
@@ -189,7 +225,8 @@ class AppUpdateService {
     return '${dir.path}${Platform.pathSeparator}jjyx-update-${version.versionCode}.apk';
   }
 
-  static Future<void> _downloadAndInstall(BuildContext context, AppVersionInfo version) async {
+  static Future<void> _downloadAndInstall(
+      BuildContext context, AppVersionInfo version) async {
     final apkPath = await _apkPath(version);
 
     // 1) 复用已下载的完整安装包：如果本地已有同版本且 MD5 校验通过，直接安装
@@ -258,8 +295,9 @@ class AppUpdateService {
           savePath: apkPath,
           cancelToken: cancelToken,
           onProgress: (value) {
-            progress.value = value;
-            _showDownloadNotification(progress: (value * 100).round());
+            final safeValue = _clampProgress(value);
+            progress.value = safeValue;
+            _showDownloadNotification(progress: (safeValue * 100).round());
           },
           onStatus: (text) => statusText.value = text,
         );
@@ -294,7 +332,8 @@ class AppUpdateService {
         Navigator.of(context, rootNavigator: true).pop();
       }
       if (context.mounted && lastError != null) {
-        await _showDownloadErrorDialog(context, version, _friendlyDownloadError(lastError));
+        await _showDownloadErrorDialog(
+            context, version, _friendlyDownloadError(lastError));
       }
       return;
     }
@@ -313,7 +352,18 @@ class AppUpdateService {
     required void Function(double) onProgress,
     required void Function(String) onStatus,
   }) async {
-    final dio = Dio();
+    final downloadUrl = version.resolvedDownloadUrl;
+    if (downloadUrl.isEmpty) {
+      throw const FormatException('下载地址配置错误');
+    }
+
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout:
+            const Duration(milliseconds: AppConstants.connectTimeout),
+        receiveTimeout: const Duration(seconds: 30),
+      ),
+    );
     final file = File(savePath);
     int downloaded = 0;
     if (await file.exists()) {
@@ -327,22 +377,46 @@ class AppUpdateService {
       }
     }
 
-    final total = version.fileSize ?? 0;
+    final configuredTotal = version.fileSize ?? 0;
     onStatus(downloaded > 0 ? '继续下载...' : '开始下载...');
 
     final raf = await file.open(mode: FileMode.writeOnlyAppend);
     try {
       final response = await dio.get<ResponseBody>(
-        version.downloadUrl,
+        downloadUrl,
         cancelToken: cancelToken,
         options: Options(
           responseType: ResponseType.stream,
           followRedirects: true,
-          headers: downloaded > 0 ? {'Range': 'bytes=$downloaded-'} : null,
+          headers: {
+            'Accept': 'application/vnd.android.package-archive,*/*',
+            if (downloaded > 0) 'Range': 'bytes=$downloaded-',
+          },
           // 2xx 都接受（200 完整 / 206 断点续传）
-          validateStatus: (status) => status != null && status < 400,
+          validateStatus: (status) =>
+              status != null &&
+              ((status >= 200 && status < 400) || status == 416),
         ),
       );
+
+      if (response.statusCode == 416) {
+        await raf.close();
+        if (downloaded > 0) {
+          await _safeDelete(savePath);
+          return _resumableDownload(
+            version: version,
+            savePath: savePath,
+            cancelToken: cancelToken,
+            onProgress: onProgress,
+            onStatus: onStatus,
+          );
+        }
+        throw DioException.badResponse(
+          statusCode: response.statusCode ?? 416,
+          requestOptions: response.requestOptions,
+          response: response,
+        );
+      }
 
       // 如果服务器不支持断点（返回 200 而非 206），从头写
       if (downloaded > 0 && response.statusCode == 200) {
@@ -358,9 +432,21 @@ class AppUpdateService {
         );
       }
 
+      final contentLength = int.tryParse(
+        response.headers.value(Headers.contentLengthHeader) ?? '',
+      );
+      final total = configuredTotal > 0
+          ? configuredTotal
+          : (contentLength == null || contentLength <= 0
+              ? 0
+              : downloaded + contentLength);
       var received = downloaded;
       final completer = Completer<void>();
-      final stream = response.data!.stream;
+      final body = response.data;
+      if (body == null) {
+        throw const FormatException('下载响应为空');
+      }
+      final stream = body.stream;
       late StreamSubscription sub;
       sub = stream.listen(
         (chunk) async {
@@ -369,8 +455,9 @@ class AppUpdateService {
             await raf.writeFrom(chunk);
             received += chunk.length;
             if (total > 0) {
-              onProgress(received / total);
-              onStatus('已下载 ${(received / total * 100).toStringAsFixed(0)}%');
+              final value = _clampProgress(received / total);
+              onProgress(value);
+              onStatus('已下载 ${(value * 100).toStringAsFixed(0)}%');
             } else {
               onStatus('已下载 ${_formatFileSize(received)}');
             }
@@ -400,9 +487,12 @@ class AppUpdateService {
     if (!await file.exists()) return false;
     final length = await file.length();
     if (length <= 0) return false;
+    if (!await _looksLikeApk(file)) return false;
 
     // 有大小则先校验大小
-    if (version.fileSize != null && version.fileSize! > 0 && length != version.fileSize!) {
+    if (version.fileSize != null &&
+        version.fileSize! > 0 &&
+        length != version.fileSize!) {
       return false;
     }
     // 有 MD5 则校验 MD5
@@ -418,8 +508,22 @@ class AppUpdateService {
     return true;
   }
 
+  static Future<bool> _looksLikeApk(File file) async {
+    RandomAccessFile? raf;
+    try {
+      raf = await file.open(mode: FileMode.read);
+      final bytes = await raf.read(4);
+      return bytes.length >= 2 && bytes[0] == 0x50 && bytes[1] == 0x4B;
+    } catch (_) {
+      return false;
+    } finally {
+      await raf?.close();
+    }
+  }
+
   /// 检查本地缓存的安装包是否可直接复用
-  static Future<bool> _isCachedApkValid(String path, AppVersionInfo version) async {
+  static Future<bool> _isCachedApkValid(
+      String path, AppVersionInfo version) async {
     try {
       return await _verifyApk(path, version);
     } catch (_) {
@@ -444,10 +548,13 @@ class AppUpdateService {
           return '网络连接超时，请检查网络后重试';
         case DioExceptionType.connectionError:
           return '网络连接失败，请检查网络是否正常';
+        case DioExceptionType.badCertificate:
+          return '下载地址证书异常，请联系管理员检查域名证书';
         case DioExceptionType.badResponse:
           final code = error.response?.statusCode;
           if (code == 404) return '安装包文件不存在，请联系客服';
           if (code == 403) return '没有下载权限，请联系客服';
+          if (code == 418) return '下载地址被 CDN 或防火墙拦截，请联系客服';
           if (code != null && code >= 500) return '服务器繁忙，请稍后重试';
           return '下载失败（错误码 $code），请稍后重试';
         case DioExceptionType.cancel:
@@ -463,6 +570,11 @@ class AppUpdateService {
       return '存储空间不足或无写入权限，请清理空间后重试';
     }
     return '下载失败，请稍后重试';
+  }
+
+  static double _clampProgress(double value) {
+    if (value.isNaN || value.isInfinite) return 0;
+    return value.clamp(0.0, 1.0).toDouble();
   }
 
   /// 下载失败弹窗，提供重试入口
@@ -500,7 +612,8 @@ class AppUpdateService {
 
   static Future<void> _installApk(BuildContext context, String apkPath) async {
     try {
-      await _installerChannel.invokeMethod<bool>('installApk', {'path': apkPath});
+      await _installerChannel
+          .invokeMethod<bool>('installApk', {'path': apkPath});
     } on PlatformException catch (e) {
       if (!context.mounted) return;
       if (e.code == 'permission_required') {
@@ -557,7 +670,8 @@ class AppUpdateService {
   }
 
   /// 6) 在系统通知栏显示下载进度
-  static void _showDownloadNotification({int progress = 0, bool indeterminate = false}) {
+  static void _showDownloadNotification(
+      {int progress = 0, bool indeterminate = false}) {
     if (kIsWeb) return;
     try {
       _notifChannel.invokeMethod('showDownloadProgress', {

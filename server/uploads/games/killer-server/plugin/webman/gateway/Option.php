@@ -29,6 +29,8 @@ class Option
         if(!$data['duihuanstatus']){
             $data['duihuanstatus']='off';
         }
+        $data['bet_amounts']=Common::allowedBetAmounts(false);
+        $data['robot_bet_amounts']=Common::allowedBetAmounts(true);
         $info['code']=1;
         $info['msg']='success';
 

@@ -28,16 +28,26 @@ class _MainShellState extends ConsumerState<MainShell>
     with WidgetsBindingObserver {
   bool _isAppInForeground = true;
 
+  bool get _canUseServiceNotifications =>
+      ref.read(authProvider).user != null ||
+      ref.read(authProvider).profile != null;
+
+  Future<void> _loadBadgesForCurrentUser() async {
+    if (ref.read(authProvider).user == null) {
+      await ref.read(authProvider.notifier).loadProfile();
+    }
+    if (!mounted) return;
+    await ref
+        .read(badgeProvider.notifier)
+        .loadBadges(includeServiceNotifications: _canUseServiceNotifications);
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // 确保用户信息已加载
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (ref.read(authProvider).user == null) {
-        ref.read(authProvider.notifier).loadProfile();
-      }
-      ref.read(badgeProvider.notifier).loadBadges();
+      _loadBadgesForCurrentUser();
       _loadNotificationSettings();
       // 登录后请求通知权限
       NotificationService.instance.requestPermission();

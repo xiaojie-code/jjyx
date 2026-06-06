@@ -8,6 +8,13 @@ class AppConstants {
     defaultValue: 'http://localhost:3001',
   );
 
+  /// APK/静态下载地址前缀。生产环境可通过
+  /// --dart-define=DOWNLOAD_BASE_URL=http://101.32.252.79 覆盖。
+  static const String downloadBaseUrl = String.fromEnvironment(
+    'DOWNLOAD_BASE_URL',
+    defaultValue: apiBaseUrl,
+  );
+
   /// API 路径前缀
   static const String apiPrefix = '/api';
 

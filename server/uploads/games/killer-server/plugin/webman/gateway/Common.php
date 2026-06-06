@@ -10,6 +10,8 @@ class Common
 {
     const MODE_AI = 'ai';
     const MODE_REAL = 'real';
+    const PLAYER_BET_AMOUNTS = [100, 500, 1000, 3000, 5000, 10000];
+    const ROBOT_BET_AMOUNTS = [100, 500, 1000, 3000];
 
     protected static $columnCache = [];
     protected static $schemaPrepared = false;
@@ -29,6 +31,22 @@ class Common
         }
 
         return self::MODE_AI;
+    }
+
+    static function allowedBetAmounts($isRobot = false)
+    {
+        return $isRobot ? self::ROBOT_BET_AMOUNTS : self::PLAYER_BET_AMOUNTS;
+    }
+
+    static function isAllowedBetAmount($coin, $isRobot = false)
+    {
+        return in_array((int)$coin, self::allowedBetAmounts($isRobot), true);
+    }
+
+    static function randomRobotBetAmount()
+    {
+        $amounts = self::ROBOT_BET_AMOUNTS;
+        return $amounts[array_rand($amounts)];
     }
 
     static function getDataMode($data, $uid = null, $client_id = null)
@@ -255,6 +273,11 @@ class Common
         foreach ($records as $record) {
             $mode = self::normalizeMode($record['mode'] ?? self::MODE_AI);
             $roomid = (int)($record['roomid'] ?? 0);
+            $tzid = (int)($record['tzid'] ?? 0);
+            if ($tzid < 1 || $tzid > 8) {
+                continue;
+            }
+            $record['tzid'] = $tzid;
             $groupKey = $mode . '_' . $roomid;
             if (!isset($groups[$groupKey])) {
                 $groups[$groupKey] = [
@@ -566,15 +589,7 @@ class Common
                 'info' => $to
             ]));
 
-            $config = self::getbaseconfig();
-            $robotMin = (int)($config['logo']['robotmin'] ?? 10);
-            $robotMax = (int)($config['logo']['robotmax'] ?? 100);
-            if ($robotMin > $robotMax) {
-                $tmp = $robotMin;
-                $robotMin = $robotMax;
-                $robotMax = $tmp;
-            }
-            $coin = rand(max(1, $robotMin), max(1, $robotMax));
+            $coin = self::randomRobotBetAmount();
 
             $query = Db::table('wa_touzhu')->where([
                 'expect' => $expect,

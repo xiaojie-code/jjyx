@@ -5,7 +5,7 @@ import '../../../core/network/api_endpoints.dart';
 import '../../main/providers/badge_provider.dart';
 
 /// 服务通知页面（单向系统提醒，仿微信"服务通知"）
-/// 仅展示，不可回复。管理员用于查看提现/建群/充值等申请。
+/// 仅展示，不可回复。用于查看业务处理结果、提现/建群/充值等系统提醒。
 class ServiceNotificationPage extends ConsumerStatefulWidget {
   const ServiceNotificationPage({super.key});
 

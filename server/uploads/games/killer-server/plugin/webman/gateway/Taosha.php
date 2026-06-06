@@ -398,6 +398,18 @@ class Taosha
             ];
         }
 
+        $isRobotUser = (int)($userinfo['isrobot'] ?? 0) === 1;
+        if (!Common::isAllowedBetAmount($coin, $isRobotUser)) {
+            return [
+                'code' => 1057,
+                'msg' => 'invalid bet amount',
+                'info' => [
+                    'coin' => $coin,
+                    'allowed' => Common::allowedBetAmounts($isRobotUser)
+                ]
+            ];
+        }
+
         if ($userinfo['coin'] < $coin) {
             return [
                 'code' => 1056,

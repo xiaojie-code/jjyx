@@ -6,4 +6,5 @@ export default registerAs('app', () => ({
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   maxFileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5242880,
   corsOrigin: process.env.CORS_ORIGIN || '*',
+  publicOrigin: process.env.PUBLIC_ORIGIN || process.env.APP_PUBLIC_ORIGIN || '',
 }));

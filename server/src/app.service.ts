@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 
 @Injectable()
 export class AppService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly configService: ConfigService,
+  ) {}
 
   getHello(): string {
     return 'Hello World!';
@@ -50,9 +54,17 @@ export class AppService {
     return {
       ...version,
       versionCode: Number(version.versionCode),
+      downloadUrl: this.resolveDownloadUrl(version.downloadUrl),
       forceUpdate: Number(version.forceUpdate) === 1,
       fileSize: version.fileSize == null ? null : Number(version.fileSize),
       fileMd5: version.fileMd5 || null,
     };
+  }
+
+  private resolveDownloadUrl(downloadUrl: string) {
+    const value = String(downloadUrl || '').trim();
+    if (!value.startsWith('/')) return value;
+    const publicOrigin = String(this.configService.get('app.publicOrigin') || '').replace(/\/+$/, '');
+    return publicOrigin ? `${publicOrigin}${value}` : value;
   }
 }

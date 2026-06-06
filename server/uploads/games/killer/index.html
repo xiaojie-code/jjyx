@@ -219,6 +219,20 @@
       var waitText = document.querySelector("#killer-wait-text");
       var appInitData = {};
       var unityStarted = false;
+      var killerBetAmounts = [100, 500, 1000, 3000, 5000, 10000];
+      var killerLegacyBetAmountMap = {
+        10: 100,
+        50: 500,
+        100: 100,
+        300: 3000,
+        500: 500,
+        1000: 1000,
+        2000: 3000,
+        3000: 3000,
+        5000: 5000,
+        10000: 10000
+      };
+      window.__KILLER_BET_AMOUNTS__ = killerBetAmounts;
 
       function normalizeKillerMode(mode) {
         var text = String(mode || "").toLowerCase();
@@ -233,6 +247,13 @@
 
       function getKillerMode() {
         return normalizeKillerMode(window.__KILLER_MODE__ || localStorage.getItem("killer_match_mode") || "ai");
+      }
+
+      function normalizeKillerBetAmount(coin) {
+        var amount = parseInt(coin, 10);
+        if (!isFinite(amount)) return coin;
+        if (killerBetAmounts.indexOf(amount) !== -1) return amount;
+        return killerLegacyBetAmountMap[amount] || amount;
       }
 
       function applyKillerModeToUrl(mode) {
@@ -272,6 +293,9 @@
           if (actions.indexOf(action) === -1) return payload;
           if (!message.data || typeof message.data !== "object") {
             message.data = {};
+          }
+          if (action === "touzhu" && typeof message.data.coin !== "undefined") {
+            message.data.coin = normalizeKillerBetAmount(message.data.coin);
           }
           message.data.mode = getKillerMode();
           return JSON.stringify(message);

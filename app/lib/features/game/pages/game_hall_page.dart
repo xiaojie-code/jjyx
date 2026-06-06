@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
+import '../../../core/utils/toast.dart';
 
 class GameHallPage extends ConsumerStatefulWidget {
   const GameHallPage({super.key});
@@ -37,9 +38,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
 
   Future<void> _startGame(Map<String, dynamic> game) async {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('测试中，敬请期待')),
-    );
+    Toast.info(context, '测试中，敬请期待');
   }
 
   @override

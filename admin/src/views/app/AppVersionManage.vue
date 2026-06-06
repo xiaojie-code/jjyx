@@ -49,7 +49,11 @@
           <el-input-number v-model="form.versionCode" :min="1" :precision="0" style="width: 100%" />
         </el-form-item>
         <el-form-item label="下载地址">
-          <el-input v-model="form.downloadUrl" placeholder="http://101.32.252.79/downloads/jjyx-1.0.1.apk" />
+          <el-input v-model="form.downloadUrl" placeholder="/downloads/jjyx-1.0.1.apk 或 http://101.32.252.79/downloads/jjyx-1.0.1.apk">
+            <template #append>
+              <el-button @click="testDownloadUrl">测试</el-button>
+            </template>
+          </el-input>
         </el-form-item>
         <el-form-item label="文件大小">
           <el-input-number v-model="form.fileSize" :min="0" :precision="0" style="width: 100%" />
@@ -156,12 +160,28 @@ function openEdit(row: any) {
 }
 
 async function handleSave() {
+  form.versionName = form.versionName.trim()
+  form.downloadUrl = form.downloadUrl.trim()
+  form.fileMd5 = (form.fileMd5 || '').trim().toLowerCase()
+
   if (!form.versionName.trim()) {
     ElMessage.warning('请填写版本名称')
     return
   }
   if (!form.downloadUrl.trim()) {
     ElMessage.warning('请填写下载地址')
+    return
+  }
+  if (!isValidApkUrl(form.downloadUrl)) {
+    ElMessage.warning('下载地址必须是 http/https APK直链，或 /downloads/xxx.apk')
+    return
+  }
+  if (form.fileSize != null && (!Number.isInteger(Number(form.fileSize)) || Number(form.fileSize) <= 0)) {
+    ElMessage.warning('文件大小必须是大于0的整数')
+    return
+  }
+  if (form.fileMd5 && !/^[a-f0-9]{32}$/.test(form.fileMd5)) {
+    ElMessage.warning('文件MD5必须是32位十六进制字符串')
     return
   }
   if (editingId.value) {
@@ -173,6 +193,34 @@ async function handleSave() {
   }
   dialogVisible.value = false
   loadVersions()
+}
+
+function isValidApkUrl(value: string) {
+  const url = value.trim()
+  if (!url) return false
+  const path = url.split(/[?#]/)[0].toLowerCase()
+  if (!path.endsWith('.apk')) return false
+  if (url.startsWith('/')) return !url.startsWith('//')
+  try {
+    const parsed = new URL(url)
+    return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
+function resolveDownloadUrl(value: string) {
+  const url = value.trim()
+  if (url.startsWith('/')) return `${window.location.origin}${url}`
+  return url
+}
+
+function testDownloadUrl() {
+  if (!isValidApkUrl(form.downloadUrl)) {
+    ElMessage.warning('请先填写有效的APK下载地址')
+    return
+  }
+  window.open(resolveDownloadUrl(form.downloadUrl), '_blank', 'noopener,noreferrer')
 }
 
 async function handleDelete(row: any) {

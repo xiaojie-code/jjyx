@@ -409,7 +409,7 @@ export class ChatService {
     await this.ensureConversationMember(userId, conversationId);
     await this.memberRepo.update(
       { conversationId, userId },
-      { isHidden: true, isPinned: false },
+      { isHidden: true, isPinned: false, unreadCount: 0 },
     );
     return { message: '已不显示该聊天' };
   }
@@ -425,10 +425,9 @@ export class ChatService {
         isHidden: true,
         isPinned: false,
         unreadCount: 0,
-        clearedAt: new Date(),
       },
     );
-    return { message: '已删除该聊天' };
+    return { message: '已移除该聊天' };
   }
 
   /** 获取与指定用户的单聊会话（不存在则自动创建） */
@@ -450,6 +449,12 @@ export class ChatService {
           where: { conversationId: mc.conversationId, userId: targetUserId },
         });
         if (otherMember) {
+          if (mc.isHidden) {
+            await this.memberRepo.update(
+              { conversationId: mc.conversationId, userId },
+              { isHidden: false, clearedAt: null },
+            );
+          }
           return { conversationId: mc.conversationId };
         }
       }
@@ -842,7 +847,9 @@ export class ChatService {
   async getBadges(userId: number) {
     // 未读消息总数
     const members = await this.memberRepo.find({ where: { userId } });
-    const unreadMessages = members.reduce(
+    const unreadMessages = members
+      .filter((m) => !m.isHidden)
+      .reduce(
       (sum, m) => sum + (m.unreadCount || 0),
       0,
     );
