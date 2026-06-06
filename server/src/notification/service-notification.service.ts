@@ -26,6 +26,7 @@ export class ServiceNotificationService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureTable();
+    await this.backfillPendingAdminNotifications();
   }
 
   private async ensureTable() {
@@ -81,6 +82,152 @@ export class ServiceNotificationService implements OnModuleInit {
   /** 由 ChatGateway 注册实时推送通道 */
   registerPusher(pusher: ServiceNotificationPusher) {
     this.pusher = pusher;
+  }
+
+  private async backfillPendingAdminNotifications() {
+    const adminIds = await this.getAdminRecipientIds();
+    if (adminIds.length === 0) return;
+
+    for (const recipientId of adminIds) {
+      await this.backfillPendingWithdrawals(recipientId);
+      await this.backfillPendingGroups(recipientId);
+      await this.backfillPendingRecharges(recipientId);
+    }
+  }
+
+  private async insertIfMissing(params: {
+    recipientId: number;
+    type: string;
+    title: string;
+    content: string;
+    fromUserId?: number | null;
+    payload: Record<string, any>;
+    createdAt?: string | Date | null;
+  }) {
+    const payloadJson = JSON.stringify(params.payload);
+    const [key, value] = Object.entries(params.payload)[0] ?? [];
+    if (key && value !== undefined && value !== null) {
+      const existing = await this.dataSource.query(
+        `SELECT id FROM service_notifications
+         WHERE recipient_id = ? AND type = ? AND payload_json LIKE ?
+         LIMIT 1`,
+        [params.recipientId, params.type, `%"${key}":${Number(value)}%`],
+      );
+      if (existing.length > 0) return;
+    }
+
+    await this.dataSource.query(
+      `INSERT INTO service_notifications
+        (recipient_id, type, title, content, from_user_id, payload_json, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+      [
+        params.recipientId,
+        params.type,
+        params.title,
+        params.content,
+        params.fromUserId ? Number(params.fromUserId) : null,
+        payloadJson,
+        params.createdAt || new Date(),
+      ],
+    );
+  }
+
+  private async backfillPendingWithdrawals(recipientId: number) {
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT w.id, w.user_id, w.amount, w.payment_method, w.account_name, w.created_at,
+                u.account AS user_account, u.nickname AS user_nickname
+         FROM withdrawals w
+         LEFT JOIN users u ON u.id = w.user_id
+         WHERE w.status = 0
+         ORDER BY w.id DESC
+         LIMIT 200`,
+      );
+      for (const row of rows) {
+        const amount = Number(row.amount || 0);
+        const actualAmount = amount - Math.floor(amount * 0.2);
+        await this.insertIfMissing({
+          recipientId,
+          type: 'withdrawal',
+          title: '新的提现申请',
+          content: `${row.account_name || row.user_nickname || row.user_account || `用户${row.user_id}`} 申请提现 ${amount} 元（实际到账 ${actualAmount} 元），收款方式：${row.payment_method}`,
+          fromUserId: Number(row.user_id),
+          payload: { withdrawalId: Number(row.id), amount, actualAmount },
+          createdAt: row.created_at,
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`回填提现服务通知失败：${String(e)}`);
+    }
+  }
+
+  private async backfillPendingGroups(recipientId: number) {
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT c.id, c.name, c.creator_id, c.created_at,
+                u.account AS user_account, u.nickname AS user_nickname,
+                COUNT(cm.id) AS member_count
+         FROM conversations c
+         LEFT JOIN users u ON u.id = c.creator_id
+         LEFT JOIN conversation_members cm ON cm.conversation_id = c.id
+         WHERE c.type = 2 AND c.status = 0
+         GROUP BY c.id, c.name, c.creator_id, c.created_at, u.account, u.nickname
+         ORDER BY c.id DESC
+         LIMIT 200`,
+      );
+      for (const row of rows) {
+        const creatorName =
+          row.user_nickname || row.user_account || `用户${row.creator_id}`;
+        const groupName = row.name || '群聊';
+        const memberCount = Number(row.member_count || 0);
+        await this.insertIfMissing({
+          recipientId,
+          type: 'group',
+          title: '新的建群申请',
+          content: `${creatorName} 申请创建群聊「${groupName}」，共 ${memberCount} 名成员，等待审核`,
+          fromUserId: Number(row.creator_id),
+          payload: {
+            conversationId: Number(row.id),
+            groupName,
+            memberCount,
+          },
+          createdAt: row.created_at,
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`回填建群服务通知失败：${String(e)}`);
+    }
+  }
+
+  private async backfillPendingRecharges(recipientId: number) {
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT r.id, r.user_id, r.real_name, r.phone, r.amount, r.created_at,
+                u.account AS user_account, u.nickname AS user_nickname
+         FROM recharge_orders r
+         LEFT JOIN users u ON u.id = r.user_id
+         WHERE r.status = 0
+         ORDER BY r.id DESC
+         LIMIT 200`,
+      );
+      for (const row of rows) {
+        const amount = row.amount == null ? null : Number(row.amount);
+        const accountInfo = row.user_account
+          ? `账号 ${row.user_account}`
+          : `用户${row.user_id}`;
+        await this.insertIfMissing({
+          recipientId,
+          type: 'recharge',
+          title: '新的充值申请',
+          content: `${row.real_name}（${accountInfo}）提交充值申请，手机号 ${row.phone}${amount ? `，金额 ${amount} 元` : ''}，请核实收款后发放激活码`,
+          fromUserId: Number(row.user_id),
+          payload: { orderId: Number(row.id), phone: row.phone, amount },
+          createdAt: row.created_at,
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`回填充值服务通知失败：${String(e)}`);
+    }
   }
 
   /** 获取管理员/运营账号ID（优先 account=admin，同时兼容 user_type=2） */
