@@ -2,12 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
-import '../../../core/constants/app_constants.dart';
-import '../../../core/storage/token_storage.dart';
-import '../../../core/utils/activation_guard.dart';
-import '../../../core/webview/game_webview.dart';
-import '../../../core/webview/js_bridge.dart';
-import '../../auth/providers/auth_provider.dart';
 
 class GameHallPage extends ConsumerStatefulWidget {
   const GameHallPage({super.key});
@@ -17,12 +11,8 @@ class GameHallPage extends ConsumerStatefulWidget {
 }
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
-  static const String _gameShellVersion = '20260605-gamefix';
-
   List<Map<String, dynamic>> _games = [];
   bool _loading = true;
-  bool _starting = false;
-  bool get _gamesTemporarilyDisabled => true;
 
   @override
   void initState() {
@@ -46,119 +36,10 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
   }
 
   Future<void> _startGame(Map<String, dynamic> game) async {
-    if (_gamesTemporarilyDisabled) {
-      _showTestingDialog();
-      return;
-    }
-
-    final user = ref.read(authProvider).user;
-    if (user == null) return;
-    if (!checkActivation(context, user.isActivated)) return;
-
-    final gameId = (game['id'] as num?)?.toInt();
-    if (gameId == null || _starting) return;
-
-    setState(() => _starting = true);
-    try {
-      final api = ref.read(apiClientProvider);
-      final startResult = await api.post<Map<String, dynamic>>(
-        ApiEndpoints.gameStart(gameId),
-      );
-      final rawUrl =
-          (startResult?['gameUrl'] ?? game['gameUrl'] ?? game['game_url'] ?? '')
-              .toString();
-      if (rawUrl.isEmpty) {
-        throw Exception('game url is empty');
-      }
-
-      double points = 0;
-      try {
-        final balance =
-            await api.get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
-        points = (balance?['points'] as num?)?.toDouble() ?? 0;
-      } catch (_) {}
-
-      final gameUrl = _resolveGameUrl(rawUrl);
-      final orientation =
-          (startResult?['orientation'] ?? game['orientation'] ?? 'landscape')
-              .toString();
-      final token = TokenStorage.getToken() ?? '';
-      if (!mounted) return;
-
-      final rootNavigator = Navigator.of(context, rootNavigator: true);
-      void closeGameRoute() {
-        if (mounted && rootNavigator.canPop()) {
-          rootNavigator.pop();
-        }
-      }
-
-      final jsBridge = JSBridge(
-        apiClient: api,
-        gameId: gameId,
-        onExit: closeGameRoute,
-      );
-
-      await rootNavigator.push(
-        MaterialPageRoute(
-          builder: (_) => GameWebView(
-            gameUrl: gameUrl,
-            gameId: gameId,
-            userInfo: GameUserInfo(
-              token: token,
-              userId: user.id,
-              nickname: user.nickname.isNotEmpty ? user.nickname : user.account,
-              avatar: user.avatar,
-              points: points,
-            ),
-            jsBridge: jsBridge,
-            onExit: closeGameRoute,
-            orientation: orientation,
-          ),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('游戏启动失败，请稍后重试')),
-      );
-    } finally {
-      if (mounted) setState(() => _starting = false);
-    }
-  }
-
-  void _showTestingDialog() {
     if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        content: const Text(
-          '测试中，敬请期待',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('确定'),
-          ),
-        ],
-      ),
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('测试中，敬请期待')),
     );
-  }
-
-  String _resolveGameUrl(String rawUrl) {
-    final uri = Uri.parse(rawUrl);
-    if (uri.hasScheme) return _appendGameShellVersion(uri).toString();
-    final path = rawUrl.startsWith('/') ? rawUrl : '/$rawUrl';
-    return _appendGameShellVersion(
-      Uri.parse(AppConstants.apiBaseUrl).resolve(path),
-    ).toString();
-  }
-
-  Uri _appendGameShellVersion(Uri uri) {
-    final params = Map<String, String>.from(uri.queryParameters);
-    params['game_shell_v'] = _gameShellVersion;
-    return uri.replace(queryParameters: params);
   }
 
   @override
