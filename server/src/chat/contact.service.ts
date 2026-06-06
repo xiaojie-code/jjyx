@@ -42,14 +42,25 @@ export class ContactService implements OnModuleInit {
   /** 启动时只确保系统总群存在，并把 admin 设置为客服/群主 */
   async onModuleInit() {
     try {
-      let systemGroup = await this.convRepo.findOne({ where: { isSystem: true, type: 2 } });
+      await this.ensureChatSchema();
+      let systemGroup = await this.convRepo.findOne({
+        where: { isSystem: true, type: 2 },
+      });
       if (!systemGroup) {
         systemGroup = await this.convRepo.save(
-          this.convRepo.create({ type: 2, name: '沧恒云芯', creatorId: 0, status: 1, isSystem: true }),
+          this.convRepo.create({
+            type: 2,
+            name: '沧恒云芯',
+            creatorId: 0,
+            status: 1,
+            isSystem: true,
+          }),
         );
         this.logger.log(`系统总群"沧恒云芯"已自动创建，ID=${systemGroup.id}`);
       }
-      const admin = await this.userRepo.findOne({ where: { account: 'admin' } });
+      const admin = await this.userRepo.findOne({
+        where: { account: 'admin' },
+      });
       if (admin) {
         if (admin.nickname !== '客服') {
           await this.userRepo.update(admin.id, { nickname: '客服' });
@@ -61,11 +72,13 @@ export class ContactService implements OnModuleInit {
           where: { conversationId: systemGroup.id, userId: admin.id },
         });
         if (!existing) {
-          await this.memberRepo.save(this.memberRepo.create({
-            conversationId: systemGroup.id,
-            userId: admin.id,
-            role: 2,
-          }));
+          await this.memberRepo.save(
+            this.memberRepo.create({
+              conversationId: systemGroup.id,
+              userId: admin.id,
+              role: 2,
+            }),
+          );
         } else if (Number(existing.role) < 2) {
           await this.memberRepo.update(existing.id, { role: 2 });
         }
@@ -73,6 +86,129 @@ export class ContactService implements OnModuleInit {
       this.logger.log('系统总群初始化完成：已关闭激活用户自动入群');
     } catch (e) {
       this.logger.error('系统总群初始化失败', e);
+    }
+  }
+
+  /** 兼容正式库未开启 synchronize 时缺少聊天表/字段的情况 */
+  private async ensureChatSchema() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS conversations (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        type TINYINT NOT NULL COMMENT '1单聊 2群聊',
+        name VARCHAR(50) NULL,
+        creator_id INT NOT NULL,
+        announcement TEXT NULL,
+        avatar VARCHAR(255) NULL,
+        status TINYINT NOT NULL DEFAULT 1 COMMENT '0待审核 1正常 2拒绝',
+        is_system TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否系统群',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_conversations_type (type),
+        INDEX idx_conversations_system (is_system)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS conversation_members (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        conversation_id INT NOT NULL,
+        user_id INT NOT NULL,
+        role TINYINT NOT NULL DEFAULT 1 COMMENT '1普通成员 2管理员',
+        is_pinned TINYINT(1) NOT NULL DEFAULT 0,
+        is_hidden TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否不显示该会话',
+        cleared_at DATETIME NULL,
+        unread_count INT NOT NULL DEFAULT 0,
+        is_muted TINYINT(1) NOT NULL DEFAULT 0,
+        group_nickname VARCHAR(30) NULL,
+        joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_conversation_user (conversation_id, user_id),
+        INDEX idx_conversation_members_conversation (conversation_id),
+        INDEX idx_conversation_members_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        conversation_id INT NOT NULL,
+        sender_id INT NOT NULL,
+        content TEXT NOT NULL,
+        msg_type TINYINT NOT NULL COMMENT '1文字 2语音 3系统消息 4图片',
+        status TINYINT NOT NULL DEFAULT 1 COMMENT '1已发送 2已读',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_messages_conversation (conversation_id),
+        INDEX idx_messages_sender (sender_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS offline_messages (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        message_id BIGINT NOT NULL,
+        is_pushed TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_offline_messages_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    const alters = [
+      `ALTER TABLE conversations ADD COLUMN type TINYINT NOT NULL DEFAULT 1 COMMENT '1单聊 2群聊'`,
+      `ALTER TABLE conversations ADD COLUMN name VARCHAR(50) NULL`,
+      `ALTER TABLE conversations ADD COLUMN creator_id INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE conversations ADD COLUMN announcement TEXT NULL`,
+      `ALTER TABLE conversations ADD COLUMN avatar VARCHAR(255) NULL`,
+      `ALTER TABLE conversations ADD COLUMN status TINYINT NOT NULL DEFAULT 1 COMMENT '0待审核 1正常 2拒绝'`,
+      `ALTER TABLE conversations ADD COLUMN is_system TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否系统群'`,
+      `ALTER TABLE conversations ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+      `ALTER TABLE conversations ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`,
+      `ALTER TABLE conversation_members ADD COLUMN conversation_id INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE conversation_members ADD COLUMN user_id INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE conversation_members ADD COLUMN role TINYINT NOT NULL DEFAULT 1 COMMENT '1普通成员 2管理员'`,
+      `ALTER TABLE conversation_members ADD COLUMN is_pinned TINYINT(1) NOT NULL DEFAULT 0`,
+      `ALTER TABLE conversation_members ADD COLUMN is_hidden TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否不显示该会话'`,
+      `ALTER TABLE conversation_members ADD COLUMN cleared_at DATETIME NULL`,
+      `ALTER TABLE conversation_members ADD COLUMN unread_count INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE conversation_members ADD COLUMN is_muted TINYINT(1) NOT NULL DEFAULT 0`,
+      `ALTER TABLE conversation_members ADD COLUMN group_nickname VARCHAR(30) NULL`,
+      `ALTER TABLE conversation_members ADD COLUMN joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+      `ALTER TABLE messages ADD COLUMN conversation_id INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE messages ADD COLUMN sender_id INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE messages ADD COLUMN content TEXT NULL`,
+      `ALTER TABLE messages ADD COLUMN msg_type TINYINT NOT NULL DEFAULT 1 COMMENT '1文字 2语音 3系统消息 4图片'`,
+      `ALTER TABLE messages ADD COLUMN status TINYINT NOT NULL DEFAULT 1 COMMENT '1已发送 2已读'`,
+      `ALTER TABLE messages ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+      `ALTER TABLE offline_messages ADD COLUMN user_id INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE offline_messages ADD COLUMN message_id BIGINT NOT NULL DEFAULT 0`,
+      `ALTER TABLE offline_messages ADD COLUMN is_pushed TINYINT(1) NOT NULL DEFAULT 0`,
+      `ALTER TABLE offline_messages ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+    ];
+
+    for (const sql of alters) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {
+        // 字段已存在则忽略
+      }
+    }
+
+    const indexes = [
+      `CREATE INDEX idx_conversations_type ON conversations (type)`,
+      `CREATE INDEX idx_conversations_system ON conversations (is_system)`,
+      `CREATE INDEX idx_conversation_members_conversation ON conversation_members (conversation_id)`,
+      `CREATE INDEX idx_conversation_members_user ON conversation_members (user_id)`,
+      `CREATE UNIQUE INDEX uk_conversation_user ON conversation_members (conversation_id, user_id)`,
+      `CREATE INDEX idx_messages_conversation ON messages (conversation_id)`,
+      `CREATE INDEX idx_messages_sender ON messages (sender_id)`,
+      `CREATE INDEX idx_offline_messages_user ON offline_messages (user_id)`,
+    ];
+
+    for (const sql of indexes) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {
+        // 索引已存在则忽略
+      }
     }
   }
 
@@ -312,16 +448,27 @@ export class ContactService implements OnModuleInit {
 
     // 给管理员发送服务通知
     const creator = await this.userRepo.findOne({ where: { id: creatorId } });
-    const creatorName = creator?.nickname?.trim() || creator?.account?.trim() || `用户${creatorId}`;
+    const creatorName =
+      creator?.nickname?.trim() ||
+      creator?.account?.trim() ||
+      `用户${creatorId}`;
     await this.serviceNotificationService.notifyAdmin({
       type: 'group',
       title: '新的建群申请',
       content: `${creatorName} 申请创建群聊「${groupName}」，共 ${allIds.length} 名成员，等待审核`,
       fromUserId: creatorId,
-      payload: { conversationId: conv.id, groupName, memberCount: allIds.length },
+      payload: {
+        conversationId: conv.id,
+        groupName,
+        memberCount: allIds.length,
+      },
     });
 
-    return { conversationId: conv.id, name: groupName, message: '建群申请已提交，等待管理员审核' };
+    return {
+      conversationId: conv.id,
+      name: groupName,
+      message: '建群申请已提交，等待管理员审核',
+    };
   }
 
   /** 编辑群聊 */
@@ -346,9 +493,13 @@ export class ContactService implements OnModuleInit {
 
   /** 获取群聊详细信息 */
   async getGroupInfo(userId: number, conversationId: number) {
-    const conv = await this.convRepo.findOne({ where: { id: conversationId, type: 2 } });
+    const conv = await this.convRepo.findOne({
+      where: { id: conversationId, type: 2 },
+    });
     if (!conv) throw new NotFoundException('群聊不存在');
-    const member = await this.memberRepo.findOne({ where: { conversationId, userId } });
+    const member = await this.memberRepo.findOne({
+      where: { conversationId, userId },
+    });
     if (!member) throw new ForbiddenException('你不是该群成员');
     return {
       id: conv.id,
@@ -361,28 +512,55 @@ export class ContactService implements OnModuleInit {
   }
 
   /** 更新群公告 */
-  async updateAnnouncement(userId: number, conversationId: number, announcement: string) {
-    const member = await this.memberRepo.findOne({ where: { conversationId, userId } });
-    const conv = await this.convRepo.findOne({ where: { id: conversationId, type: 2 } });
+  async updateAnnouncement(
+    userId: number,
+    conversationId: number,
+    announcement: string,
+  ) {
+    const member = await this.memberRepo.findOne({
+      where: { conversationId, userId },
+    });
+    const conv = await this.convRepo.findOne({
+      where: { id: conversationId, type: 2 },
+    });
     if (!conv) throw new NotFoundException('群聊不存在');
-    if (!member || (Number(member.role) < 2 && Number(conv.creatorId) !== Number(userId))) {
+    if (
+      !member ||
+      (Number(member.role) < 2 && Number(conv.creatorId) !== Number(userId))
+    ) {
       throw new ForbiddenException('仅群主或管理员可编辑群公告');
     }
-    await this.convRepo.update(conversationId, { announcement: announcement?.trim() || '' });
+    await this.convRepo.update(conversationId, {
+      announcement: announcement?.trim() || '',
+    });
     return { message: '群公告已更新' };
   }
 
   /** 更新我在本群的昵称 */
-  async updateMyGroupNickname(userId: number, conversationId: number, nickname: string) {
-    const member = await this.memberRepo.findOne({ where: { conversationId, userId } });
+  async updateMyGroupNickname(
+    userId: number,
+    conversationId: number,
+    nickname: string,
+  ) {
+    const member = await this.memberRepo.findOne({
+      where: { conversationId, userId },
+    });
     if (!member) throw new ForbiddenException('你不是该群成员');
-    await this.memberRepo.update(member.id, { groupNickname: nickname?.trim() || null });
+    await this.memberRepo.update(member.id, {
+      groupNickname: nickname?.trim() || null,
+    });
     return { message: '群昵称已更新' };
   }
 
   /** 更新群头像（仅群主可操作） */
-  async updateGroupAvatar(userId: number, conversationId: number, avatarPath: string) {
-    const conv = await this.convRepo.findOne({ where: { id: conversationId, type: 2 } });
+  async updateGroupAvatar(
+    userId: number,
+    conversationId: number,
+    avatarPath: string,
+  ) {
+    const conv = await this.convRepo.findOne({
+      where: { id: conversationId, type: 2 },
+    });
     if (!conv) throw new NotFoundException('群聊不存在');
     if (Number(conv.creatorId) !== Number(userId)) {
       throw new ForbiddenException('仅群主可更换群头像');
@@ -426,7 +604,9 @@ export class ContactService implements OnModuleInit {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     try {
-      await this.dataSource.query(`ALTER TABLE group_invitations ADD COLUMN message_id BIGINT NULL`);
+      await this.dataSource.query(
+        `ALTER TABLE group_invitations ADD COLUMN message_id BIGINT NULL`,
+      );
     } catch (_) {}
   }
 
@@ -446,8 +626,16 @@ export class ContactService implements OnModuleInit {
       this.convRepo.create({ type: 1, creatorId: userA, status: 1 }),
     );
     await this.memberRepo.save([
-      this.memberRepo.create({ conversationId: conv.id, userId: userA, role: 1 }),
-      this.memberRepo.create({ conversationId: conv.id, userId: userB, role: 1 }),
+      this.memberRepo.create({
+        conversationId: conv.id,
+        userId: userA,
+        role: 1,
+      }),
+      this.memberRepo.create({
+        conversationId: conv.id,
+        userId: userB,
+        role: 1,
+      }),
     ]);
     return Number(conv.id);
   }
@@ -479,12 +667,17 @@ export class ContactService implements OnModuleInit {
        LIMIT 1`,
       [conversationId, memberId],
     );
-    if (pending.length > 0) throw new BadRequestException('已发送邀请，等待对方确认');
+    if (pending.length > 0)
+      throw new BadRequestException('已发送邀请，等待对方确认');
 
     const inviter = await this.userRepo.findOne({ where: { id: userId } });
-    const inviterName = inviter?.nickname?.trim() || inviter?.account?.trim() || `用户${userId}`;
+    const inviterName =
+      inviter?.nickname?.trim() || inviter?.account?.trim() || `用户${userId}`;
     const groupName = conv.name?.trim() || '群聊';
-    const chatId = await this.ensureSingleConversation(Number(userId), Number(memberId));
+    const chatId = await this.ensureSingleConversation(
+      Number(userId),
+      Number(memberId),
+    );
 
     const insertResult = await this.dataSource.query(
       `INSERT INTO group_invitations
@@ -492,38 +685,56 @@ export class ContactService implements OnModuleInit {
        VALUES (?, ?, ?, 0, NOW())`,
       [conversationId, userId, memberId],
     );
-    const invitationId = Number(insertResult?.insertId || insertResult?.[0]?.insertId || 0);
+    const invitationId = Number(
+      insertResult?.insertId || insertResult?.[0]?.insertId || 0,
+    );
 
-    const inviteMsg = await this.msgRepo.save(this.msgRepo.create({
-      conversationId: chatId,
-      senderId: userId,
-      msgType: 3,
-      status: 1,
-      content: JSON.stringify({
-        kind: 'group_invite',
-        invitationId,
-        groupId: Number(conversationId),
-        groupName,
-        inviterId: Number(userId),
-        inviterName,
-        status: 0,
-        text: `${inviterName}邀请你加入群聊：${groupName}`,
+    const inviteMsg = await this.msgRepo.save(
+      this.msgRepo.create({
+        conversationId: chatId,
+        senderId: userId,
+        msgType: 3,
+        status: 1,
+        content: JSON.stringify({
+          kind: 'group_invite',
+          invitationId,
+          groupId: Number(conversationId),
+          groupName,
+          inviterId: Number(userId),
+          inviterName,
+          status: 0,
+          text: `${inviterName}邀请你加入群聊：${groupName}`,
+        }),
       }),
-    }));
+    );
     await this.dataSource.query(
       `UPDATE group_invitations SET message_id = ? WHERE id = ?`,
       [inviteMsg.id, invitationId],
     );
-    await this.memberRepo.increment({ conversationId: chatId, userId: memberId }, 'unreadCount', 1);
+    await this.memberRepo.increment(
+      { conversationId: chatId, userId: memberId },
+      'unreadCount',
+      1,
+    );
 
-    this.chatGateway.notifyUser(Number(memberId), 'conversation:new', { conversationId: chatId });
-    this.chatGateway.notifyUser(Number(userId), 'conversation:new', { conversationId: chatId });
-    await this.chatGateway.notifyConversationMessage(userId, inviteMsg, { includeSender: true });
+    this.chatGateway.notifyUser(Number(memberId), 'conversation:new', {
+      conversationId: chatId,
+    });
+    this.chatGateway.notifyUser(Number(userId), 'conversation:new', {
+      conversationId: chatId,
+    });
+    await this.chatGateway.notifyConversationMessage(userId, inviteMsg, {
+      includeSender: true,
+    });
 
     return { message: '邀请已发送，等待对方确认' };
   }
 
-  async handleGroupInvitation(userId: number, invitationId: number, accept: boolean) {
+  async handleGroupInvitation(
+    userId: number,
+    invitationId: number,
+    accept: boolean,
+  ) {
     await this.ensureGroupInvitationTable();
     const rows = await this.dataSource.query(
       `SELECT * FROM group_invitations WHERE id = ? LIMIT 1`,
@@ -534,10 +745,13 @@ export class ContactService implements OnModuleInit {
     if (Number(invitation.invitee_id) !== Number(userId)) {
       throw new ForbiddenException('无权处理该邀请');
     }
-    if (Number(invitation.status) !== 0) throw new BadRequestException('该邀请已处理');
+    if (Number(invitation.status) !== 0)
+      throw new BadRequestException('该邀请已处理');
 
     const conversationId = Number(invitation.conversation_id);
-    const conv = await this.convRepo.findOne({ where: { id: conversationId, type: 2 } });
+    const conv = await this.convRepo.findOne({
+      where: { id: conversationId, type: 2 },
+    });
     if (!conv) throw new NotFoundException('群聊不存在');
 
     const status = accept ? 1 : 2;
@@ -547,8 +761,13 @@ export class ContactService implements OnModuleInit {
     );
 
     if (invitation.message_id) {
-      const inviter = await this.userRepo.findOne({ where: { id: Number(invitation.inviter_id) } });
-      const inviterName = inviter?.nickname?.trim() || inviter?.account?.trim() || `用户${invitation.inviter_id}`;
+      const inviter = await this.userRepo.findOne({
+        where: { id: Number(invitation.inviter_id) },
+      });
+      const inviterName =
+        inviter?.nickname?.trim() ||
+        inviter?.account?.trim() ||
+        `用户${invitation.inviter_id}`;
       await this.msgRepo.update(Number(invitation.message_id), {
         content: JSON.stringify({
           kind: 'group_invite',
@@ -565,7 +784,9 @@ export class ContactService implements OnModuleInit {
 
     if (!accept) return { message: '已拒绝邀请' };
 
-    const exists = await this.memberRepo.findOne({ where: { conversationId, userId } });
+    const exists = await this.memberRepo.findOne({
+      where: { conversationId, userId },
+    });
     if (!exists) {
       await this.memberRepo.save(
         this.memberRepo.create({ conversationId, userId, role: 1 }),
@@ -573,26 +794,35 @@ export class ContactService implements OnModuleInit {
     }
 
     const joinedUser = await this.userRepo.findOne({ where: { id: userId } });
-    const memberName = joinedUser?.nickname?.trim() || joinedUser?.account?.trim() || `用户${userId}`;
-    const noticeMsg = await this.msgRepo.save(this.msgRepo.create({
-      conversationId,
-      senderId: userId,
-      msgType: 3,
-      status: 1,
-      content: JSON.stringify({
-        kind: 'member_join',
-        memberId: Number(userId),
-        memberName,
-        text: `${memberName}已同意邀请并加入群聊`,
+    const memberName =
+      joinedUser?.nickname?.trim() ||
+      joinedUser?.account?.trim() ||
+      `用户${userId}`;
+    const noticeMsg = await this.msgRepo.save(
+      this.msgRepo.create({
+        conversationId,
+        senderId: userId,
+        msgType: 3,
+        status: 1,
+        content: JSON.stringify({
+          kind: 'member_join',
+          memberId: Number(userId),
+          memberName,
+          text: `${memberName}已同意邀请并加入群聊`,
+        }),
       }),
-    }));
+    );
 
-    this.chatGateway.notifyUser(Number(userId), 'conversation:new', { conversationId });
-    await this.chatGateway.notifyConversationMessage(userId, noticeMsg, { includeSender: true });
+    this.chatGateway.notifyUser(Number(userId), 'conversation:new', {
+      conversationId,
+    });
+    await this.chatGateway.notifyConversationMessage(userId, noticeMsg, {
+      includeSender: true,
+    });
     return { message: '已加入群聊' };
   }
 
-  /** 移除群成员 */  async removeGroupMember(
+  /** 移除群成员 */ async removeGroupMember(
     userId: number,
     conversationId: number,
     memberId: number,

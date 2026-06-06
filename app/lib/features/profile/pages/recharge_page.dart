@@ -70,7 +70,8 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           .get<List<dynamic>>(ApiEndpoints.rechargeOrders);
       if (!mounted) return;
       setState(() {
-        _orders = (result ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+        _orders =
+            (result ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
       });
     } catch (_) {}
   }
@@ -99,7 +100,8 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           'realName': name,
           'phone': phone,
           if (_selectedPackage != null)
-            'amount': double.tryParse(_selectedPackage!.replaceAll(RegExp(r'[^0-9.]'), '')),
+            'amount': double.tryParse(
+                _selectedPackage!.replaceAll(RegExp(r'[^0-9.]'), '')),
           if (_selectedPackage != null) 'packageName': _selectedPackage,
         },
       );
@@ -111,13 +113,12 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       _loadOrders();
     } catch (e) {
       if (!mounted) return;
-      String msg = '提交失败';
-      final errStr = e.toString();
-      if (errStr.contains('待核实')) {
+      String msg = apiErrorMessage(e, fallback: '提交失败');
+      if (msg.contains('待核实')) {
         msg = '你有一笔待核实的充值申请，请等待管理员处理';
-      } else if (errStr.contains('手机号')) {
+      } else if (msg.contains('手机号')) {
         msg = '请填写正确的11位手机号';
-      } else if (errStr.contains('姓名')) {
+      } else if (msg.contains('姓名')) {
         msg = '请填写姓名';
       }
       Toast.error(context, msg);
@@ -216,8 +217,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
                 style: const TextStyle(fontSize: 11, color: Colors.white)),
           ),
           const SizedBox(width: 8),
-          Expanded(
-              child: Text(text, style: const TextStyle(fontSize: 13))),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
         ],
       ),
     );
@@ -293,8 +293,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('选择套餐（选填）',
-              style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('选择套餐（选填）', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
           Wrap(
             spacing: 10,
@@ -382,8 +381,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('我的充值记录',
-              style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('我的充值记录', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           ..._orders.map((o) {
             final status = o['status'] as int? ?? 0;
@@ -406,7 +404,12 @@ class _RechargePageState extends ConsumerState<RechargePage> {
                           style: const TextStyle(fontSize: 13),
                         ),
                         Text(
-                          o['createdAt']?.toString().replaceFirst('T', ' ').split('.').first ?? '',
+                          o['createdAt']
+                                  ?.toString()
+                                  .replaceFirst('T', ' ')
+                                  .split('.')
+                                  .first ??
+                              '',
                           style: TextStyle(
                               fontSize: 11, color: Colors.grey.shade500),
                         ),

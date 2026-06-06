@@ -25,6 +25,31 @@ class ApiException implements Exception {
   String toString() => 'ApiException(code: $code, message: $message)';
 }
 
+String apiErrorMessage(Object error, {String fallback = '操作失败'}) {
+  if (error is ApiException && error.message.isNotEmpty) {
+    return error.message;
+  }
+  if (error is DioException) {
+    final inner = error.error;
+    if (inner is ApiException && inner.message.isNotEmpty) {
+      return inner.message;
+    }
+    final data = error.response?.data;
+    if (data is Map<String, dynamic>) {
+      final message = data['message']?.toString() ?? '';
+      if (message.isNotEmpty) return message;
+    }
+    final message = error.message;
+    if (message != null && message.isNotEmpty) return message;
+  }
+
+  final text = error.toString();
+  final match = RegExp(r'message:\s*([^)]*)\)').firstMatch(text);
+  final parsed = match?.group(1)?.trim();
+  if (parsed != null && parsed.isNotEmpty) return parsed;
+  return fallback;
+}
+
 /// Dio 网络请求封装
 class ApiClient {
   late final Dio _dio;
@@ -33,8 +58,10 @@ class ApiClient {
     _dio = Dio(
       BaseOptions(
         baseUrl: AppConstants.apiBaseUrl,
-        connectTimeout: const Duration(milliseconds: AppConstants.connectTimeout),
-        receiveTimeout: const Duration(milliseconds: AppConstants.receiveTimeout),
+        connectTimeout:
+            const Duration(milliseconds: AppConstants.connectTimeout),
+        receiveTimeout:
+            const Duration(milliseconds: AppConstants.receiveTimeout),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -122,7 +149,8 @@ class ApiClient {
             message = '网络连接失败，请检查网络设置';
             break;
           default:
-            message = serverMessage ?? error.response?.statusMessage ?? '网络请求失败';
+            message =
+                serverMessage ?? error.response?.statusMessage ?? '网络请求失败';
         }
 
         handler.next(

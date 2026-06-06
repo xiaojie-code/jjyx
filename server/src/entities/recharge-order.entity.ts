@@ -19,16 +19,33 @@ export class RechargeOrder {
   @Index()
   userId: number;
 
-  @Column({ type: 'varchar', length: 50, name: 'real_name', comment: '付款人姓名' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    name: 'real_name',
+    comment: '付款人姓名',
+  })
   realName: string;
 
   @Column({ type: 'varchar', length: 20, comment: '接收激活码的手机号' })
   phone: string;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, comment: '充值金额（选填）' })
+  @Column({
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    comment: '充值金额（选填）',
+  })
   amount: number | null;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, comment: '套餐/档位（选填）' })
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    name: 'package_name',
+    comment: '套餐/档位（选填）',
+  })
   packageName: string | null;
 
   @Column({
@@ -39,10 +56,21 @@ export class RechargeOrder {
   @Index()
   status: number;
 
-  @Column({ type: 'varchar', length: 200, nullable: true, name: 'admin_remark', comment: '管理员备注' })
+  @Column({
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+    name: 'admin_remark',
+    comment: '管理员备注',
+  })
   adminRemark: string | null;
 
-  @Column({ type: 'int', nullable: true, name: 'operator_id', comment: '处理的管理员ID' })
+  @Column({
+    type: 'int',
+    nullable: true,
+    name: 'operator_id',
+    comment: '处理的管理员ID',
+  })
   operatorId: number | null;
 
   @Column({ type: 'datetime', nullable: true, name: 'handled_at' })

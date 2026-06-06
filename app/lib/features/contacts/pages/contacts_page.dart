@@ -106,8 +106,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
 
   /// 长按联系人弹出操作菜单
   void _showContactMenu(Map<String, dynamic> c, Offset position) {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -271,8 +270,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                             child: avatar == null ||
                                     avatar.isEmpty ||
                                     avatar.contains('default')
-                                ? const Icon(Icons.person,
-                                    color: Colors.grey)
+                                ? const Icon(Icons.person, color: Colors.grey)
                                 : null,
                           ),
                           title: Text(displayName),
@@ -284,14 +282,19 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                                     '/api/social/conversations/with/${c['userId']}',
                                   );
                               if (!context.mounted) return;
-                              if (result != null &&
-                                  result['conversationId'] != null) {
-                                await Navigator.of(context,
-                                        rootNavigator: true)
+                              final rawConversationId =
+                                  result?['conversationId'];
+                              final conversationId = rawConversationId is int
+                                  ? rawConversationId
+                                  : int.tryParse(
+                                      rawConversationId?.toString() ?? '',
+                                    );
+                              if (conversationId != null &&
+                                  conversationId > 0) {
+                                await Navigator.of(context, rootNavigator: true)
                                     .push(MaterialPageRoute(
                                   builder: (_) => ChatPage(
-                                    conversationId:
-                                        result['conversationId'] as int,
+                                    conversationId: conversationId,
                                     title: _chatTitle(c),
                                     type: 1,
                                   ),
@@ -301,7 +304,10 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                               }
                             } catch (e) {
                               if (!context.mounted) return;
-                              Toast.error(context, '获取会话失败');
+                              Toast.error(
+                                context,
+                                apiErrorMessage(e, fallback: '获取会话失败'),
+                              );
                             }
                           },
                         ),
