@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
+import '../../main/providers/badge_provider.dart';
 
 /// 服务通知页面（单向系统提醒，仿微信"服务通知"）
 /// 仅展示，不可回复。管理员用于查看提现/建群/充值等申请。
@@ -28,10 +29,11 @@ class _ServiceNotificationPageState
 
   Future<void> _load() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-            ApiEndpoints.serviceNotifications,
-            queryParameters: {'page': '1', 'pageSize': '50'},
-          );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+        ApiEndpoints.serviceNotifications,
+        queryParameters: {'page': '1', 'pageSize': '50'},
+      );
       if (!mounted) return;
       final list = (result?['list'] as List?) ?? [];
       setState(() {
@@ -48,6 +50,7 @@ class _ServiceNotificationPageState
       await ref
           .read(apiClientProvider)
           .put(ApiEndpoints.serviceNotificationsReadAll);
+      ref.read(badgeProvider.notifier).clearServiceNotifications();
     } catch (_) {}
   }
 
@@ -139,7 +142,9 @@ class _ServiceNotificationPageState
                             Text(
                               item['content']?.toString() ?? '',
                               style: const TextStyle(
-                                  fontSize: 14, color: Colors.black87, height: 1.4),
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                  height: 1.4),
                             ),
                             const SizedBox(height: 10),
                             Text(

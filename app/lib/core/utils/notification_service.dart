@@ -4,7 +4,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 /// 新消息通知回调：点击通知时调用，携带 conversationId
-typedef NotificationTapCallback = void Function(int conversationId, String title);
+typedef NotificationTapCallback = void Function(
+    int conversationId, String title);
 
 /// 应用内横幅回调：在前台收到非当前会话消息时调用
 typedef InAppBannerCallback = void Function({
@@ -43,7 +44,7 @@ class NotificationService {
         final args = Map<String, dynamic>.from(call.arguments as Map);
         final conversationId = args['conversationId'] as int? ?? 0;
         final title = args['title'] as String? ?? '聊天';
-        if (conversationId > 0) {
+        if (conversationId != 0) {
           onTap?.call(conversationId, title);
         }
       }
@@ -110,10 +111,12 @@ class NotificationService {
     try {
       _soundPlayer ??= AudioPlayer();
       _soundPlayer!.setReleaseMode(ReleaseMode.release);
-      _soundPlayer!.play(
-        AssetSource('notification.mp3'),
-        volume: 0.6,
-      ).catchError((_) {});
+      _soundPlayer!
+          .play(
+            AssetSource('notification.mp3'),
+            volume: 0.6,
+          )
+          .catchError((_) {});
     } catch (_) {}
   }
 

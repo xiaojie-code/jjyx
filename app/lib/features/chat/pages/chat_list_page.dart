@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import '../../../core/constants/app_constants.dart';
@@ -73,11 +73,14 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   /// 加载服务通知未读数（仅管理员有意义，普通用户一般为0）
   Future<void> _loadServiceUnread() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-            ApiEndpoints.serviceNotificationsUnread,
-          );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+                ApiEndpoints.serviceNotificationsUnread,
+              );
       if (!mounted) return;
-      setState(() => _serviceUnread = result?['count'] as int? ?? 0);
+      final count = result?['count'] as int? ?? 0;
+      setState(() => _serviceUnread = count);
+      ref.read(badgeProvider.notifier).setServiceNotificationCount(count);
     } catch (_) {}
   }
 
@@ -190,8 +193,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   /// 长按会话弹出操作菜单（置顶/不显示/删除），在长按位置附近显示（仿微信）
   void _showConversationMenu(
       ConversationItem conv, String peerName, Offset position) {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     // 单聊才显示"修改备注"
     final isSingleChat = conv.type != 2 && conv.peerUser != null;
     showMenu<String>(
@@ -233,7 +235,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           value: 'hide',
           child: Row(
             children: [
-              Icon(Icons.visibility_off_outlined, size: 18, color: Colors.black87),
+              Icon(Icons.visibility_off_outlined,
+                  size: 18, color: Colors.black87),
               SizedBox(width: 10),
               Text('不显示该聊天'),
             ],
@@ -294,9 +297,9 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     if (newRemark == null) return;
     try {
       await ref.read(apiClientProvider).put(
-            ApiEndpoints.contactRemark(friendId),
-            data: {'remark': newRemark},
-          );
+        ApiEndpoints.contactRemark(friendId),
+        data: {'remark': newRemark},
+      );
       if (mounted) {
         Toast.success(context, '备注已更新');
         _loadConversations();
@@ -310,8 +313,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   Future<void> _hideConversation(ConversationItem conv) async {
     try {
       await ref.read(apiClientProvider).put(
-        ApiEndpoints.hideConversation(conv.conversationId),
-      );
+            ApiEndpoints.hideConversation(conv.conversationId),
+          );
       _loadConversations();
     } catch (e) {
       if (mounted) Toast.error(context, '$e');
@@ -341,8 +344,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     if (confirmed != true) return;
     try {
       await ref.read(apiClientProvider).delete(
-        ApiEndpoints.deleteConversation(conv.conversationId),
-      );
+            ApiEndpoints.deleteConversation(conv.conversationId),
+          );
       _loadConversations();
     } catch (e) {
       if (mounted) Toast.error(context, '$e');
@@ -421,7 +424,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
   @override
   Widget build(BuildContext context) {
-    final isAdmin = ref.watch(authProvider).user?.account == 'admin';
+    final isAdmin = ref.watch(authProvider).user?.isAdmin == true;
     final headerCount = isAdmin ? 3 : 2;
     return Scaffold(
       appBar: AppBar(
@@ -545,83 +548,88 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                     onLongPressStart: (details) => _showConversationMenu(
                         conv, peerName, details.globalPosition),
                     child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.grey.shade200,
-                      backgroundImage: displayAvatar != null &&
-                              displayAvatar.isNotEmpty &&
-                              !displayAvatar.contains('default')
-                          ? NetworkImage(displayAvatar.startsWith('http') ? displayAvatar : '${AppConstants.apiBaseUrl}$displayAvatar')
-                          : null,
-                      child: displayAvatar == null ||
-                              displayAvatar.isEmpty ||
-                              displayAvatar.contains('default')
-                          ? Icon(conv.type == 2 ? Icons.group : Icons.person,
-                              color: Colors.grey.shade600)
-                          : null,
-                    ),
-                    title: Row(
-                      children: [
-                        if (conv.isPinned)
-                          Container(
-                            margin: const EdgeInsets.only(right: 4),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.shade50,
-                              borderRadius: BorderRadius.circular(2),
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.grey.shade200,
+                        backgroundImage: displayAvatar != null &&
+                                displayAvatar.isNotEmpty &&
+                                !displayAvatar.contains('default')
+                            ? NetworkImage(displayAvatar.startsWith('http')
+                                ? displayAvatar
+                                : '${AppConstants.apiBaseUrl}$displayAvatar')
+                            : null,
+                        child: displayAvatar == null ||
+                                displayAvatar.isEmpty ||
+                                displayAvatar.contains('default')
+                            ? Icon(conv.type == 2 ? Icons.group : Icons.person,
+                                color: Colors.grey.shade600)
+                            : null,
+                      ),
+                      title: Row(
+                        children: [
+                          if (conv.isPinned)
+                            Container(
+                              margin: const EdgeInsets.only(right: 4),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                              child: Text('置顶',
+                                  style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.blue.shade700)),
                             ),
-                            child: Text('置顶',
-                                style: TextStyle(
-                                    fontSize: 10, color: Colors.blue.shade700)),
+                          Expanded(
+                              child: Text(peerName,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w500))),
+                        ],
+                      ),
+                      subtitle: Text(
+                        _messagePreview(conv.lastMessage),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            const TextStyle(fontSize: 13, color: Colors.grey),
+                      ),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            _formatMessageTime(conv.lastMessage?.createdAt),
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey.shade500),
                           ),
-                        Expanded(
-                            child: Text(peerName,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w500))),
-                      ],
-                    ),
-                    subtitle: Text(
-                      _messagePreview(conv.lastMessage),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13, color: Colors.grey),
-                    ),
-                    trailing: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          _formatMessageTime(conv.lastMessage?.createdAt),
-                          style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                        ),
-                        const SizedBox(height: 4),
-                        if (conv.unreadCount > 0)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                                color: Colors.red,
-                                borderRadius: BorderRadius.circular(10)),
-                            child: Text('${conv.unreadCount}',
-                                style: const TextStyle(
-                                    color: Colors.white, fontSize: 11)),
-                          )
-                        else
-                          const SizedBox(height: 16),
-                      ],
-                    ),
-                    onTap: () async {
-                      await Navigator.of(context, rootNavigator: true)
-                          .push(MaterialPageRoute(
-                        builder: (_) => ChatPage(
-                          conversationId: conv.conversationId,
-                          title: peerName,
-                          type: conv.type,
-                        ),
-                      ));
-                      // 杩斿洖鍚庡埛鏂版秷鎭垪琛紙鏇存柊鏈鏁帮級
-                      _loadConversations();
-                    },
+                          const SizedBox(height: 4),
+                          if (conv.unreadCount > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(10)),
+                              child: Text('${conv.unreadCount}',
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 11)),
+                            )
+                          else
+                            const SizedBox(height: 16),
+                        ],
+                      ),
+                      onTap: () async {
+                        await Navigator.of(context, rootNavigator: true)
+                            .push(MaterialPageRoute(
+                          builder: (_) => ChatPage(
+                            conversationId: conv.conversationId,
+                            title: peerName,
+                            type: conv.type,
+                          ),
+                        ));
+                        // 杩斿洖鍚庡埛鏂版秷鎭垪琛紙鏇存柊鏈鏁帮級
+                        _loadConversations();
+                      },
                     ),
                   );
                 },
@@ -671,13 +679,15 @@ class _MessageSearchDelegate extends SearchDelegate<String> {
             final msg = Map<String, dynamic>.from(results[index]);
             final msgType = int.tryParse(msg['msgType']?.toString() ?? '') ?? 1;
             final content = msg['content']?.toString() ?? '';
-            final conversationId = int.tryParse(msg['conversationId']?.toString() ?? '') ?? 0;
+            final conversationId =
+                int.tryParse(msg['conversationId']?.toString() ?? '') ?? 0;
             final senderNickname = msg['senderNickname']?.toString() ?? '';
             final createdAt = msg['createdAt']?.toString() ?? '';
             return ListTile(
               leading: const CircleAvatar(
                 backgroundColor: Color(0xFFE3F2FD),
-                child: Icon(Icons.chat_bubble_outline, size: 18, color: Colors.blue),
+                child: Icon(Icons.chat_bubble_outline,
+                    size: 18, color: Colors.blue),
               ),
               title: Text(_searchMessagePreview(msgType, content),
                   maxLines: 2, overflow: TextOverflow.ellipsis),
@@ -688,7 +698,8 @@ class _MessageSearchDelegate extends SearchDelegate<String> {
               onTap: () {
                 if (conversationId <= 0) return;
                 close(context, '');
-                Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+                Navigator.of(context, rootNavigator: true)
+                    .push(MaterialPageRoute(
                   builder: (_) => ChatPage(
                     conversationId: conversationId,
                     title: senderNickname.isNotEmpty ? senderNickname : '聊天',
@@ -748,7 +759,10 @@ class _DigitalHumanPage extends StatelessWidget {
             SizedBox(height: 24),
             Text(
               '测试中，暂未开放',
-              style: TextStyle(fontSize: 18, color: Colors.grey, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                  fontSize: 18,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w500),
             ),
           ],
         ),

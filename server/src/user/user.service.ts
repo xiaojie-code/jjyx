@@ -58,7 +58,9 @@ export class UserService {
   /** 激活后自动添加客服联系人，但不自动加入系统总群 */
   private async ensureCustomerServiceContact(userId: number) {
     try {
-      const admin = await this.userRepo.findOne({ where: { account: 'admin' } });
+      const admin = await this.userRepo.findOne({
+        where: { account: 'admin' },
+      });
       if (!admin || Number(admin.id) === Number(userId)) return;
 
       if (admin.nickname !== '客服') {
@@ -89,12 +91,17 @@ export class UserService {
           [userId, admin.id],
         );
         let conversationId = existingChat[0]?.id;
-        const welcomeText = '欢迎使用云AI，我是客服，有任何问题都可以随时联系我。';
+        const welcomeText =
+          '欢迎使用云AI，我是客服，有任何问题都可以随时联系我。';
 
         if (existingChat.length === 0) {
           const conversation = await manager.save(
             Conversation,
-            manager.create(Conversation, { type: 1, creatorId: admin.id, status: 1 }),
+            manager.create(Conversation, {
+              type: 1,
+              creatorId: admin.id,
+              status: 1,
+            }),
           );
           conversationId = conversation.id;
           await manager.save(ConversationMember, [
@@ -162,7 +169,9 @@ export class UserService {
       throw new BadRequestException('邀请码不能为空');
     }
 
-    const exists = await this.userRepo.findOne({ where: { account: dto.account } });
+    const exists = await this.userRepo.findOne({
+      where: { account: dto.account },
+    });
     if (exists) {
       throw new ConflictException('账号已存在');
     }
@@ -200,10 +209,15 @@ export class UserService {
     const savedUser = await this.userRepo.save(user);
 
     // 创建货币账户（注册时不送积分，激活后才送）
-    await this.currencyRepo.save(this.currencyRepo.create({ userId: savedUser.id }));
+    await this.currencyRepo.save(
+      this.currencyRepo.create({ userId: savedUser.id }),
+    );
 
     // 签发 token
-    const token = this.jwtService.sign({ sub: savedUser.id, account: savedUser.account });
+    const token = this.jwtService.sign({
+      sub: savedUser.id,
+      account: savedUser.account,
+    });
 
     // 矩阵推广：注册时不再入位，需要激活后才触发
     // 激活逻辑在 activate 方法中处理
@@ -215,6 +229,7 @@ export class UserService {
         account: savedUser.account,
         nickname: savedUser.nickname,
         avatar: savedUser.avatar,
+        userType: savedUser.userType,
         isActivated: savedUser.isActivated,
       },
     };
@@ -224,7 +239,9 @@ export class UserService {
   async login(dto: LoginDto, ip: string) {
     await this.checkSwitch('login');
 
-    const user = await this.userRepo.findOne({ where: { account: dto.account } });
+    const user = await this.userRepo.findOne({
+      where: { account: dto.account },
+    });
     if (!user) {
       throw new UnauthorizedException('账号不存在');
     }
@@ -251,6 +268,7 @@ export class UserService {
         account: user.account,
         nickname: user.nickname,
         avatar: user.avatar,
+        userType: user.userType,
         isActivated: user.isActivated,
       },
     };
@@ -268,6 +286,7 @@ export class UserService {
       account: user.account,
       nickname: user.nickname,
       avatar: user.avatar,
+      userType: user.userType,
       isActivated: user.isActivated,
       shares: user.shares,
       inviteCode: user.inviteCode,
@@ -299,7 +318,16 @@ export class UserService {
     }
 
     // 敏感词过滤
-    const sensitiveWords = ['赌博', '色情', '毒品', '暴力', '政治', '法轮功', '共产党', '习近平'];
+    const sensitiveWords = [
+      '赌博',
+      '色情',
+      '毒品',
+      '暴力',
+      '政治',
+      '法轮功',
+      '共产党',
+      '习近平',
+    ];
     const mint = new Mint(sensitiveWords);
     if (!mint.verify(nickname)) {
       throw new BadRequestException('昵称包含敏感词，请修改');
@@ -404,7 +432,9 @@ export class UserService {
 
       // 发放CDK奖励到货币账户
       if (cdk.itemsJson && Array.isArray(cdk.itemsJson)) {
-        const currency = await manager.findOne(UserCurrency, { where: { userId } });
+        const currency = await manager.findOne(UserCurrency, {
+          where: { userId },
+        });
         if (currency) {
           for (const item of cdk.itemsJson) {
             const amount = Number(item.amount) || 0;
@@ -447,10 +477,12 @@ export class UserService {
   /** 获取邀请记录（直推+间推） */
   async getInviteRecords(userId: number) {
     // 直推：我邀请的人
-    const directInvitees = await this.userRepo.find({ where: { invitedBy: userId } });
+    const directInvitees = await this.userRepo.find({
+      where: { invitedBy: userId },
+    });
 
     // 间推：我邀请的人再邀请的人
-    const directIds = directInvitees.map(u => u.id);
+    const directIds = directInvitees.map((u) => u.id);
     let indirectInvitees: any[] = [];
     if (directIds.length > 0) {
       indirectInvitees = await this.userRepo
@@ -463,7 +495,7 @@ export class UserService {
       directCount: directInvitees.length,
       indirectCount: indirectInvitees.length,
       totalReward: 0,
-      directInvitees: directInvitees.map(u => ({
+      directInvitees: directInvitees.map((u) => ({
         id: u.id,
         nickname: u.nickname,
         account: u.account,
@@ -471,7 +503,7 @@ export class UserService {
         type: 'direct',
         reward: 0,
       })),
-      indirectInvitees: indirectInvitees.map(u => ({
+      indirectInvitees: indirectInvitees.map((u) => ({
         id: u.id,
         nickname: u.nickname,
         account: u.account,

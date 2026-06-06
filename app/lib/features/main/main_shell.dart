@@ -11,6 +11,7 @@ import '../../core/update/update_state.dart';
 import 'providers/badge_provider.dart';
 import '../chat/providers/chat_provider.dart';
 import '../chat/pages/chat_page.dart';
+import '../chat/pages/service_notification_page.dart';
 import '../auth/providers/auth_provider.dart';
 
 /// 主页面框架 - 底部 TabBar（消息、联系人、游戏、我的）
@@ -23,7 +24,8 @@ class MainShell extends ConsumerStatefulWidget {
   ConsumerState<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserver {
+class _MainShellState extends ConsumerState<MainShell>
+    with WidgetsBindingObserver {
   bool _isAppInForeground = true;
 
   @override
@@ -82,9 +84,10 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
 
   Future<void> _loadNotificationSettings() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-        ApiEndpoints.userSettings,
-      );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+                ApiEndpoints.userSettings,
+              );
       if (result != null) {
         NotificationService.instance.updateSettings(
           master: result['notificationEnabled'] as bool? ?? true,
@@ -98,6 +101,13 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
   void _onNotificationTap(int conversationId, String title) {
     // 点击通知跳转到对应会话
     if (!mounted) return;
+    if (conversationId == -1) {
+      Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+        builder: (_) => const ServiceNotificationPage(),
+      ));
+      ref.read(badgeProvider.notifier).clearServiceNotifications();
+      return;
+    }
     Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
       builder: (_) => ChatPage(
         conversationId: conversationId,
@@ -131,7 +141,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
           content = '[系统消息]';
           break;
         default:
-          content = msg.content.length > 50 ? '${msg.content.substring(0, 50)}...' : msg.content;
+          content = msg.content.length > 50
+              ? '${msg.content.substring(0, 50)}...'
+              : msg.content;
       }
       NotificationService.instance.onNewMessage(
         conversationId: msg.conversationId,
@@ -152,13 +164,12 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
   void _onServiceNotification(Map<String, dynamic> data) {
     final title = data['title']?.toString() ?? '服务通知';
     final content = data['content']?.toString() ?? '';
+    ref.read(badgeProvider.notifier).incrementServiceNotifications();
     NotificationService.instance.onNewMessage(
       conversationId: -1,
       senderName: title,
       content: content,
       isAppInForeground: _isAppInForeground,
-      // 服务通知不弹应用内横幅，仅提示音/后台系统通知
-      bannerSuppressed: true,
     );
   }
 
@@ -217,9 +228,9 @@ class _MainShellState extends ConsumerState<MainShell> with WidgetsBindingObserv
         items: [
           BottomNavigationBarItem(
             icon: _buildBadgeIcon(
-                Icons.chat_bubble_outline, badges.unreadMessageCount),
+                Icons.chat_bubble_outline, badges.messageTabCount),
             activeIcon:
-                _buildBadgeIcon(Icons.chat_bubble, badges.unreadMessageCount),
+                _buildBadgeIcon(Icons.chat_bubble, badges.messageTabCount),
             label: '消息',
           ),
           BottomNavigationBarItem(

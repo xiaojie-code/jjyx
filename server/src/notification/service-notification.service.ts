@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { ServiceNotification } from '../entities/service-notification.entity';
 import { User } from '../entities/user.entity';
 
@@ -11,29 +11,94 @@ export type ServiceNotificationPusher = (
 ) => void;
 
 @Injectable()
-export class ServiceNotificationService {
+export class ServiceNotificationService implements OnModuleInit {
   private readonly logger = new Logger(ServiceNotificationService.name);
   private pusher: ServiceNotificationPusher | null = null;
-  private cachedAdminId: number | null = null;
+  private cachedAdminIds: number[] | null = null;
 
   constructor(
     @InjectRepository(ServiceNotification)
     private readonly repo: Repository<ServiceNotification>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly dataSource: DataSource,
   ) {}
+
+  async onModuleInit() {
+    await this.ensureTable();
+  }
+
+  private async ensureTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS service_notifications (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        recipient_id INT NOT NULL,
+        type VARCHAR(30) NOT NULL COMMENT '类型：withdrawal/group/recharge 等',
+        title VARCHAR(100) NOT NULL,
+        content TEXT NOT NULL,
+        from_user_id INT NULL,
+        payload_json TEXT NULL,
+        is_read TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_service_notifications_recipient (recipient_id),
+        INDEX idx_service_notifications_recipient_read (recipient_id, is_read),
+        INDEX idx_service_notifications_type (type)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    const alters = [
+      `ALTER TABLE service_notifications ADD COLUMN recipient_id INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE service_notifications ADD COLUMN type VARCHAR(30) NOT NULL DEFAULT '' COMMENT '类型：withdrawal/group/recharge 等'`,
+      `ALTER TABLE service_notifications ADD COLUMN title VARCHAR(100) NOT NULL DEFAULT ''`,
+      `ALTER TABLE service_notifications ADD COLUMN content TEXT NULL`,
+      `ALTER TABLE service_notifications ADD COLUMN from_user_id INT NULL`,
+      `ALTER TABLE service_notifications ADD COLUMN payload_json TEXT NULL`,
+      `ALTER TABLE service_notifications ADD COLUMN is_read TINYINT(1) NOT NULL DEFAULT 0`,
+      `ALTER TABLE service_notifications ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+    ];
+    for (const sql of alters) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {
+        // 字段已存在则忽略
+      }
+    }
+
+    const indexes = [
+      `CREATE INDEX idx_service_notifications_recipient ON service_notifications (recipient_id)`,
+      `CREATE INDEX idx_service_notifications_recipient_read ON service_notifications (recipient_id, is_read)`,
+      `CREATE INDEX idx_service_notifications_type ON service_notifications (type)`,
+    ];
+    for (const sql of indexes) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {
+        // 索引已存在则忽略
+      }
+    }
+  }
 
   /** 由 ChatGateway 注册实时推送通道 */
   registerPusher(pusher: ServiceNotificationPusher) {
     this.pusher = pusher;
   }
 
-  /** 获取管理员用户ID（account = 'admin'），带缓存 */
-  private async getAdminId(): Promise<number | null> {
-    if (this.cachedAdminId) return this.cachedAdminId;
-    const admin = await this.userRepo.findOne({ where: { account: 'admin' } });
-    if (admin) this.cachedAdminId = Number(admin.id);
-    return this.cachedAdminId;
+  /** 获取管理员/运营账号ID（优先 account=admin，同时兼容 user_type=2） */
+  private async getAdminRecipientIds(): Promise<number[]> {
+    if (this.cachedAdminIds?.length) return this.cachedAdminIds;
+    const admins = await this.userRepo
+      .createQueryBuilder('u')
+      .where('(u.account = :account OR u.user_type = :userType)', {
+        account: 'admin',
+        userType: 2,
+      })
+      .andWhere('u.status = :status', { status: 1 })
+      .getMany();
+    const ids = [
+      ...new Set(admins.map((u) => Number(u.id)).filter((id) => id > 0)),
+    ];
+    if (ids.length > 0) this.cachedAdminIds = ids;
+    return ids;
   }
 
   /** 创建一条发给管理员的服务通知 */
@@ -44,12 +109,16 @@ export class ServiceNotificationService {
     fromUserId?: number;
     payload?: Record<string, any>;
   }) {
-    const adminId = await this.getAdminId();
-    if (!adminId) {
-      this.logger.warn('未找到管理员账号(admin)，跳过服务通知');
+    const adminIds = await this.getAdminRecipientIds();
+    if (adminIds.length === 0) {
+      this.logger.warn('未找到管理员账号(admin)或运营账号，跳过服务通知');
       return;
     }
-    return this.notifyUser({ ...params, recipientId: adminId });
+    return Promise.all(
+      adminIds.map((recipientId) =>
+        this.notifyUser({ ...params, recipientId }),
+      ),
+    );
   }
 
   /** 创建一条服务通知并实时推送 */

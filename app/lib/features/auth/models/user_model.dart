@@ -3,6 +3,7 @@ class UserModel {
   final String account;
   final String nickname;
   final String avatar;
+  final int userType;
   final bool isActivated;
 
   UserModel({
@@ -10,6 +11,7 @@ class UserModel {
     required this.account,
     required this.nickname,
     required this.avatar,
+    this.userType = 1,
     required this.isActivated,
   });
 
@@ -19,9 +21,12 @@ class UserModel {
       account: json['account'] as String? ?? '',
       nickname: json['nickname'] as String? ?? '',
       avatar: json['avatar'] as String? ?? '',
+      userType: int.tryParse(json['userType']?.toString() ?? '') ?? 1,
       isActivated: json['isActivated'] as bool? ?? false,
     );
   }
+
+  bool get isAdmin => account == 'admin' || userType == 2;
 }
 
 class CurrencyModel {
@@ -79,6 +84,7 @@ class ProfileModel {
         account: json['account'] as String? ?? '',
         nickname: json['nickname'] as String? ?? '',
         avatar: json['avatar'] as String? ?? '',
+        userType: int.tryParse(json['userType']?.toString() ?? '') ?? 1,
         isActivated: json['isActivated'] as bool? ?? false,
       ),
       shares: json['shares'] as int? ?? 0,
