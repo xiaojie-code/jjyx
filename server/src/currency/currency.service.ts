@@ -387,7 +387,9 @@ export class CurrencyService {
     const earnedResult = await this.dataSource.query(
       `SELECT COALESCE(SUM(i.amount), 0) as total FROM matrix_incomes i
        INNER JOIN matrices m ON i.matrix_id = m.id
-       WHERE i.owner_id = ? AND i.income_type = 'claimable' AND m.owner_id = ?`,
+       WHERE i.owner_id = ?
+         AND (i.slot_number BETWEEN 1 AND 4 OR i.slot_number = 0)
+         AND m.owner_id = ?`,
       [userId, userId],
     );
     const totalEarned = Number(earnedResult?.[0]?.total || 0);
@@ -413,7 +415,8 @@ export class CurrencyService {
               u.account AS source_account, u.nickname AS source_nickname
        FROM matrix_incomes i
        LEFT JOIN users u ON u.id = i.from_user_id
-       WHERE i.owner_id = ? AND i.income_type = 'claimable'
+       WHERE i.owner_id = ?
+         AND (i.slot_number BETWEEN 1 AND 4 OR i.slot_number = 0)
        ORDER BY i.created_at DESC`,
       [userId],
     );

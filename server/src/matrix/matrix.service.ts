@@ -30,6 +30,72 @@ export class MatrixService {
     private readonly dataSource: DataSource,
   ) {}
 
+  private async getActualFilledCount(matrixId: number, manager: any): Promise<number> {
+    const rows = await manager.query(
+      `SELECT COUNT(DISTINCT slot_number) AS count
+       FROM matrix_slots
+       WHERE matrix_id = ? AND slot_number BETWEEN 1 AND 6`,
+      [matrixId],
+    );
+    return Number(rows?.[0]?.count || 0);
+  }
+
+  private async syncMatrixFilledCount(matrix: Matrix, manager: any): Promise<number> {
+    const actualFilled = await this.getActualFilledCount(matrix.id, manager);
+    if (Number(matrix.filledCount) !== actualFilled) {
+      matrix.filledCount = actualFilled;
+      await manager.save(Matrix, matrix);
+    }
+    return actualFilled;
+  }
+
+  private async isMatrixActuallyFull(matrix: Matrix, manager: any): Promise<boolean> {
+    return (await this.syncMatrixFilledCount(matrix, manager)) >= 6;
+  }
+
+  private summarizeMatrixSlotIncome(slots: Array<{ slotNumber: number; incomeAmount: any }>) {
+    return slots.reduce(
+      (summary, slot) => {
+        const slotNumber = Number(slot.slotNumber);
+        const amount = Number(slot.incomeAmount || 0);
+        if (slotNumber >= 1 && slotNumber <= 4) {
+          summary.claimableIncome += amount;
+        } else if (slotNumber >= 5 && slotNumber <= 6) {
+          summary.nextRoundFund += amount;
+        }
+        return summary;
+      },
+      { claimableIncome: 0, nextRoundFund: 0 },
+    );
+  }
+
+  private async getMatrixSlotIncomeSummary(matrixId: number, manager: any) {
+    const rows = await manager.query(
+      `SELECT slot_number AS slotNumber, income_amount AS incomeAmount
+       FROM matrix_slots
+       WHERE matrix_id = ?`,
+      [matrixId],
+    );
+    return this.summarizeMatrixSlotIncome(rows || []);
+  }
+
+  private async sumClaimableIncomeByRule(userId: number, claimed?: boolean) {
+    const params: any[] = [userId];
+    let claimedSql = '';
+    if (typeof claimed === 'boolean') {
+      claimedSql = ' AND is_claimed = ?';
+      params.push(claimed ? 1 : 0);
+    }
+    const rows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM matrix_incomes
+       WHERE owner_id = ?
+         AND (slot_number BETWEEN 1 AND 4 OR slot_number = 0)${claimedSql}`,
+      params,
+    );
+    return Number(rows?.[0]?.total || 0);
+  }
+
   /**
    * 为用户创建第一轮矩阵（注册时或激活时调用户
    */
@@ -56,7 +122,7 @@ export class MatrixService {
         order: { round: 'ASC' },
       });
 
-      while (matrix && Number(matrix.filledCount) >= 6) {
+      while (matrix && await this.isMatrixActuallyFull(matrix, manager)) {
         await this.handleMatrixComplete(matrix, manager);
         matrix = await manager.findOne(Matrix, {
           where: { ownerId: userId, status: 1 },
@@ -94,13 +160,7 @@ export class MatrixService {
     const completedCount = await this.matrixRepo.count({ where: { ownerId: userId, status: 2 } });
 
     // 总收益：1-4号位和指定账号特殊奖励产生后立即累计，不等待矩阵完成。
-    const totalEarned = await this.incomeRepo
-      .createQueryBuilder('i')
-      .select('SUM(i.amount)', 'total')
-      .where('i.owner_id = :userId', { userId })
-      .andWhere('i.income_type = :type', { type: 'claimable' })
-      .getRawOne();
-    const totalEarnedValue = Number(totalEarned?.total || 0);
+    const totalEarnedValue = await this.sumClaimableIncomeByRule(userId);
 
     return {
       inviteCode: user.inviteCode,
@@ -253,7 +313,7 @@ export class MatrixService {
     if (existingSlot) return; // 已经在矩阵中，不重复入位
 
     // 矩阵已满，不能入位
-    if (currentMatrix.filledCount >= 6) return;
+    if (await this.isMatrixActuallyFull(currentMatrix, manager)) return;
 
     // 计算坑位编号：按树形结构分配
     // 矩阵结构：顶点A 1,2（第一层）3,4(1的子),5,6(2的子)（第二层
@@ -289,7 +349,7 @@ export class MatrixService {
     await manager.save(MatrixSlot, slot);
 
     // 更新矩阵填充数
-    currentMatrix.filledCount += 1;
+    currentMatrix.filledCount = await this.syncMatrixFilledCount(currentMatrix, manager);
 
     // 记录收益
     if (actualIncomeAmount > 0) {
@@ -324,7 +384,7 @@ export class MatrixService {
     }
 
     // 矩阵满员后自动出局进入下一轮
-    if (currentMatrix.filledCount >= 6) {
+    if (await this.isMatrixActuallyFull(currentMatrix, manager)) {
       await this.handleMatrixComplete(currentMatrix, manager);
     }
 
@@ -360,7 +420,7 @@ export class MatrixService {
             const targetUser2 = await manager.findOne(User, { where: { id: targetOwnerId } });
             if (Number(thatMatrix.ownerId) !== Number(targetUser2?.invitedBy)) {
               // 这是级联矩阵，新用户也要补位进去
-              if (thatMatrix.filledCount < 6) {
+              if (!(await this.isMatrixActuallyFull(thatMatrix, manager))) {
                 const existingInThat = await manager.findOne(MatrixSlot, {
                   where: { matrixId: thatMatrix.id, userId },
                 });
@@ -505,6 +565,13 @@ export class MatrixService {
    * 矩阵满员处理：出局 + 开启下一+ 跟随上级入位
    */
   private async handleMatrixComplete(matrix: Matrix, manager: any): Promise<void> {
+    const freshMatrix = await manager.findOne(Matrix, { where: { id: matrix.id } });
+    if (!freshMatrix || Number(freshMatrix.status) !== 1) return;
+    matrix = freshMatrix;
+
+    if (!(await this.isMatrixActuallyFull(matrix, manager))) return;
+    const incomeSummary = await this.getMatrixSlotIncomeSummary(matrix.id, manager);
+    matrix.nextRoundFund = incomeSummary.nextRoundFund;
     // 标记当前矩阵完成
     matrix.status = 2;
     matrix.completedAt = new Date();
@@ -513,16 +580,21 @@ export class MatrixService {
     this.logger.log(`矩阵 #${matrix.id} 完成，用户 ${matrix.ownerId} 出局（第${matrix.round}轮）`);
 
     // 开启下一轮矩阵
-    const nextMatrix = manager.create(Matrix, {
-      ownerId: matrix.ownerId,
-      round: matrix.round + 1,
-      status: 1,
-      filledCount: 0,
-      startFund: Number(matrix.nextRoundFund),
-      claimableIncome: 0,
-      nextRoundFund: 0,
+    let nextMatrix = await manager.findOne(Matrix, {
+      where: { ownerId: matrix.ownerId, round: matrix.round + 1 },
     });
-    await manager.save(Matrix, nextMatrix);
+    if (!nextMatrix) {
+      nextMatrix = manager.create(Matrix, {
+        ownerId: matrix.ownerId,
+        round: matrix.round + 1,
+        status: 1,
+        filledCount: 0,
+        startFund: Number(matrix.nextRoundFund),
+        claimableIncome: 0,
+        nextRoundFund: 0,
+      });
+      await manager.save(Matrix, nextMatrix);
+    }
 
     this.logger.log(`用户 ${matrix.ownerId} 开启第${nextMatrix.round}轮矩阵，启动资金: ${nextMatrix.startFund}`);
 
@@ -533,7 +605,7 @@ export class MatrixService {
       const superiorMatrix = await manager.findOne(Matrix, {
         where: { ownerId: user.invitedBy, status: 1 },
       });
-      if (superiorMatrix && superiorMatrix.filledCount < 6) {
+      if (superiorMatrix && !(await this.isMatrixActuallyFull(superiorMatrix, manager))) {
         // 出局后再次入位上级矩阵（每次出局都要占新坑位置
         // 规则：优先进入号位，然号位（从上到下，左到右，跳过已占的位置）
         const nextSlot = await this.calculateReentrySlot(
@@ -560,7 +632,7 @@ export class MatrixService {
           });
           await manager.save(MatrixSlot, slot);
 
-          superiorMatrix.filledCount += 1;
+          superiorMatrix.filledCount = await this.syncMatrixFilledCount(superiorMatrix, manager);
 
           if (incomeAmount > 0) {
             const income = manager.create(MatrixIncome, {
@@ -590,7 +662,7 @@ export class MatrixService {
             );
           }
 
-          if (superiorMatrix.filledCount >= 6) {
+          if (await this.isMatrixActuallyFull(superiorMatrix, manager)) {
             await this.handleMatrixComplete(superiorMatrix, manager);
           }
         }
@@ -643,7 +715,7 @@ export class MatrixService {
       firstLayerMatrix = await manager.save(Matrix, firstLayerMatrix);
     }
 
-    if (firstLayerMatrix.filledCount >= 6) return;
+    if (await this.isMatrixActuallyFull(firstLayerMatrix, manager)) return;
 
     // 检查是否已经在该矩阵中
     const existing = await manager.findOne(MatrixSlot, {
@@ -680,7 +752,7 @@ export class MatrixService {
     });
     await manager.save(MatrixSlot, newSlot);
 
-    firstLayerMatrix.filledCount += 1;
+    firstLayerMatrix.filledCount = await this.syncMatrixFilledCount(firstLayerMatrix, manager);
 
     if (incomeAmount > 0) {
       const income = manager.create(MatrixIncome, {
@@ -703,7 +775,7 @@ export class MatrixService {
 
     await manager.save(Matrix, firstLayerMatrix);
 
-    if (firstLayerMatrix.filledCount >= 6) {
+    if (await this.isMatrixActuallyFull(firstLayerMatrix, manager)) {
       await this.handleMatrixComplete(firstLayerMatrix, manager);
     }
   }
@@ -751,7 +823,7 @@ export class MatrixService {
     });
     if (existingSlot) return;
 
-    if (currentMatrix.filledCount >= 6) return;
+    if (await this.isMatrixActuallyFull(currentMatrix, manager)) return;
 
     const nextSlotNumber = await this.calculateTreeSlot(
       userId, targetOwnerId, currentMatrix.id, manager,
@@ -782,7 +854,7 @@ export class MatrixService {
     });
     await manager.save(MatrixSlot, slot);
 
-    currentMatrix.filledCount += 1;
+    currentMatrix.filledCount = await this.syncMatrixFilledCount(currentMatrix, manager);
 
     if (actualIncomeAmount > 0) {
       const income = manager.create(MatrixIncome, {
@@ -804,7 +876,7 @@ export class MatrixService {
     await manager.save(Matrix, currentMatrix);
 
     // 矩阵满员后自动出局进入下一轮
-    if (currentMatrix.filledCount >= 6) {
+    if (await this.isMatrixActuallyFull(currentMatrix, manager)) {
       await this.handleMatrixComplete(currentMatrix, manager);
     }
   }
@@ -821,7 +893,8 @@ export class MatrixService {
     const superiorMatrix = await this.matrixRepo.findOne({
       where: { ownerId: user.invitedBy, status: 1 },
     });
-    if (!superiorMatrix || superiorMatrix.filledCount >= 6) return;
+    if (!superiorMatrix) return;
+    if (await this.isMatrixActuallyFull(superiorMatrix, this.dataSource.manager)) return;
 
     // 检查是否已经在上级矩阵
     const existing = await this.slotRepo.findOne({
@@ -852,6 +925,7 @@ export class MatrixService {
       where: { matrixId: matrix.id },
       order: { slotNumber: 'ASC' },
     });
+    const slotIncomeSummary = this.summarizeMatrixSlotIncome(slots);
 
     // 获取坑位用户信息（含上级昵称
     const slotDetails = await Promise.all(
@@ -877,7 +951,8 @@ export class MatrixService {
     return {
       matrix: {
         ...matrix,
-        claimableIncome: Math.max(0, Number(matrix.claimableIncome) - specialRewardAmount),
+        claimableIncome: slotIncomeSummary.claimableIncome,
+        nextRoundFund: slotIncomeSummary.nextRoundFund,
         specialRewardAmount,
       },
       slots: slotDetails,
@@ -902,10 +977,13 @@ export class MatrixService {
   async getClaimableIncome(userId: number) {
     await this.completeFullActiveMatrixIfNeeded(userId);
 
-    const incomes = await this.incomeRepo.find({
-      where: { ownerId: userId, incomeType: 'claimable', isClaimed: false },
-      order: { createdAt: 'DESC' },
-    });
+    const incomes = await this.incomeRepo
+      .createQueryBuilder('i')
+      .where('i.owner_id = :userId', { userId })
+      .andWhere('i.is_claimed = :claimed', { claimed: false })
+      .andWhere('(i.slot_number BETWEEN 1 AND 4 OR i.slot_number = 0)')
+      .orderBy('i.created_at', 'DESC')
+      .getMany();
     const total = incomes.reduce((sum, i) => sum + Number(i.amount), 0);
     return { total, list: incomes };
   }
@@ -927,29 +1005,17 @@ export class MatrixService {
     const completedMatrices = await this.matrixRepo.count({ where: { ownerId: userId, status: 2 } });
     const currentMatrix = await this.matrixRepo.findOne({ where: { ownerId: userId, status: 1 } });
 
-    const totalClaimable = await this.incomeRepo
-      .createQueryBuilder('i')
-      .select('SUM(i.amount)', 'total')
-      .where('i.owner_id = :userId', { userId })
-      .andWhere('i.income_type = :type', { type: 'claimable' })
-      .getRawOne();
-
-    const totalClaimed = await this.incomeRepo
-      .createQueryBuilder('i')
-      .select('SUM(i.amount)', 'total')
-      .where('i.owner_id = :userId', { userId })
-      .andWhere('i.income_type = :type', { type: 'claimable' })
-      .andWhere('i.is_claimed = true')
-      .getRawOne();
+    const totalClaimable = await this.sumClaimableIncomeByRule(userId);
+    const totalClaimed = await this.sumClaimableIncomeByRule(userId, true);
 
     return {
       totalMatrices,
       completedMatrices,
       currentRound: currentMatrix?.round || 0,
       currentFilled: currentMatrix?.filledCount || 0,
-      totalEarned: Number(totalClaimable?.total || 0),
-      totalClaimed: Number(totalClaimed?.total || 0),
-      pendingClaim: Number(totalClaimable?.total || 0) - Number(totalClaimed?.total || 0),
+      totalEarned: totalClaimable,
+      totalClaimed,
+      pendingClaim: totalClaimable - totalClaimed,
     };
   }
 
@@ -1005,6 +1071,7 @@ export class MatrixService {
           where: { matrixId: matrix.id },
           order: { slotNumber: 'ASC' },
         });
+        const slotIncomeSummary = this.summarizeMatrixSlotIncome(slots);
 
         const slotDetails = await Promise.all(
           slots.map(async (slot) => {
@@ -1032,8 +1099,9 @@ export class MatrixService {
         return {
           round: matrix.round,
           completedAt: matrix.completedAt,
-          claimableIncome: Math.max(0, Number(matrix.claimableIncome) - specialRewardAmount),
-          nextRoundFund: matrix.nextRoundFund,
+          filledCount: await this.getActualFilledCount(matrix.id, this.dataSource.manager),
+          claimableIncome: slotIncomeSummary.claimableIncome,
+          nextRoundFund: slotIncomeSummary.nextRoundFund,
           slots: slotDetails,
         };
       }),
@@ -1055,7 +1123,8 @@ export class MatrixService {
       throw new BadRequestException('没有进行中的矩阵');
     }
 
-    if (currentMatrix.filledCount < 6) {
+    const actualFilled = await this.syncMatrixFilledCount(currentMatrix, this.dataSource.manager);
+    if (actualFilled < 6) {
       throw new BadRequestException('当前矩阵未满员，请先完成推广任务');
     }
 
@@ -1112,6 +1181,7 @@ export class MatrixService {
           where: { matrixId: matrix.id },
           order: { slotNumber: 'ASC' },
         });
+        const slotIncomeSummary = this.summarizeMatrixSlotIncome(slots);
 
         const slotDetails = await Promise.all(
           slots.map(async (slot) => {
@@ -1144,8 +1214,8 @@ export class MatrixService {
         );
 
         // 计算本轮矩阵可领取收益和下轮资金；特殊奖励单独进入总收益记录，不并入矩阵可领取
-        const roundClaimable = Math.max(0, Number(matrix.claimableIncome) - specialRewardAmount);
-        const roundNextFund = Number(matrix.nextRoundFund);
+        const roundClaimable = slotIncomeSummary.claimableIncome;
+        const roundNextFund = slotIncomeSummary.nextRoundFund;
 
         return {
           round: matrix.round,

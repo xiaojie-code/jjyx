@@ -242,6 +242,12 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                       final isDirect = user?['isDirect'] == true;
                       final name = user?['nickname'] ?? user?['account'] ?? '未知';
                       final income = double.tryParse(slot['incomeAmount']?.toString() ?? '0') ?? 0;
+                      final incomeType = slot['incomeType']?.toString() ?? '';
+                      final incomeLabel = income <= 0
+                          ? '无收益'
+                          : (incomeType == 'next_fund' || slotNum >= 5)
+                              ? '下轮资金${_formatAmount(income)}'
+                              : '可领取${_formatAmount(income)}';
 
                       return ListTile(
                         dense: true,
@@ -269,7 +275,7 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                           ],
                         ),
                         subtitle: Text(
-                          '${isNew ? "新用户" : "老用户"} · ${income > 0 ? "收益${_formatAmount(income)}" : "无收益"}',
+                          '${isNew ? "新用户" : "老用户"} · $incomeLabel',
                           style: const TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                       );
