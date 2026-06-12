@@ -11,6 +11,8 @@ import 'dart:convert';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
+import '../../../core/utils/in_app_notification.dart';
+import '../../../core/utils/notification_service.dart';
 import '../../../core/utils/toast.dart';
 import '../../main/providers/badge_provider.dart';
 import '../../../core/storage/token_storage.dart';
@@ -18,6 +20,7 @@ import '../../auth/providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import 'group_detail_page.dart';
 import 'meeting_page.dart';
+import 'service_notification_page.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   final int conversationId;
@@ -112,6 +115,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   AudioRecorder get _recorder => _audioRecorder ??= AudioRecorder();
 
   late final SocketService _socketService;
+  InAppBannerCallback? _previousInAppBanner;
+
+  bool get _isAppInForeground =>
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
 
   @override
   void initState() {
@@ -125,8 +132,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     _loadMessages();
     _loadMyMuteState();
+    _previousInAppBanner = NotificationService.instance.onInAppBanner;
+    NotificationService.instance.onInAppBanner = _showInAppBanner;
     _socketService.addMessageListener(_onNewMessage);
     _socketService.addStatusListener(_onStatusUpdate);
+    _socketService.addServiceNotificationListener(_onServiceNotification);
     // 滚动到顶部时加载更多历史消息
     _scrollCtrl.addListener(_onScroll);
     _socketService.addUpdateListener(_onMessageUpdate);
@@ -139,8 +149,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void dispose() {
     try {
       _socketService.activeConversationId = null;
+      NotificationService.instance.onInAppBanner = _previousInAppBanner;
       _socketService.removeMessageListener(_onNewMessage);
       _socketService.removeStatusListener(_onStatusUpdate);
+      _socketService.removeServiceNotificationListener(_onServiceNotification);
       _socketService.removeUpdateListener(_onMessageUpdate);
       _socketService.removeConnectionStateListener(_onSocketStateChanged);
       _socketService.removeConnectListener(_onSocketConnected);
@@ -174,7 +186,92 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
       _scrollToBottom();
       _socketService.markAsRead(widget.conversationId, msg.id);
+    } else {
+      _notifyForExternalMessage(msg);
     }
+  }
+
+  void _showInAppBanner({
+    required int conversationId,
+    required String title,
+    required String content,
+    String? avatar,
+  }) {
+    if (!mounted) return;
+    InAppNotification.show(
+      context: context,
+      title: title,
+      content: content,
+      avatar: avatar,
+      onTap: () {
+        if (conversationId == -1) {
+          Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+            builder: (_) => const ServiceNotificationPage(),
+          ));
+          return;
+        }
+        if (conversationId == widget.conversationId) return;
+        Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+          builder: (_) => ChatPage(
+            conversationId: conversationId,
+            title: title,
+          ),
+        ));
+      },
+    );
+  }
+
+  void _notifyForExternalMessage(ChatMessage msg) {
+    final authState = ref.read(authProvider);
+    var myId = authState.user?.id ?? authState.profile?.user.id ?? 0;
+    if (myId == 0) {
+      myId = _getMyIdFromToken();
+    }
+    if (myId > 0 && msg.senderId == myId) return;
+
+    final senderName =
+        _socketService.senderNicknameCache[msg.senderId] ?? '新消息';
+    final senderAvatar = _socketService.senderAvatarCache[msg.senderId];
+    String content;
+    switch (msg.msgType) {
+      case 2:
+        content = '[语音]';
+        break;
+      case 4:
+        content = '[图片]';
+        break;
+      case 3:
+        content = '[系统消息]';
+        break;
+      default:
+        content = msg.content.length > 50
+            ? '${msg.content.substring(0, 50)}...'
+            : msg.content;
+    }
+
+    NotificationService.instance.onNewMessage(
+      conversationId: msg.conversationId,
+      senderName: senderName,
+      content: content,
+      avatar: senderAvatar,
+      isAppInForeground: _isAppInForeground,
+      dedupeKey: msg.id > 0 ? 'message:${msg.id}' : null,
+    );
+  }
+
+  void _onServiceNotification(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final title = data['title']?.toString() ?? '服务通知';
+    final content = data['content']?.toString() ?? '';
+    NotificationService.instance.onNewMessage(
+      conversationId: -1,
+      senderName: title,
+      content: content,
+      isAppInForeground: _isAppInForeground,
+      dedupeKey: data['id'] != null
+          ? 'service:${data['id']}'
+          : 'service:$title:$content',
+    );
   }
 
   void _onSocketStateChanged() {

@@ -15,6 +15,7 @@ import { GameModule } from './game/game.module';
 import { AdminModule } from './admin/admin.module';
 import { MatrixModule } from './matrix/matrix.module';
 import { NotificationModule } from './notification/notification.module';
+import { PushModule } from './push/push.module';
 
 @Module({
   imports: [
@@ -82,6 +83,8 @@ import { NotificationModule } from './notification/notification.module';
 
     // Service notification module (单向服务通知)
     NotificationModule,
+
+    PushModule,
   ],
   controllers: [AppController],
   providers: [AppService],

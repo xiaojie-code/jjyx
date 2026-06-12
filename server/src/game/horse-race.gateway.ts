@@ -16,6 +16,7 @@ import { Repository } from 'typeorm';
 import { User } from '../entities/user.entity';
 import { HorseRaceMatch } from '../entities/horse-race-match.entity';
 import { HorseRacePlayer } from '../entities/horse-race-player.entity';
+import { GameService } from './game.service';
 
 type HorseMode = 'ai' | 'pvp';
 type MatchStatus = 'confirming' | 'countdown' | 'racing' | 'finished' | 'cancelled';
@@ -36,6 +37,7 @@ interface QueueEntry {
   displayName: string;
   avatar?: string;
   horseId: number;
+  betAmount: number;
   joinedAt: number;
 }
 
@@ -47,6 +49,7 @@ interface LivePlayer {
   avatar?: string;
   horseId: number;
   horseName: string;
+  betAmount: number;
   isBot: boolean;
   confirmed: boolean;
   lane: number;
@@ -59,8 +62,11 @@ interface LiveMatch {
   id: string;
   mode: HorseMode;
   status: MatchStatus;
+  roomId?: number;
+  settlement?: unknown;
   players: LivePlayer[];
   createdAt: number;
+  starting?: boolean;
   confirmTimer?: NodeJS.Timeout;
   countdownTimer?: NodeJS.Timeout;
   raceTimer?: NodeJS.Timeout;
@@ -78,6 +84,7 @@ const HORSES: HorseInfo[] = [
 ];
 
 const BOT_NAMES = ['云骑士', '银铃', '快步星', '南风', '月影', '红鬃'];
+const BET_OPTIONS = [10, 50, 100, 300, 500, 1000];
 
 @WebSocketGateway({
   cors: { origin: '*', credentials: true },
@@ -89,6 +96,7 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
   private readonly logger = new Logger(HorseRaceGateway.name);
   private readonly queue = new Map<number, QueueEntry>();
   private readonly matches = new Map<string, LiveMatch>();
+  private readonly startingUsers = new Set<number>();
   private queueTimer?: NodeJS.Timeout;
 
   private readonly targetPlayers = 4;
@@ -104,6 +112,7 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
     private readonly matchRepo: Repository<HorseRaceMatch>,
     @InjectRepository(HorseRacePlayer)
     private readonly playerRepo: Repository<HorseRacePlayer>,
+    private readonly gameService: GameService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -116,7 +125,8 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
         throw new Error('inactive user');
       }
       client.data.user = user;
-      client.emit('horse:catalog', { horses: HORSES });
+      client.emit('horse:catalog', { horses: HORSES, betOptions: BET_OPTIONS });
+      await this.resumeActiveMatch(client, user);
       this.logger.log(`horse socket connected user=${user.id} socket=${client.id}`);
     } catch (error) {
       client.emit('horse:error', { message: '请先登录并激活账号' });
@@ -132,7 +142,7 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       if (
         player &&
         match.mode === 'pvp' &&
-        (match.status === 'confirming' || match.status === 'countdown')
+        match.status === 'confirming'
       ) {
         this.cancelMatch(match, '有玩家离开，匹配已取消');
       }
@@ -142,55 +152,81 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
   @SubscribeMessage('horse:ai:start')
   async startAiRace(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { horseId?: number },
+    @MessageBody() data: { horseId?: number; betAmount?: number },
   ) {
     const user = client.data.user as User;
-    if (this.findUserActiveMatch(user.id)) {
+    if (this.startingUsers.has(user.id) || this.findUserActiveMatch(user.id)) {
       client.emit('horse:error', { message: '当前已有进行中的赛马对局' });
       return { ok: false };
     }
-    const selected = this.getHorse(data?.horseId);
-    const bots = this.createBots(selected.id);
-    const match = await this.createMatch('ai', [
-      this.createPlayerFromUser(user, client.id, selected, 0, true),
-      ...bots,
-    ]);
-    await client.join(this.roomName(match.id));
-    client.emit('horse:match:found', this.matchPayload(match));
-    this.startCountdown(match);
-    return { ok: true, matchId: match.id };
+    this.startingUsers.add(user.id);
+    let match: LiveMatch | undefined;
+    try {
+      this.leaveQueue(user.id);
+      const selected = this.getHorse(data?.horseId);
+      const betAmount = this.normalizeBetAmount(data?.betAmount);
+      const bots = this.createBots([selected.id], 1, HORSES.length - 1);
+      match = await this.createMatch('ai', [
+        this.createPlayerFromUser(user, client.id, selected, 0, true, betAmount),
+        ...bots,
+      ]);
+      await client.join(this.roomName(match.id));
+      await this.prepareBettingRoom(match);
+      client.emit('horse:match:found', this.matchPayload(match));
+      this.startCountdown(match);
+      return { ok: true, matchId: match.id, roomId: match.roomId };
+    } catch (error) {
+      const message = this.errorMessage(error);
+      if (match) await this.cancelMatch(match, message);
+      client.emit('horse:error', { message });
+      return { ok: false };
+    } finally {
+      this.startingUsers.delete(user.id);
+    }
   }
 
   @SubscribeMessage('horse:match:join')
   async joinPvpQueue(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { horseId?: number },
+    @MessageBody() data: { horseId?: number; betAmount?: number },
   ) {
     const user = client.data.user as User;
-    if (this.findUserActiveMatch(user.id)) {
+    if (this.startingUsers.has(user.id) || this.findUserActiveMatch(user.id)) {
       client.emit('horse:error', { message: '当前已有进行中的赛马对局' });
       return { ok: false };
     }
-    const horse = this.getHorse(data?.horseId);
-    this.leaveQueue(user.id);
-    this.queue.set(user.id, {
-      userId: user.id,
-      socketId: client.id,
-      displayName: this.displayName(user),
-      avatar: user.avatar || '',
-      horseId: horse.id,
-      joinedAt: Date.now(),
-    });
-    client.emit('horse:queue:update', {
-      queued: this.queue.size,
-      target: this.targetPlayers,
-      minPlayers: this.minPlayers,
-      message: '正在匹配真人玩家',
-    });
-    this.broadcastQueueState();
-    this.tryCreatePvpMatch(false);
-    this.ensureQueueTimer();
-    return { ok: true };
+    this.startingUsers.add(user.id);
+    try {
+      const horse = this.getHorse(data?.horseId);
+      const betAmount = this.normalizeBetAmount(data?.betAmount);
+      this.leaveQueue(user.id);
+      this.queue.set(user.id, {
+        userId: user.id,
+        socketId: client.id,
+        displayName: this.displayName(user),
+        avatar: user.avatar || '',
+        horseId: horse.id,
+        betAmount,
+        joinedAt: Date.now(),
+      });
+      client.emit('horse:queue:update', {
+        queued: this.queue.size,
+        target: this.targetPlayers,
+        minPlayers: this.minPlayers,
+        message: '正在匹配真人玩家',
+      });
+      this.broadcastQueueState();
+      void this.tryCreatePvpMatch(false).catch((error) => {
+        this.logger.error(`horse pvp match failed: ${this.errorMessage(error)}`);
+      });
+      this.ensureQueueTimer();
+      return { ok: true };
+    } catch (error) {
+      client.emit('horse:error', { message: this.errorMessage(error) });
+      return { ok: false };
+    } finally {
+      this.startingUsers.delete(user.id);
+    }
   }
 
   @SubscribeMessage('horse:match:leave')
@@ -225,6 +261,9 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       client.emit('horse:error', { message: '你不在当前对局中' });
       return { ok: false };
     }
+    if (player.confirmed) {
+      return { ok: true, alreadyConfirmed: true };
+    }
     player.confirmed = true;
     if (player.recordId) {
       await this.playerRepo.update(player.recordId, { confirmed: true });
@@ -234,8 +273,18 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       players: match.players.map((p) => this.publicPlayer(p)),
     });
     if (match.players.every((p) => p.confirmed)) {
-      if (match.confirmTimer) clearTimeout(match.confirmTimer);
-      this.startCountdown(match);
+      if (match.starting) return { ok: true };
+      match.starting = true;
+      if (match.confirmTimer) {
+        clearTimeout(match.confirmTimer);
+        match.confirmTimer = undefined;
+      }
+      try {
+        await this.prepareBettingRoom(match);
+        this.startCountdown(match);
+      } catch (error) {
+        await this.cancelMatch(match, this.errorMessage(error));
+      }
     }
     return { ok: true };
   }
@@ -254,12 +303,38 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
     return HORSES.find((horse) => horse.id === id) ?? HORSES[0];
   }
 
+  private async resumeActiveMatch(client: Socket, user: User) {
+    const match = this.findUserActiveMatch(user.id);
+    if (!match) return;
+    const player = match.players.find((p) => p.userId === user.id);
+    if (!player) return;
+
+    player.socketId = client.id;
+    await client.join(this.roomName(match.id));
+    client.emit('horse:match:resume', {
+      ...this.matchPayload(match),
+      raceStartedAt: match.raceStartedAt,
+      raceDurationMs: match.raceDurationMs,
+      positions:
+        match.status === 'racing'
+          ? match.players.map((p) => ({
+              userId: p.userId,
+              displayName: p.displayName,
+              lane: p.lane,
+              horseId: p.horseId,
+              position: this.positionFor(p, Date.now() - (match.raceStartedAt ?? Date.now())),
+            }))
+          : [],
+    });
+  }
+
   private createPlayerFromUser(
     user: User,
     socketId: string,
     horse: HorseInfo,
     lane: number,
     confirmed = false,
+    betAmount = 0,
   ): LivePlayer {
     return {
       userId: user.id,
@@ -268,21 +343,24 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       avatar: user.avatar || '',
       horseId: horse.id,
       horseName: horse.name,
+      betAmount,
       isBot: false,
       confirmed,
       lane,
     };
   }
 
-  private createBots(selectedHorseId: number): LivePlayer[] {
-    const pool = HORSES.filter((horse) => horse.id !== selectedHorseId);
-    return pool.slice(0, 5).map((horse, index) => ({
+  private createBots(excludedHorseIds: number[], startLane: number, maxCount: number): LivePlayer[] {
+    const excluded = new Set(excludedHorseIds.map(Number).filter(Boolean));
+    const pool = HORSES.filter((horse) => !excluded.has(horse.id));
+    return pool.slice(0, maxCount).map((horse, index) => ({
       displayName: BOT_NAMES[index] ?? `AI-${index + 1}`,
       horseId: horse.id,
       horseName: horse.name,
+      betAmount: 0,
       isBot: true,
       confirmed: true,
-      lane: index + 1,
+      lane: startLane + index,
     }));
   }
 
@@ -328,7 +406,9 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
     if (this.queueTimer) return;
     this.queueTimer = setTimeout(() => {
       this.queueTimer = undefined;
-      this.tryCreatePvpMatch(true);
+      void this.tryCreatePvpMatch(true).catch((error) => {
+        this.logger.error(`horse queue timer failed: ${this.errorMessage(error)}`);
+      });
       if (this.queue.size > 0) this.ensureQueueTimer();
     }, this.queueWaitMs);
   }
@@ -350,13 +430,19 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
         avatar: entry.avatar,
         horseId: horse.id,
         horseName: horse.name,
+        betAmount: entry.betAmount,
         isBot: false,
         confirmed: false,
         lane: index,
       };
     });
+    const bots = this.createBots(
+      players.map((player) => player.horseId),
+      players.length,
+      Math.max(0, HORSES.length - players.length),
+    );
 
-    const match = await this.createMatch('pvp', players);
+    const match = await this.createMatch('pvp', [...players, ...bots]);
     for (const player of match.players) {
       if (player.socketId) this.server.in(player.socketId).socketsJoin(this.roomName(match.id));
     }
@@ -406,7 +492,44 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
     return match;
   }
 
+  private normalizeBetAmount(value: unknown): number {
+    const amount = Math.floor(Number(value) || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('投入积分不正确');
+    }
+    if (!BET_OPTIONS.includes(amount)) {
+      throw new Error(`投入积分只能选择：${BET_OPTIONS.join('、')}`);
+    }
+    return amount;
+  }
+
+  private errorMessage(error: unknown): string {
+    if (error && typeof error === 'object' && 'message' in error) {
+      const message = String((error as { message?: unknown }).message || '').trim();
+      if (message) return message;
+    }
+    const fallback = String(error || '').trim();
+    return fallback || '赛马服务异常，请稍后再试';
+  }
+
+  private async prepareBettingRoom(match: LiveMatch) {
+    if (match.roomId) return;
+
+    const realBets = match.players.filter((player) => !player.isBot && player.userId && player.betAmount > 0);
+    if (realBets.length === 0) return;
+
+    const room = await this.gameService.createHorseRoomWithBets(
+      realBets.map((player) => ({
+        userId: Number(player.userId),
+        horseNumber: player.horseId,
+        amount: player.betAmount,
+      })),
+    );
+    match.roomId = Number(room.roomId);
+  }
+
   private async startCountdown(match: LiveMatch) {
+    if (match.status === 'countdown' || match.status === 'racing' || match.status === 'finished') return;
     match.status = 'countdown';
     await this.matchRepo.update(match.id, { status: 'countdown' });
     const room = this.roomName(match.id);
@@ -425,6 +548,7 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   private async startRace(match: LiveMatch) {
+    if (match.status === 'racing' || match.status === 'finished' || match.raceTimer) return;
     match.status = 'racing';
     match.raceStartedAt = Date.now();
     this.calculateFinishTimes(match);
@@ -458,7 +582,10 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       });
       if (elapsedMs >= (match.raceDurationMs ?? 0)) {
         if (match.raceTimer) clearInterval(match.raceTimer);
-        this.finishRace(match);
+        match.raceTimer = undefined;
+        void this.finishRace(match).catch((error) => {
+          this.logger.error(`horse finish failed match=${match.id}: ${this.errorMessage(error)}`);
+        });
       }
     }, 250);
   }
@@ -491,16 +618,30 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   private async finishRace(match: LiveMatch) {
+    if (match.status === 'finished') return;
     match.status = 'finished';
     const standings = [...match.players]
       .sort((a, b) => (a.placement ?? 99) - (b.placement ?? 99))
       .map((player) => this.publicPlayer(player));
     const winners = standings.filter((player) => player.isWinner);
+    const winnerHorse = Number(winners[0]?.horseId || 0);
+
+    if (match.roomId && winnerHorse > 0) {
+      try {
+        match.settlement = await this.gameService.horseSettle(match.roomId, winnerHorse);
+      } catch (error) {
+        match.settlement = { error: this.errorMessage(error) };
+      }
+    }
 
     await this.matchRepo.update(match.id, {
       status: 'finished',
       endedAt: new Date(),
-      standingsJson: JSON.stringify(standings),
+      standingsJson: JSON.stringify({
+        roomId: match.roomId,
+        settlement: match.settlement,
+        standings,
+      }),
       winnersJson: JSON.stringify(winners),
     });
     await Promise.all(
@@ -517,6 +658,8 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     this.server.to(this.roomName(match.id)).emit('horse:race:finish', {
       matchId: match.id,
+      roomId: match.roomId,
+      settlement: match.settlement,
       winners,
       standings,
     });
@@ -524,6 +667,7 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   private async cancelMatch(match: LiveMatch, reason: string) {
+    if (match.status === 'finished' || match.status === 'cancelled') return;
     match.status = 'cancelled';
     if (match.confirmTimer) clearTimeout(match.confirmTimer);
     if (match.countdownTimer) clearInterval(match.countdownTimer);
@@ -541,8 +685,11 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       matchId: match.id,
       mode: match.mode,
       status: match.status,
+      roomId: match.roomId,
+      settlement: match.settlement,
       confirmWaitMs: this.confirmWaitMs,
       countdownSeconds: this.countdownSeconds,
+      betOptions: BET_OPTIONS,
       players: match.players.map((player) => this.publicPlayer(player)),
       horses: HORSES,
     };
@@ -558,6 +705,7 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       horseName: player.horseName,
       horseColor: horse.color,
       horseTrait: horse.trait,
+      betAmount: player.betAmount,
       isBot: player.isBot,
       confirmed: player.confirmed,
       lane: player.lane,

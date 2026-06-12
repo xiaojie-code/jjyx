@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { Matrix } from '../entities/matrix.entity';
 import { MatrixSlot } from '../entities/matrix-slot.entity';
 import { MatrixIncome } from '../entities/matrix-income.entity';
@@ -13,6 +13,22 @@ const SLOT_INCOME_RATE = 0.35;
 /** 指定账号深层推广树激活奖励 */
 const SPECIAL_TREE_REWARD_ACCOUNTS = ['333333', '666666'];
 const SPECIAL_TREE_REWARD_AMOUNT = 200;
+
+type ReferralBrief = {
+  id: number;
+  account: string;
+  nickname: string | null;
+};
+
+type ReferralTreeNode = ReferralBrief & {
+  avatar?: string | null;
+  registerTime?: Date | null;
+  isActivated?: boolean;
+  invitedBy?: number | null;
+  level: number;
+  inviter: ReferralBrief | null;
+  directRoot: ReferralBrief | null;
+};
 
 @Injectable()
 export class MatrixService {
@@ -154,6 +170,10 @@ export class MatrixService {
 
     // 直推人数
     const directCount = await this.userRepo.count({ where: { invitedBy: userId } });
+    const validDirectCount = await this.userRepo.count({
+      where: { invitedBy: userId, isActivated: true },
+    });
+    const validTeamUsers = await this.getValidTeamUsers(userId);
 
     // 矩阵统计
     const currentMatrix = await this.matrixRepo.findOne({ where: { ownerId: userId, status: 1 } });
@@ -167,6 +187,10 @@ export class MatrixService {
       nickname: user.nickname,
       inviter,
       directCount,
+      validDirectCount,
+      effectiveDirectCount: validDirectCount,
+      validTeamCount: validTeamUsers.length,
+      effectiveTeamCount: validTeamUsers.length,
       currentRound: currentMatrix?.round || 1,
       currentFilled: currentMatrix?.filledCount || 0,
       completedMatrices: completedCount,
@@ -1022,6 +1046,123 @@ export class MatrixService {
   /**
    * 获取直推用户列表
    */
+  private async findReferralChildren(inviterIds: number[]): Promise<User[]> {
+    const uniqueIds = [...new Set(inviterIds.map(Number).filter(Boolean))];
+    const children: User[] = [];
+    const chunkSize = 200;
+
+    for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+      const chunk = uniqueIds.slice(index, index + chunkSize);
+      children.push(
+        ...(await this.userRepo.find({
+          where: { invitedBy: In(chunk) },
+          select: ['id', 'account', 'nickname', 'avatar', 'registerTime', 'isActivated', 'invitedBy'],
+          order: { registerTime: 'DESC' },
+        })),
+      );
+    }
+
+    return children;
+  }
+
+  private toReferralBrief(user: Pick<User, 'id' | 'account' | 'nickname'>): ReferralBrief {
+    return {
+      id: user.id,
+      account: user.account,
+      nickname: user.nickname || null,
+    };
+  }
+
+  private async getValidTeamUsers(userId: number): Promise<ReferralTreeNode[]> {
+    const root = await this.userRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'account', 'nickname'],
+    });
+    if (!root) return [];
+
+    const knownNodes = new Map<number, ReferralTreeNode>();
+    knownNodes.set(root.id, {
+      ...this.toReferralBrief(root),
+      level: 0,
+      inviter: null,
+      directRoot: null,
+    });
+
+    const visited = new Set<number>([userId]);
+    const validTeamUsers: ReferralTreeNode[] = [];
+    let frontier = [userId];
+
+    for (let level = 1; frontier.length > 0 && level <= 1000; level += 1) {
+      const children = await this.findReferralChildren(frontier);
+      const nextFrontier: number[] = [];
+
+      for (const child of children) {
+        if (visited.has(child.id)) continue;
+        visited.add(child.id);
+        nextFrontier.push(child.id);
+
+        const inviter = child.invitedBy ? knownNodes.get(Number(child.invitedBy)) ?? null : null;
+        const directRoot = level === 1
+          ? this.toReferralBrief(child)
+          : inviter?.directRoot ?? (inviter ? this.toReferralBrief(inviter) : null);
+        const node: ReferralTreeNode = {
+          ...this.toReferralBrief(child),
+          avatar: child.avatar || null,
+          registerTime: child.registerTime || null,
+          isActivated: child.isActivated,
+          invitedBy: child.invitedBy || null,
+          level,
+          inviter: inviter ? this.toReferralBrief(inviter) : null,
+          directRoot,
+        };
+        knownNodes.set(child.id, node);
+
+        const isActivated = child.isActivated === true || Number(child.isActivated) === 1;
+        if (level >= 2 && isActivated) {
+          validTeamUsers.push(node);
+        }
+      }
+
+      frontier = nextFrontier;
+    }
+
+    return validTeamUsers.sort((first, second) => {
+      if (first.level !== second.level) return first.level - second.level;
+      const firstTime = first.registerTime?.getTime?.() ?? 0;
+      const secondTime = second.registerTime?.getTime?.() ?? 0;
+      if (firstTime !== secondTime) return secondTime - firstTime;
+      return second.id - first.id;
+    });
+  }
+
+  async getTeamUsers(userId: number) {
+    const users = await this.getValidTeamUsers(userId);
+
+    return Promise.all(
+      users.map(async (user) => {
+        const completedCount = await this.matrixRepo.count({
+          where: { ownerId: user.id, status: 2 },
+        });
+        const currentMatrix = await this.matrixRepo.findOne({
+          where: { ownerId: user.id, status: 1 },
+        });
+        return {
+          id: user.id,
+          account: user.account,
+          nickname: user.nickname,
+          avatar: user.avatar,
+          registerTime: user.registerTime,
+          isActivated: true,
+          level: user.level,
+          inviter: user.inviter,
+          directRoot: user.directRoot,
+          completedRounds: completedCount,
+          currentFilled: currentMatrix?.filledCount || 0,
+        };
+      }),
+    );
+  }
+
   async getDirectUsers(userId: number) {
     const users = await this.userRepo.find({
       where: { invitedBy: userId },

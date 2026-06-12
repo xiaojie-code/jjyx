@@ -11,6 +11,7 @@ export { Conversation } from './conversation.entity';
 export { ConversationMember } from './conversation-member.entity';
 export { Message } from './message.entity';
 export { OfflineMessage } from './offline-message.entity';
+export { PushDevice } from './push-device.entity';
 export { Meeting } from './meeting.entity';
 export { MeetingParticipant } from './meeting-participant.entity';
 export { MeetingBan } from './meeting-ban.entity';
@@ -19,10 +20,16 @@ export { ServiceNotification } from './service-notification.entity';
 // Game entities
 export { Game } from './game.entity';
 export { GameRecord } from './game-record.entity';
+export { GameTurnoverRecord } from './game-turnover-record.entity';
+export { DirectGameRewardRecord } from './direct-game-reward-record.entity';
+export { FishingSave } from './fishing-save.entity';
+export { SnakeSave } from './snake-save.entity';
 export { HorseRoom } from './horse-room.entity';
 export { HorseBet } from './horse-bet.entity';
 export { HorseRaceMatch } from './horse-race-match.entity';
 export { HorseRacePlayer } from './horse-race-player.entity';
+export { LotteryAccount } from './lottery-account.entity';
+export { LotteryDrawRecord } from './lottery-draw-record.entity';
 
 // Economy entities
 export { Withdrawal } from './withdrawal.entity';

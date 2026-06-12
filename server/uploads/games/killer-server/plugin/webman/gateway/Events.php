@@ -12,11 +12,9 @@ class Events
 {
     public static function onWorkerStart($worker)
     {
-        if ($worker->id === 0) {
-            Timer::add(1, function () {
-                Taosha::timer();
-            });
-        }
+        Timer::add(1, function () {
+            Taosha::timer();
+        });
     }
 
     public static function onConnect($client_id)
@@ -70,6 +68,15 @@ class Events
                 }
                 Gateway::sendToClient($client_id, Common::returndata('returnlogin', $res));
                 break;
+            case 'app_login':
+                $res = User::appLogin($payload);
+                if (($res['code'] ?? 0) == 1) {
+                    $uid = $res['info']['userinfo']['id'];
+                    Redis::set('binduid_' . $client_id, $uid);
+                    Gateway::bindUid($client_id, $uid);
+                }
+                Gateway::sendToClient($client_id, Common::returndata('returnlogin', $res));
+                break;
             case 'getchargerules':
                 $res = User::getchargerules($client_id, $payload);
                 Gateway::sendToClient($client_id, Common::returndata('chargerules', $res));
@@ -92,6 +99,12 @@ class Events
                     Redis::set('binduid_' . $client_id, $payload['uid']);
                 }
                 Gateway::sendToClient($client_id, Common::returndata('returnenterroom', $res));
+                Taosha::syncRoundStateAfterEnter($client_id, $res);
+                break;
+            case 'start_round':
+                $res = Taosha::startRound($client_id, $payload);
+                Gateway::sendToClient($client_id, Common::returndata('returnstart_round', $res));
+                Taosha::pushRoundStartIfReady($res);
                 break;
             case 'leaveroom':
                 $res = Taosha::leaveroom($client_id, $payload);
@@ -100,6 +113,7 @@ class Events
             case 'touzhu':
                 $res = Taosha::touzhu($client_id, $payload);
                 Gateway::sendToClient($client_id, Common::returndata('returntouzhu', $res));
+                Taosha::syncClientAfterBet($client_id, $payload, $res);
                 break;
             case 'changesmallroom':
                 $res = Taosha::changesmallroom($client_id, $payload);
@@ -133,7 +147,7 @@ class Events
             $payload = [];
         }
 
-        $modeActions = ['enterroom', 'leaveroom', 'touzhu', 'changesmallroom', 'getrecord'];
+        $modeActions = ['enterroom', 'start_round', 'leaveroom', 'touzhu', 'changesmallroom', 'getrecord'];
         if (!in_array($action, $modeActions, true)) {
             return $payload;
         }

@@ -35,6 +35,11 @@ class ApiEndpoints {
   static const String serviceNotificationsUnread = '/api/notifications/unread-count';
   static const String serviceNotificationsReadAll = '/api/notifications/read-all';
 
+  // ==================== Vendor push ====================
+  static const String pushDevice = '/api/push/device';
+  static const String pushStatus = '/api/push/status';
+  static const String pushTest = '/api/push/test';
+
   // ==================== 充值 ====================
   static const String rechargeInfo = '/api/recharge/info';
   static const String rechargeSubmit = '/api/recharge/submit';
@@ -43,7 +48,9 @@ class ApiEndpoints {
   // ==================== 游戏服务 ====================
   static const String gameList = '/api/game/list';
   static const String lotteryConfig = '/api/game/lottery/config';
+  static const String lotteryStatus = '/api/game/lottery/status';
   static const String lotterySpin = '/api/game/lottery/spin';
+  static const String lotteryRecords = '/api/game/lottery/records';
   static const String horseRoomCreate = '/api/game/horse/room/create';
   static const String horseRoomJoin = '/api/game/horse/room/join';
   static const String horseBet = '/api/game/horse/bet';
@@ -57,6 +64,7 @@ class ApiEndpoints {
   static String gameDetail(int id) => '/api/game/$id';
   static String gameStart(int id) => '/api/game/$id/start';
   static String gameSettle(int id) => '/api/game/$id/settle';
+  static String gamePointsChange(int id) => '/api/game/$id/points/change';
   static String contactRequestHandle(int id) =>
       '/api/social/contacts/request/$id';
   static String contactRemark(int id) => '/api/social/contacts/$id/remark';

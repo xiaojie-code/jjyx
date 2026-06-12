@@ -61,4 +61,6 @@ flutter:
   assets:
     - video/
     - assets/
+    - assets/app-icon/
+    - assets/game-icons/
     - assets/shangcheng/

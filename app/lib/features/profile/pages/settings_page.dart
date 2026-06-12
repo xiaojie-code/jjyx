@@ -28,9 +28,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Future<void> _loadSettings() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-            ApiEndpoints.userSettings,
-          );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+                ApiEndpoints.userSettings,
+              );
       setState(() {
         _notificationEnabled = result?['notificationEnabled'] as bool? ?? true;
         _notificationSound = result?['notificationSound'] as bool? ?? true;
@@ -43,14 +44,56 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         sound: _notificationSound,
         popup: _notificationPopup,
       );
+      if (_notificationEnabled || _notificationPopup) {
+        await _ensureSystemNotificationPermission(openSettingsOnDenied: false);
+      }
     } catch (_) {
       setState(() => _loading = false);
+    }
+  }
+
+  Future<bool> _ensureSystemNotificationPermission({
+    bool openSettingsOnDenied = true,
+  }) async {
+    final granted = await NotificationService.instance.requestPermission();
+    if (!mounted) return granted;
+    if (!granted) {
+      Toast.error(context, '系统通知权限未开启，请允许通知后才能收到新消息提醒');
+      if (openSettingsOnDenied) {
+        await NotificationService.instance.openNotificationSettings();
+      }
+    }
+    return granted;
+  }
+
+  Future<void> _openNewMessageNotificationSettings() async {
+    await NotificationService.instance.requestPermission();
+    await NotificationService.instance.openNewMessageNotificationSettings();
+  }
+
+  Future<void> _openFullScreenNotificationSettings() async {
+    await NotificationService.instance.openFullScreenNotificationSettings();
+  }
+
+  Future<void> _sendTestNotification() async {
+    await NotificationService.instance.requestPermission();
+    NotificationService.instance.updateSettings(
+      master: true,
+      sound: true,
+      popup: true,
+    );
+    await NotificationService.instance.showTestNotification();
+    if (mounted) {
+      Toast.info(context, '已发送测试通知，请查看是否有弹窗和提示音');
     }
   }
 
   Future<void> _toggleNotification(bool value) async {
     setState(() => _notificationEnabled = value);
     NotificationService.instance.updateSettings(master: value);
+    if (value) {
+      await _ensureSystemNotificationPermission();
+    }
     try {
       await ref.read(apiClientProvider).put(
         ApiEndpoints.userSettings,
@@ -81,6 +124,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _togglePopup(bool value) async {
     setState(() => _notificationPopup = value);
     NotificationService.instance.updateSettings(popup: value);
+    if (value) {
+      await _ensureSystemNotificationPermission();
+    }
     try {
       await ref.read(apiClientProvider).put(
         ApiEndpoints.userSettings,
@@ -105,36 +151,38 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
             title: const Text('修改密码'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: oldCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: '原密码',
-                    border: OutlineInputBorder(),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: oldCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: '原密码',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: newCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: '新密码',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: newCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: '新密码',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: confirmCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: '确认新密码',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: confirmCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: '确认新密码',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -170,13 +218,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               'newPassword': newPassword,
                             },
                           );
-                          if (!mounted) return;
+                          if (!context.mounted || !dialogContext.mounted) {
+                            return;
+                          }
                           Navigator.pop(dialogContext);
                           Toast.success(context, '密码修改成功');
                         } catch (e) {
-                          if (mounted) Toast.error(context, '$e');
+                          if (context.mounted) Toast.error(context, '$e');
                         } finally {
-                          if (context.mounted) {
+                          if (dialogContext.mounted) {
                             setDialogState(() => submitting = false);
                           }
                         }
@@ -209,7 +259,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               children: [
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-                  child: Text('新消息通知', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  child: Text('新消息通知',
+                      style: TextStyle(fontSize: 13, color: Colors.grey)),
                 ),
                 SwitchListTile(
                   title: const Text('消息提醒'),
@@ -225,14 +276,36 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ),
                 SwitchListTile(
                   title: const Text('弹窗提醒'),
-                  subtitle: const Text('应用在后台时显示通知弹窗'),
+                  subtitle: const Text('应用内显示横幅，后台显示系统通知'),
                   value: _notificationPopup,
                   onChanged: _notificationEnabled ? _togglePopup : null,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.notifications_active_outlined),
+                  title: const Text('系统通知设置'),
+                  subtitle: const Text('开启悬浮通知、声音、振动、锁屏通知'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openNewMessageNotificationSettings,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.open_in_full),
+                  title: const Text('强提醒弹窗设置'),
+                  subtitle: const Text('允许后台消息使用强提醒弹窗'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openFullScreenNotificationSettings,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.notifications_paused_outlined),
+                  title: const Text('发送测试通知'),
+                  subtitle: const Text('测试后台通知弹窗和通知音'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _sendTestNotification,
                 ),
                 const Divider(height: 1),
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-                  child: Text('账号安全', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  child: Text('账号安全',
+                      style: TextStyle(fontSize: 13, color: Colors.grey)),
                 ),
                 ListTile(
                   leading: const Icon(Icons.lock_reset),

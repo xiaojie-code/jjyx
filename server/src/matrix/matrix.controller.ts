@@ -24,6 +24,12 @@ export class MatrixController {
     return this.matrixService.getDirectUsers(userId);
   }
 
+  /** 获取有效团推用户列表 */
+  @Get('team-users')
+  async getTeamUsers(@CurrentUser('id') userId: number) {
+    return this.matrixService.getTeamUsers(userId);
+  }
+
   /** 获取已完成矩阵历史（含坑位详情和直推标注） */
   @Get('completed-rounds')
   async getCompletedRounds(@CurrentUser('id') userId: number) {

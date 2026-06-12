@@ -52,6 +52,10 @@
           <el-icon><Promotion /></el-icon>
           <span>推广管理</span>
         </el-menu-item>
+        <el-menu-item index="/reward-backfill">
+          <el-icon><Coin /></el-icon>
+          <span>奖励补账</span>
+        </el-menu-item>
         <el-menu-item index="/social">
           <el-icon><ChatDotRound /></el-icon>
           <span>社交管理</span>
@@ -120,6 +124,7 @@ const menuItems = [
   { path: '/withdrawals', title: '提现管理' },
   { path: '/agents', title: '分销管理' },
   { path: '/matrix', title: '推广管理' },
+  { path: '/reward-backfill', title: '奖励补账' },
   { path: '/social', title: '社交管理' },
   { path: '/invite-records', title: '邀请关系' },
   { path: '/configs', title: '系统配置' },

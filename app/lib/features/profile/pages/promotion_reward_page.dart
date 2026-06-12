@@ -103,6 +103,25 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
     } catch (_) {}
   }
 
+  int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  bool _asBool(dynamic value) {
+    return value == true || value == 1 || value?.toString() == '1';
+  }
+
+  String _displayUserName(Map<String, dynamic>? user) {
+    if (user == null) return '未知';
+    final nickname = user['nickname']?.toString() ?? '';
+    if (nickname.isNotEmpty) return nickname;
+    final account = user['account']?.toString() ?? '';
+    if (account.isNotEmpty) return account;
+    return '用户${user['id'] ?? ''}';
+  }
+
   Future<void> _showDirectUsers() async {
     showDialog(
       context: context,
@@ -124,8 +143,11 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                   .map((item) => Map<String, dynamic>.from(item))
                   .toList();
               final activeCount = directUsers
-                  .where((user) => user['isActivated'] == true)
+                  .where((user) => _asBool(user['isActivated']))
                   .length;
+              final validTeamCount = _asInt(
+                _inviteInfo?['validTeamCount'] ?? _inviteInfo?['effectiveTeamCount'],
+              );
 
               return Column(
                 mainAxisSize: MainAxisSize.min,
@@ -140,8 +162,20 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        _miniStat('总直推', '${directUsers.length}人'),
-                        _miniStat('有效直推', '$activeCount人'),
+                        Expanded(child: _miniStat('总直推', '${directUsers.length}人')),
+                        Expanded(child: _miniStat('有效直推', '$activeCount人')),
+                        Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                _showTeamUsers();
+                              });
+                            },
+                            child: _miniStat('有效团推', '$validTeamCount人'),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -156,7 +190,7 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                         final account = user['account'] ?? '';
                         final completedRounds = user['completedRounds'] ?? 0;
                         final currentFilled = user['currentFilled'] ?? 0;
-                        final isActivated = user['isActivated'] == true;
+                        final isActivated = _asBool(user['isActivated']);
                         return ListTile(
                           dense: true,
                           leading: CircleAvatar(
@@ -180,8 +214,97 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
                               ),
                             ],
                           ),
-                          subtitle: Text('账号：$account · 完成${completedRounds}轮 · 当前${currentFilled}/6',
+                          subtitle: Text('账号：$account · 完成$completedRounds轮 · 当前$currentFilled/6',
                               style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭'))],
+      ),
+    );
+  }
+
+  Future<void> _showTeamUsers() async {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('有效团推用户'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: FutureBuilder<List<dynamic>?>(
+            future: ref.read(apiClientProvider).get<List<dynamic>>('/api/matrix/team-users'),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
+              }
+              final users = (snapshot.data ?? [])
+                  .map((item) => Map<String, dynamic>.from(item))
+                  .toList();
+              if (users.isEmpty) {
+                return const Text('暂无有效团推用户');
+              }
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: _miniStat('有效团推', '${users.length}人'),
+                  ),
+                  const SizedBox(height: 10),
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: users.length,
+                      itemBuilder: (context, index) {
+                        final user = users[index];
+                        final name = user['nickname'] ?? user['account'] ?? '用户${user['id']}';
+                        final account = user['account']?.toString() ?? '';
+                        final level = _asInt(user['level']);
+                        final completedRounds = user['completedRounds'] ?? 0;
+                        final currentFilled = user['currentFilled'] ?? 0;
+                        final inviter = user['inviter'] is Map
+                            ? Map<String, dynamic>.from(user['inviter'] as Map)
+                            : null;
+                        final directRoot = user['directRoot'] is Map
+                            ? Map<String, dynamic>.from(user['directRoot'] as Map)
+                            : null;
+                        return ListTile(
+                          dense: true,
+                          leading: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: Colors.green.shade100,
+                            child: Text('${index + 1}', style: const TextStyle(fontSize: 12, color: Colors.green)),
+                          ),
+                          title: Row(
+                            children: [
+                              Expanded(child: Text(name, style: const TextStyle(fontSize: 14))),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade50,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text('已激活', style: TextStyle(fontSize: 10, color: Colors.green)),
+                              ),
+                            ],
+                          ),
+                          subtitle: Text(
+                            '账号：$account · 第$level层 · 完成$completedRounds轮 · 当前$currentFilled/6\n'
+                            '来源直推：${_displayUserName(directRoot)} · 直接上级：${_displayUserName(inviter)}',
+                            style: const TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
                         );
                       },
                     ),
@@ -565,6 +688,9 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
   Widget _buildInviteCodeCard() {
     final code = _inviteInfo?['inviteCode'] ?? '---';
     final directCount = _inviteInfo?['directCount'] ?? 0;
+    final validTeamCount = _asInt(
+      _inviteInfo?['validTeamCount'] ?? _inviteInfo?['effectiveTeamCount'],
+    );
     final completedMatrices = _inviteInfo?['completedMatrices'] ?? 0;
     final totalEarned = (_inviteInfo?['totalEarned'] as num?)?.toDouble() ?? 0;
     final inviter = _inviteInfo?['inviter'] as Map<String, dynamic>?;
@@ -642,11 +768,15 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
             children: [
               Expanded(child: GestureDetector(
                 onTap: () => _showDirectUsers(),
-                child: _statItem('直推人数', '${directCount}人'),
+                child: _statItem('直推人数', '$directCount人'),
+              )),
+              Expanded(child: GestureDetector(
+                onTap: () => _showTeamUsers(),
+                child: _statItem('有效团推', '$validTeamCount人'),
               )),
               Expanded(child: GestureDetector(
                 onTap: () => _showCompletedRounds(),
-                child: _statItem('完成矩阵', '${completedMatrices}轮'),
+                child: _statItem('完成矩阵', '$completedMatrices轮'),
               )),
               Expanded(child: GestureDetector(
                 onTap: () => _showIncomeDetail(),

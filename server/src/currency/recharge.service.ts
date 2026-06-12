@@ -10,6 +10,7 @@ import { RechargeOrder } from '../entities/recharge-order.entity';
 import { User } from '../entities/user.entity';
 import { SystemConfig } from '../entities/system-config.entity';
 import { ServiceNotificationService } from '../notification/service-notification.service';
+import { SmsService } from './sms.service';
 
 @Injectable()
 export class RechargeService implements OnModuleInit {
@@ -21,6 +22,7 @@ export class RechargeService implements OnModuleInit {
     @InjectRepository(SystemConfig)
     private readonly configRepo: Repository<SystemConfig>,
     private readonly serviceNotificationService: ServiceNotificationService,
+    private readonly smsService: SmsService,
   ) {}
 
   async onModuleInit() {
@@ -245,6 +247,48 @@ export class RechargeService implements OnModuleInit {
     });
 
     return { message: data.action === 'approve' ? '已标记为已发码' : '已驳回' };
+  }
+
+  /** 管理端：发送激活码短信，发送成功后标记为已发码 */
+  async adminSendActivationCode(
+    id: number,
+    operatorId: number,
+    data: { code?: string },
+  ) {
+    const order = await this.orderRepo.findOne({ where: { id: Number(id) } });
+    if (!order) throw new NotFoundException('充值订单不存在');
+    if (order.status !== 0) throw new BadRequestException('该订单已处理');
+
+    const code = String(data.code || '').trim();
+    const realName = String(order.realName || '').trim();
+    const phone = String(order.phone || '').trim();
+
+    if (!realName) throw new BadRequestException('付款人姓名为空，不能发送短信');
+    if (!phone) throw new BadRequestException('手机号为空，不能发送短信');
+    if (!code) throw new BadRequestException('请填写激活码');
+
+    await this.smsService.sendActivationCode({
+      mobile: phone,
+      code,
+      realName,
+    });
+
+    await this.orderRepo.update(id, {
+      status: 1,
+      adminRemark: `激活码：${code}`,
+      operatorId: Number(operatorId) || null,
+      handledAt: new Date(),
+    });
+
+    await this.serviceNotificationService.notifyUser({
+      recipientId: order.userId,
+      type: 'recharge_result',
+      title: '充值已处理',
+      content: `你的充值申请已核实，激活码已通过短信发送至 ${phone}，请注意查收。`,
+      payload: { orderId: order.id, status: 1 },
+    });
+
+    return { message: '激活码短信已发送', phone };
   }
 
   /** 管理端：统计 */

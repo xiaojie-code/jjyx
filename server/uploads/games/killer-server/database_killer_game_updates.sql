@@ -13,3 +13,16 @@ ALTER TABLE `wa_touzhu`
 -- ALTER TABLE `wa_touzhu` ADD COLUMN `resultid` int(11) DEFAULT NULL;
 -- ALTER TABLE `wa_touzhu` ADD COLUMN `resultname` varchar(64) DEFAULT NULL;
 -- ALTER TABLE `wa_touzhu` ADD COLUMN `ifyouxiao` tinyint(1) NOT NULL DEFAULT 1;
+
+-- Bet lookup index. Older MySQL versions should check whether the index exists before executing.
+ALTER TABLE `wa_touzhu`
+  ADD INDEX `idx_killer_active_bet_lookup` (`expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`);
+
+-- Optional duplicate protection. Execute only after confirming no duplicate active bets exist.
+-- SELECT `expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`, COUNT(*) AS c
+-- FROM `wa_touzhu`
+-- WHERE `ifyouxiao` = 1 AND `status` = 0
+-- GROUP BY `expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`
+-- HAVING c > 1;
+-- ALTER TABLE `wa_touzhu`
+--   ADD UNIQUE KEY `uniq_killer_active_bet` (`expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`);

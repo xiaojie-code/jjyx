@@ -21,13 +21,13 @@ export class CurrencyLog {
   @Column({ type: 'varchar', length: 20, name: 'currency_type', comment: 'points/gold/silver/special/reward' })
   currencyType: string;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, comment: '变动数量（正为收入，负为支出）' })
+  @Column({ type: 'decimal', precision: 18, scale: 6, comment: '变动数量（正为收入，负为支出）' })
   amount: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, name: 'before_balance' })
+  @Column({ type: 'decimal', precision: 18, scale: 6, name: 'before_balance' })
   beforeBalance: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, name: 'after_balance' })
+  @Column({ type: 'decimal', precision: 18, scale: 6, name: 'after_balance' })
   afterBalance: number;
 
   @Column({ type: 'varchar', length: 50, name: 'log_type', comment: 'game_earn/game_spend/admin_add/withdraw等' })

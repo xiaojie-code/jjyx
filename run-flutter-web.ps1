@@ -29,4 +29,4 @@ Write-Host "WS_BASE_URL: $($Endpoint.WsBaseUrl)"
 Write-Host "Flutter web: http://$($Endpoint.ApiHost):$WebPort"
 
 Set-Location $AppRoot
-& $Flutter --no-version-check run -d web-server --web-hostname=$WebHostname --web-port=$WebPort --dart-define=API_BASE_URL=$($Endpoint.ApiBaseUrl) --dart-define=WS_BASE_URL=$($Endpoint.WsBaseUrl)
+& $Flutter --no-version-check run -d web-server --web-renderer=html --web-hostname=$WebHostname --web-port=$WebPort --dart-define=API_BASE_URL=$($Endpoint.ApiBaseUrl) --dart-define=WS_BASE_URL=$($Endpoint.WsBaseUrl)

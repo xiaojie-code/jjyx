@@ -1,17 +1,18 @@
 import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
   ConnectedSocket,
   MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
 import { Logger, OnModuleInit } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
-import { ChatService } from './chat.service';
+import { Server, Socket } from 'socket.io';
 import { ServiceNotificationService } from '../notification/service-notification.service';
+import { PushService } from '../push/push.service';
+import { ChatService } from './chat.service';
 
 @WebSocketGateway({
   cors: { origin: '*', credentials: true },
@@ -21,64 +22,102 @@ export class ChatGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
 {
   @WebSocketServer() server: Server;
+
   private readonly logger = new Logger(ChatGateway.name);
-  // userId -> socketId 集合。同一账号可能同时存在多个窗口/设备连接。
-  private onlineUsers = new Map<number, Set<string>>();
+  private readonly onlineUsers = new Map<number, Set<string>>();
+  private readonly foregroundSockets = new Set<string>();
 
   constructor(
     private readonly jwtService: JwtService,
     private readonly chatService: ChatService,
     private readonly serviceNotificationService: ServiceNotificationService,
+    private readonly pushService: PushService,
   ) {}
 
-  /** 注册服务通知实时推送通道 */
   onModuleInit() {
     this.serviceNotificationService.registerPusher((recipientId, payload) => {
-      this.notifyUser(Number(recipientId), 'service:notification', payload);
+      const userId = Number(recipientId);
+      this.notifyUser(userId, 'service:notification', payload);
+      const socketIds = this.getUserSocketIds(userId);
+      if (socketIds.length === 0 || !this.hasForegroundSocket(socketIds)) {
+        void this.pushService
+          .sendToUser(userId, {
+            title: payload?.title?.toString() || '服务通知',
+            body: payload?.content?.toString() || '你收到了一条新的服务通知',
+            data: {
+              type: 'service_notification',
+              notificationId: Number(payload?.id || 0),
+              route: 'service_notifications',
+            },
+          })
+          .catch((error) =>
+            this.logger.warn(`Service notification push failed: ${String(error)}`),
+          );
+      }
     });
   }
 
-  /** 连接时验证 JWT */
   async handleConnection(client: Socket) {
     try {
       const token =
         client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.replace('Bearer ', '');
+        client.handshake.headers?.authorization?.toString().replace('Bearer ', '');
       if (!token) {
-        this.logger.warn(`Socket 连接被拒绝：无 token，IP: ${client.handshake.address}`);
+        this.logger.warn(
+          `Socket rejected: no token, ip=${client.handshake.address}`,
+        );
         client.disconnect();
         return;
       }
+
       const payload = this.jwtService.verify(token);
       const userId = Number(payload.sub);
       client.data.userId = userId;
+      client.data.isForeground = true;
       this.addOnlineSocket(userId, client.id);
+      this.foregroundSockets.add(client.id);
+
       this.logger.log(
-        `用户 ${userId} 上线: socket=${client.id}, ip=${client.handshake.address}, transport=${client.conn.transport.name}`,
+        `User ${userId} online: socket=${client.id}, ip=${client.handshake.address}, transport=${client.conn.transport.name}`,
       );
-      // 广播上线
       this.server.emit('user:online', { userId });
-      // 推送离线消息
       await this.chatService.pushOfflineMessages(userId, client);
     } catch (error) {
-      this.logger.warn(`Socket 连接验证失败：${String(error)}, IP: ${client.handshake.address}`);
+      this.logger.warn(
+        `Socket auth failed: ${String(error)}, ip=${client.handshake.address}`,
+      );
       client.disconnect();
     }
   }
 
   handleDisconnect(client: Socket) {
     const userId = Number(client.data.userId);
-    if (userId) {
-      const stillOnline = this.removeOnlineSocket(userId, client.id);
-      this.logger.log(`用户 ${userId} 连接断开: ${client.id}`);
-      if (!stillOnline) {
-        this.logger.log(`用户 ${userId} 离线`);
-        this.server.emit('user:offline', { userId });
-      }
+    this.foregroundSockets.delete(client.id);
+    if (!userId) return;
+
+    const stillOnline = this.removeOnlineSocket(userId, client.id);
+    this.logger.log(`User ${userId} disconnected: ${client.id}`);
+    if (!stillOnline) {
+      this.logger.log(`User ${userId} offline`);
+      this.server.emit('user:offline', { userId });
     }
   }
 
-  /** 发送消息 */
+  @SubscribeMessage('client:state')
+  handleClientState(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { foreground?: boolean },
+  ) {
+    const isForeground = data?.foreground !== false;
+    client.data.isForeground = isForeground;
+    if (isForeground) {
+      this.foregroundSockets.add(client.id);
+    } else {
+      this.foregroundSockets.delete(client.id);
+    }
+    return { foreground: isForeground };
+  }
+
   @SubscribeMessage('message:send')
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
@@ -86,8 +125,6 @@ export class ChatGateway
     data: { conversationId: number; content: string; msgType: number },
   ) {
     const senderId = Number(client.data.userId);
-
-    // 检查是否被禁言
     const isMuted = await this.chatService.isUserMuted(
       senderId,
       data.conversationId,
@@ -102,13 +139,11 @@ export class ChatGateway
       data.content,
       data.msgType,
     );
-
     await this.notifyConversationMessage(senderId, msg);
 
     return { id: msg.id, createdAt: msg.createdAt };
   }
 
-  /** 编辑消息 */
   @SubscribeMessage('message:edit')
   async handleEditMessage(
     @ConnectedSocket() client: Socket,
@@ -149,22 +184,20 @@ export class ChatGateway
     msg: any,
     options: { includeSender?: boolean } = {},
   ) {
-    // 获取会话成员，推送消息
     const memberIds = await this.chatService.getConversationMemberIds(
       msg.conversationId,
     );
+    const senderInfo = await this.chatService.getUserInfo(msg.senderId);
     this.logger.log(
-      `推送消息给会话 ${msg.conversationId} 的成员: ${memberIds.join(',')}, 在线用户: ${this.getOnlineUserIds().join(',')}`,
+      `Notify conversation ${msg.conversationId}; members=${memberIds.join(',')}; online=${this.getOnlineUserIds().join(',')}`,
     );
+
     for (const memberId of memberIds) {
-      if (!options.includeSender && Number(memberId) === Number(senderId))
-        continue;
-      const socketIds = this.getUserSocketIds(Number(memberId));
-      this.logger.log(
-        `推送给用户 ${memberId}, socketId: ${socketIds.length > 0 ? socketIds.join(',') : '离线'}`,
-      );
+      const recipientId = Number(memberId);
+      if (!options.includeSender && recipientId === Number(senderId)) continue;
+
+      const socketIds = this.getUserSocketIds(recipientId);
       if (socketIds.length > 0) {
-        const senderInfo = await this.chatService.getUserInfo(msg.senderId);
         for (const socketId of socketIds) {
           this.server.to(socketId).emit('message:receive', {
             id: msg.id,
@@ -178,13 +211,23 @@ export class ChatGateway
           });
         }
       } else {
-        // 离线消息
-        await this.chatService.saveOfflineMessage(Number(memberId), msg.id);
+        await this.chatService.saveOfflineMessage(recipientId, msg.id);
+      }
+
+      if (socketIds.length === 0 || !this.hasForegroundSocket(socketIds)) {
+        await this.pushService.sendChatMessageNotification({
+          recipientId,
+          senderName: senderInfo.nickname,
+          messageId: Number(msg.id),
+          conversationId: Number(msg.conversationId),
+          senderId: Number(msg.senderId),
+          msgType: Number(msg.msgType),
+          content: msg.content || '',
+        });
       }
     }
   }
 
-  /** 标记已读 */
   @SubscribeMessage('message:read')
   async handleReadMessage(
     @ConnectedSocket() client: Socket,
@@ -197,25 +240,21 @@ export class ChatGateway
       data.messageId,
     );
 
-    // 通知发送者消息已读
     const msg = await this.chatService.getMessageById(data.messageId);
-    if (msg) {
-      const senderSocketIds = this.getUserSocketIds(Number(msg.senderId));
-      for (const senderSocketId of senderSocketIds) {
-        this.server.to(senderSocketId).emit('message:status', {
-          messageId: data.messageId,
-          status: 2, // 已读
-        });
-      }
+    if (!msg) return;
+
+    for (const senderSocketId of this.getUserSocketIds(Number(msg.senderId))) {
+      this.server.to(senderSocketId).emit('message:status', {
+        messageId: data.messageId,
+        status: 2,
+      });
     }
   }
 
-  /** 检查用户是否在线 */
   isUserOnline(userId: number): boolean {
     return this.getUserSocketIds(Number(userId)).length > 0;
   }
 
-  /** 向指定用户发送事件通知 */
   notifyUser(userId: number, event: string, data: any): void {
     for (const socketId of this.getUserSocketIds(Number(userId))) {
       this.server.to(socketId).emit(event, data);
@@ -237,7 +276,6 @@ export class ChatGateway
       this.onlineUsers.delete(userId);
       return false;
     }
-
     return true;
   }
 
@@ -247,5 +285,9 @@ export class ChatGateway
 
   private getOnlineUserIds(): number[] {
     return [...this.onlineUsers.keys()];
+  }
+
+  private hasForegroundSocket(socketIds: string[]): boolean {
+    return socketIds.some((socketId) => this.foregroundSockets.has(socketId));
   }
 }

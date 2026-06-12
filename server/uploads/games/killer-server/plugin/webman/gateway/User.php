@@ -62,10 +62,10 @@ class User
 
     // 获取用户最新余额
     public static function getbalance($client_id,$data){
-        $user = Db::table('wa_users')->where('id',$data['uid'])->first();
+        $userinfo = Common::getuserinfo($data['uid']);
         $rs['code']=1;
         $rs['msg']='获取成功';
-        $rs['info']= $user->score;
+        $rs['info']= $userinfo['coin'];
         // var_dump($rs);
         return $rs;
 
@@ -117,12 +117,113 @@ class User
         return $rs;
     }
 
+    public static function appLogin($data)
+    {
+        $account = trim((string)($data['account'] ?? ''));
+        $nickname = trim((string)($data['nickname'] ?? ''));
+        $avatar = trim((string)($data['avatar'] ?? ''));
+        $appUserId = (int)($data['userId'] ?? ($data['user_id'] ?? 0));
+        $appPoints = max(0, (int)floor((float)($data['points'] ?? ($data['balance'] ?? ($data['coin'] ?? 0)))));
+
+        if ($account === '' && $appUserId > 0) {
+            $account = 'app_' . $appUserId;
+        }
+
+        $infonull = [
+            'id' => '',
+            'username' => '',
+            'nickname' => '',
+            'coin' => '',
+            'money' => '',
+            'token' => ''
+        ];
+
+        if ($account === '') {
+            return [
+                'code' => 1001,
+                'msg' => 'APP账号信息缺失',
+                'info' => $infonull
+            ];
+        }
+
+        $user = Db::table("wa_users")->where("username", $account)->first();
+        if ($user && (int)$user->isrobot === 1) {
+            return [
+                'code' => 1085,
+                'msg' => '机器人账号不允许登录',
+                'info' => $infonull
+            ];
+        }
+
+        if (!$user) {
+            $token = self::setToken($account);
+            $insert = [
+                'username' => $account,
+                'nickname' => $nickname !== '' ? $nickname : self::createNickname(),
+                'password' => md5($token),
+                'sex' => '1',
+                'avatar' => $avatar,
+                'email' => '',
+                'mobile' => '',
+                'level' => 0,
+                'birthday' => date("Y/m/d H:i:s", time()),
+                'money' => '0.00',
+                'score' => $appPoints,
+                'last_time' => date("Y/m/d H:i:s", time()),
+                'last_ip' => $_SERVER['REMOTE_ADDR'] ?? '',
+                'join_time' => date("Y/m/d H:i:s", time()),
+                'join_ip' => $_SERVER['REMOTE_ADDR'] ?? '',
+                'token' => $token,
+                'created_at' => date("Y/m/d H:i:s", time()),
+                'updated_at' => date("Y/m/d H:i:s", time()),
+                'role' => 1,
+                'status' => 0
+            ];
+            Db::table('wa_users')->insert($insert);
+        } else {
+            $updates = [
+                'last_time' => date("Y/m/d H:i:s", time()),
+                'last_ip' => $_SERVER['REMOTE_ADDR'] ?? '',
+                'updated_at' => date("Y/m/d H:i:s", time()),
+                'score' => $appPoints
+            ];
+            if ($nickname !== '') {
+                $updates['nickname'] = $nickname;
+            }
+            if ($avatar !== '') {
+                $updates['avatar'] = $avatar;
+            }
+            Db::table("wa_users")->where("username", $account)->update($updates);
+        }
+
+        $fresh = Db::table("wa_users")->where("username", $account)->first();
+        if (!$fresh || (int)$fresh->status === 1) {
+            return [
+                'code' => 1004,
+                'msg' => '账号被锁定，暂时无法登录',
+                'info' => $infonull
+            ];
+        }
+
+        $loginUser['userinfo'] = self::getuserinfo($account);
+        $loginUser['userinfo']['token'] = self::updatetoken($account);
+        $loginUser['userinfo']['app_user_id'] = $appUserId;
+
+        return [
+            'code' => 1,
+            'msg' => '登录成功',
+            'info' => $loginUser
+        ];
+    }
+
     public static function getuserinfo($account){
         $ifexit = Db::table("wa_users")->where("username",$account)->first();
+        $unified = Common::getuserinfo($ifexit->id);
         $user['id']=$ifexit->id;
         $user['username']=$ifexit->username;
         $user['nickname']=$ifexit->nickname;
-        $user['coin']=$ifexit->score;
+        $user['coin']=$unified['coin'];
+        $user['points']=$unified['coin'];
         $user['money']=$ifexit->money;
         return $user;
     } 
@@ -268,7 +369,7 @@ class User
             if($userinfo['coin'] < $data['coin']){
                 $data=[
                     'code'=>1002,
-                    'msg'=>'可用金币不足',
+                    'msg'=>'可用积分不足',
                     'info'=>''
                ];
                return $data;
@@ -290,7 +391,7 @@ class User
                 'uid'=>$data['uid'],
                 'coin'=>$data['coin'],
                 'type'=>0,
-                'remark'=>'兑换金币',
+                'remark'=>'兑换积分',
                 'addtime'=>date("Y/m/d H:i:s",time())
             ];
             Common::usercoin_record($record);

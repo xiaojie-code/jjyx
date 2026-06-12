@@ -48,7 +48,7 @@
             <el-table-column label="操作" width="180" fixed="right">
               <template #default="{ row }">
                 <template v-if="row.status === 0">
-                  <el-button size="small" type="success" link @click="handleReview(row, 'approve')">已发码</el-button>
+                  <el-button size="small" type="success" link @click="openSendCodeDialog(row)">发送激活码</el-button>
                   <el-button size="small" type="danger" link @click="handleReview(row, 'reject')">驳回</el-button>
                 </template>
                 <span v-else class="text-muted">已处理</span>
@@ -65,6 +65,32 @@
             @current-change="(p:number)=>{page=p;loadOrders()}"
           />
         </el-card>
+
+        <el-dialog v-model="sendCodeDialogVisible" title="发送激活码短信" width="460px">
+          <el-form label-width="90px">
+            <el-form-item label="付款人姓名">
+              <el-input v-model="sendCodeForm.realName" disabled />
+            </el-form-item>
+            <el-form-item label="手机号">
+              <el-input v-model="sendCodeForm.phone" disabled />
+            </el-form-item>
+            <el-form-item label="激活码" required>
+              <el-input
+                v-model.trim="sendCodeForm.code"
+                placeholder="请输入要发送给用户的激活码"
+                clearable
+                maxlength="64"
+                show-word-limit
+              />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="sendCodeDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="sendCodeSending" @click="confirmSendCode">
+              确认发送
+            </el-button>
+          </template>
+        </el-dialog>
       </el-tab-pane>
 
       <!-- 收款设置 -->
@@ -120,6 +146,7 @@ import {
   getRechargeOrders,
   getRechargeStats,
   reviewRecharge,
+  sendRechargeActivationCode,
   uploadRechargeQrcode,
   getConfigs,
   updateConfig,
@@ -134,6 +161,14 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const stats = reactive({ pending: 0, approved: 0, rejected: 0 })
+const sendCodeDialogVisible = ref(false)
+const sendCodeSending = ref(false)
+const currentSendCodeOrder = ref<any | null>(null)
+const sendCodeForm = reactive({
+  realName: '',
+  phone: '',
+  code: '',
+})
 
 const cfg = reactive<Record<string, string>>({
   recharge_qrcode: '',
@@ -164,6 +199,44 @@ async function loadOrders() {
     stats.rejected = s.rejected || 0
   } finally {
     loading.value = false
+  }
+}
+
+function openSendCodeDialog(row: any) {
+  currentSendCodeOrder.value = row
+  sendCodeForm.realName = row.realName || ''
+  sendCodeForm.phone = row.phone || ''
+  sendCodeForm.code = ''
+  sendCodeDialogVisible.value = true
+}
+
+async function confirmSendCode() {
+  const order = currentSendCodeOrder.value
+  if (!order) {
+    ElMessage.error('请选择充值订单')
+    return
+  }
+  if (!sendCodeForm.realName) {
+    ElMessage.error('付款人姓名不能为空')
+    return
+  }
+  if (!sendCodeForm.phone) {
+    ElMessage.error('手机号不能为空')
+    return
+  }
+  if (!sendCodeForm.code) {
+    ElMessage.error('请填写激活码')
+    return
+  }
+
+  sendCodeSending.value = true
+  try {
+    await sendRechargeActivationCode(order.id, { code: sendCodeForm.code })
+    ElMessage.success('激活码短信已发送')
+    sendCodeDialogVisible.value = false
+    loadOrders()
+  } finally {
+    sendCodeSending.value = false
   }
 }
 

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/router/app_router.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
+import '../../core/push/push_registration_service.dart';
 import '../../core/utils/notification_service.dart';
 import '../../core/utils/in_app_notification.dart';
 import '../../core/update/app_update_service.dart';
@@ -26,7 +28,10 @@ class MainShell extends ConsumerStatefulWidget {
 
 class _MainShellState extends ConsumerState<MainShell>
     with WidgetsBindingObserver {
+  static const _platformChannel =
+      MethodChannel('com.example.app/notifications');
   bool _isAppInForeground = true;
+  bool _notificationGuideShown = false;
 
   bool get _canUseServiceNotifications =>
       ref.read(authProvider).user != null ||
@@ -46,11 +51,13 @@ class _MainShellState extends ConsumerState<MainShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       _loadBadgesForCurrentUser();
-      _loadNotificationSettings();
-      // 登录后请求通知权限
-      NotificationService.instance.requestPermission();
+      final settings = await _loadNotificationSettings();
+      await _ensureMessageAlertPermission(settings: settings);
+      await PushRegistrationService.instance.register(
+        ref.read(apiClientProvider),
+      );
       // 静默检测应用更新（用于"我的"红点提示）
       AppUpdateService.checkSilently(ref);
     });
@@ -87,12 +94,101 @@ class _MainShellState extends ConsumerState<MainShell>
     );
   }
 
+  bool get _isChatListVisible {
+    try {
+      return GoRouterState.of(context).matchedLocation == RoutePaths.chatList;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _ensureMessageAlertPermission({
+    Map<String, dynamic>? settings,
+  }) async {
+    if (_notificationGuideShown || !mounted) return;
+    _notificationGuideShown = true;
+    await _normalizeMessageAlertSettings(settings);
+    final granted = await NotificationService.instance.requestPermission();
+    final status =
+        await NotificationService.instance.getNewMessageNotificationStatus();
+    if (!mounted || status['channelId'] == null) return;
+    final canAlert = status['canAlert'] == true;
+    final canUseFullScreenIntent = status['canUseFullScreenIntent'] != false;
+    if (granted && canAlert && canUseFullScreenIntent) return;
+
+    final action = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('开启新消息提醒'),
+        content: const Text(
+          '为了后台新消息能像微信一样弹窗并响铃，请开启系统通知、悬浮通知、声音、锁屏通知，以及强提醒弹窗权限。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('later'),
+            child: const Text('稍后'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('channel'),
+            child: const Text('通知设置'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('fullscreen'),
+            child: const Text('强提醒设置'),
+          ),
+        ],
+      ),
+    );
+
+    if (action == 'channel') {
+      await NotificationService.instance.openNewMessageNotificationSettings();
+    } else if (action == 'fullscreen') {
+      await NotificationService.instance.openFullScreenNotificationSettings();
+    }
+  }
+
+  Future<void> _normalizeMessageAlertSettings(
+    Map<String, dynamic>? settings,
+  ) async {
+    final shouldEnable = settings == null ||
+        settings['notificationEnabled'] != true ||
+        settings['notificationSound'] != true ||
+        settings['notificationPopup'] != true;
+    NotificationService.instance.updateSettings(
+      master: true,
+      sound: true,
+      popup: true,
+    );
+    if (!shouldEnable) return;
+    try {
+      await ref.read(apiClientProvider).put(
+        ApiEndpoints.userSettings,
+        data: {
+          'notificationEnabled': true,
+          'notificationSound': true,
+          'notificationPopup': true,
+        },
+      );
+    } catch (_) {}
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isAppInForeground = state == AppLifecycleState.resumed;
+    if (_isAppInForeground) {
+      NotificationService.instance.stopBackgroundKeepAlive();
+      ref.read(socketServiceProvider).setAppForeground(true);
+      _loadNotificationSettings().then(_normalizeMessageAlertSettings);
+      ref.read(socketServiceProvider).connect();
+    } else {
+      NotificationService.instance.startBackgroundKeepAlive();
+      ref.read(socketServiceProvider).setAppForeground(false);
+      ref.read(socketServiceProvider).connect();
+    }
   }
 
-  Future<void> _loadNotificationSettings() async {
+  Future<Map<String, dynamic>?> _loadNotificationSettings() async {
     try {
       final result =
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
@@ -105,7 +201,9 @@ class _MainShellState extends ConsumerState<MainShell>
           popup: result['notificationPopup'] as bool? ?? true,
         );
       }
+      return result;
     } catch (_) {}
+    return null;
   }
 
   void _onNotificationTap(int conversationId, String title) {
@@ -161,6 +259,10 @@ class _MainShellState extends ConsumerState<MainShell>
         content: content,
         avatar: senderAvatar,
         isAppInForeground: _isAppInForeground,
+        bannerSuppressed: _isAppInForeground &&
+            _isChatListVisible &&
+            socket.activeConversationId == null,
+        dedupeKey: msg.id > 0 ? 'message:${msg.id}' : null,
       );
     }
   }
@@ -180,6 +282,9 @@ class _MainShellState extends ConsumerState<MainShell>
       senderName: title,
       content: content,
       isAppInForeground: _isAppInForeground,
+      dedupeKey: data['id'] != null
+          ? 'service:${data['id']}'
+          : 'service:$title:$content',
     );
   }
 
@@ -225,47 +330,64 @@ class _MainShellState extends ConsumerState<MainShell>
     }
   }
 
+  Future<void> _moveAppToBack() async {
+    try {
+      await _platformChannel.invokeMethod('moveTaskToBack');
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     final badges = ref.watch(badgeProvider);
     final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
 
-    return Scaffold(
-      body: widget.child,
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex(context),
-        onTap: (index) => _onTap(context, index),
-        items: [
-          BottomNavigationBarItem(
-            icon: _buildBadgeIcon(
-                Icons.chat_bubble_outline, badges.messageTabCount),
-            activeIcon:
-                _buildBadgeIcon(Icons.chat_bubble, badges.messageTabCount),
-            label: '消息',
-          ),
-          BottomNavigationBarItem(
-            icon: _buildDotIcon(
-                Icons.people_outline, badges.pendingFriendRequests > 0),
-            activeIcon:
-                _buildDotIcon(Icons.people, badges.pendingFriendRequests > 0),
-            label: '联系人',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.sports_esports_outlined),
-            activeIcon: Icon(Icons.sports_esports),
-            label: '游戏',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.store_outlined),
-            activeIcon: Icon(Icons.store),
-            label: '商城',
-          ),
-          BottomNavigationBarItem(
-            icon: _buildDotIcon(Icons.person_outline, hasUpdate),
-            activeIcon: _buildDotIcon(Icons.person, hasUpdate),
-            label: '我的',
-          ),
-        ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        if (_currentIndex(context) != 0) {
+          context.go(RoutePaths.chatList);
+          return;
+        }
+        await _moveAppToBack();
+      },
+      child: Scaffold(
+        body: widget.child,
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: _currentIndex(context),
+          onTap: (index) => _onTap(context, index),
+          items: [
+            BottomNavigationBarItem(
+              icon: _buildBadgeIcon(
+                  Icons.chat_bubble_outline, badges.messageTabCount),
+              activeIcon:
+                  _buildBadgeIcon(Icons.chat_bubble, badges.messageTabCount),
+              label: '消息',
+            ),
+            BottomNavigationBarItem(
+              icon: _buildDotIcon(
+                  Icons.people_outline, badges.pendingFriendRequests > 0),
+              activeIcon:
+                  _buildDotIcon(Icons.people, badges.pendingFriendRequests > 0),
+              label: '联系人',
+            ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.sports_esports_outlined),
+              activeIcon: Icon(Icons.sports_esports),
+              label: '游戏',
+            ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.store_outlined),
+              activeIcon: Icon(Icons.store),
+              label: '商城',
+            ),
+            BottomNavigationBarItem(
+              icon: _buildDotIcon(Icons.person_outline, hasUpdate),
+              activeIcon: _buildDotIcon(Icons.person, hasUpdate),
+              label: '我的',
+            ),
+          ],
+        ),
       ),
     );
   }

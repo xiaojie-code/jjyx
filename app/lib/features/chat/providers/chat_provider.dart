@@ -63,6 +63,7 @@ class SocketService {
   io.Socket? _socket;
   String? _authToken;
   bool _isConnecting = false;
+  bool _isAppForeground = true;
   final List<Function(ChatMessage)> _messageListeners = [];
   final List<Function(int messageId, int status)> _statusListeners = [];
   final List<Function(int messageId, int conversationId, String content)>
@@ -121,6 +122,7 @@ class SocketService {
     _socket!.onConnect((_) {
       debugPrint('[Socket] 连接成功');
       _isConnecting = false;
+      _emitClientState();
       _notifyConnectionStateChanged();
       // 通知所有连接监听器（用于刷新会话列表等）
       for (final listener in _connectListeners) {
@@ -243,6 +245,11 @@ class SocketService {
   }
 
   bool get isConnected => _socket?.connected ?? false;
+
+  void setAppForeground(bool foreground) {
+    _isAppForeground = foreground;
+    _emitClientState();
+  }
 
   /// 发送消息，支持失败回调
   void sendMessage(int conversationId, String content, int msgType,
@@ -368,6 +375,12 @@ class SocketService {
     for (final listener in List<Function()>.from(_connectionStateListeners)) {
       listener();
     }
+  }
+
+  void _emitClientState() {
+    final socket = _socket;
+    if (socket == null || !socket.connected) return;
+    socket.emit('client:state', {'foreground': _isAppForeground});
   }
 }
 

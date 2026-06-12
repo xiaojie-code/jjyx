@@ -12,9 +12,20 @@ class Common
     const MODE_REAL = 'real';
     const PLAYER_BET_AMOUNTS = [100, 500, 1000, 3000, 5000, 10000];
     const ROBOT_BET_AMOUNTS = [100, 500, 1000, 3000];
+    const DIRECT_GAME_REWARD_DEFAULT_RATE = 0.0015;
+    const DIRECT_GAME_REWARD_MAX_GENERATION = 20;
+    const LEGACY_PLAYER_BET_AMOUNT_MAP = [
+        1 => 100,
+        10 => 100,
+        50 => 500,
+        300 => 3000,
+        2000 => 3000
+    ];
 
     protected static $columnCache = [];
     protected static $schemaPrepared = false;
+    protected static $appPdo = null;
+    protected static $appDbConfig = null;
 
     static function normalizeMode($data = null)
     {
@@ -41,6 +52,27 @@ class Common
     static function isAllowedBetAmount($coin, $isRobot = false)
     {
         return in_array((int)$coin, self::allowedBetAmounts($isRobot), true);
+    }
+
+    static function normalizeBetAmount($coin, $isRobot = false, $preferLegacy = false)
+    {
+        $amount = (int)$coin;
+        if ($amount <= 0) {
+            return $amount;
+        }
+
+        if (self::isAllowedBetAmount($amount, $isRobot)) {
+            return $amount;
+        }
+
+        if (!$isRobot && isset(self::LEGACY_PLAYER_BET_AMOUNT_MAP[$amount])) {
+            $mapped = (int)self::LEGACY_PLAYER_BET_AMOUNT_MAP[$amount];
+            if (self::isAllowedBetAmount($mapped, false)) {
+                return $mapped;
+            }
+        }
+
+        return $amount;
     }
 
     static function randomRobotBetAmount()
@@ -141,6 +173,8 @@ class Common
         self::addColumnIfMissing('wa_touzhu', 'resultid', "ALTER TABLE `wa_touzhu` ADD COLUMN `resultid` int(11) DEFAULT NULL");
         self::addColumnIfMissing('wa_touzhu', 'resultname', "ALTER TABLE `wa_touzhu` ADD COLUMN `resultname` varchar(64) DEFAULT NULL");
         self::addColumnIfMissing('wa_touzhu', 'ifyouxiao', "ALTER TABLE `wa_touzhu` ADD COLUMN `ifyouxiao` tinyint(1) NOT NULL DEFAULT 1");
+        self::addIndexIfMissing('wa_touzhu', 'idx_killer_active_bet_lookup', "ALTER TABLE `wa_touzhu` ADD INDEX `idx_killer_active_bet_lookup` (`expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`)");
+        self::addUniqueActiveBetIndexIfSafe();
 
         self::$schemaPrepared = true;
     }
@@ -156,6 +190,57 @@ class Common
             self::$columnCache[$table . '.' . $column] = true;
         } catch (\Throwable $e) {
             self::$columnCache[$table . '.' . $column] = false;
+        }
+    }
+
+    static function addIndexIfMissing($table, $index, $sql)
+    {
+        if (self::indexExists($table, $index)) {
+            return;
+        }
+
+        try {
+            Db::statement($sql);
+        } catch (\Throwable $e) {
+        }
+    }
+
+    static function addUniqueActiveBetIndexIfSafe()
+    {
+        $table = 'wa_touzhu';
+        $index = 'uniq_killer_active_bet';
+        if (self::indexExists($table, $index)) {
+            return;
+        }
+
+        try {
+            $duplicates = Db::select(
+                "SELECT 1 FROM (
+                    SELECT `expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`, COUNT(*) AS c
+                    FROM `wa_touzhu`
+                    WHERE `ifyouxiao` = 1 AND `status` = 0
+                    GROUP BY `expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`
+                    HAVING c > 1
+                    LIMIT 1
+                ) AS t"
+            );
+            if (!empty($duplicates)) {
+                return;
+            }
+
+            Db::statement("ALTER TABLE `wa_touzhu` ADD UNIQUE KEY `{$index}` (`expect`, `mode`, `roomid`, `uid`, `status`, `ifyouxiao`)");
+        } catch (\Throwable $e) {
+        }
+    }
+
+    static function indexExists($table, $index)
+    {
+        try {
+            $safeIndex = str_replace(['\\', "'"], ['\\\\', "\\'"], $index);
+            $rows = Db::select("SHOW INDEX FROM `{$table}` WHERE Key_name = '{$safeIndex}'");
+            return !empty($rows);
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 
@@ -248,7 +333,8 @@ class Common
 
         $records = Db::table('wa_touzhu')
             ->where(['expect' => $expect, 'ifyouxiao' => 1, 'status' => 0])
-            ->get();
+            ->get()
+            ->toArray();
         $records = self::object_array($records);
 
         $summary = [
@@ -261,7 +347,13 @@ class Common
             'winner_count' => 0,
             'loser_count' => 0,
             'reward_total' => 0,
-            'real_lost_pool' => 0
+            'real_lost_pool' => 0,
+            'killed_room_pool' => 0,
+            'survivor_count' => 0,
+            'survivor_coin_total' => 0,
+            'real_winner_coin_total' => 0,
+            'distributed_bonus_total' => 0,
+            'winner_share' => 0
         ];
 
         if (!$records) {
@@ -291,7 +383,10 @@ class Common
 
         foreach ($groups as $groupKey => $group) {
             $realLostPool = 0;
-            $winnerStakePool = 0;
+            $killedRoomPool = 0;
+            $survivorCount = 0;
+            $survivorCoinTotal = 0;
+            $realWinnerCoinTotal = 0;
             $winners = [];
 
             foreach ($group['records'] as $record) {
@@ -300,16 +395,22 @@ class Common
                 $isKilled = (int)$record['tzid'] === (int)$killerRoomId;
 
                 if ($isKilled) {
+                    $killedRoomPool += $coin;
                     if (!$isRobot) {
                         $realLostPool += $coin;
                     }
-                } elseif (!$isRobot) {
-                    $winnerStakePool += $coin;
-                    $winners[] = $record;
+                } else {
+                    $survivorCount++;
+                    // All surviving bets, including robots, form the proportional payout denominator.
+                    $survivorCoinTotal += $coin;
+                    if (!$isRobot) {
+                        $realWinnerCoinTotal += $coin;
+                        $winners[] = $record;
+                    }
                 }
             }
 
-            $rewardMap = self::buildRewardMap($winners, $winnerStakePool, $realLostPool);
+            $rewardMap = self::buildRewardMap($winners, $killedRoomPool, $survivorCoinTotal);
             $winnerList = [];
             $loserList = [];
             $robotWinnerCount = 0;
@@ -338,7 +439,7 @@ class Common
                         'uid' => $uid,
                         'coin' => $reward,
                         'type' => 1,
-                        'remark' => '大逃杀第' . $expect . '期幸存奖励，投注' . $coin . '金币，奖励' . $reward . '金币',
+                        'remark' => '大逃杀第' . $expect . '期幸存奖励，投注' . $coin . '积分，奖励' . $reward . '积分',
                         'addtime' => date('Y/m/d H:i:s', time())
                     ]);
                 }
@@ -347,17 +448,30 @@ class Common
                     if ($isRobot) {
                         $robotLoserCount++;
                     } else {
-                        $loserList[] = self::settlementPlayerInfo($record, 0, true);
+                        $loserList[] = self::settlementPlayerInfo(
+                            $record,
+                            0,
+                            true,
+                            $killedRoomPool,
+                            $survivorCoinTotal
+                        );
                     }
                 } else {
                     if ($isRobot) {
                         $robotWinnerCount++;
                     } else {
-                        $winnerList[] = self::settlementPlayerInfo($record, $reward, false);
+                        $winnerList[] = self::settlementPlayerInfo(
+                            $record,
+                            $reward,
+                            false,
+                            $killedRoomPool,
+                            $survivorCoinTotal
+                        );
                     }
                 }
             }
 
+            $rewardTotal = array_sum($rewardMap);
             $groupSummary = [
                 'mode' => $group['mode'],
                 'roomid' => $group['roomid'],
@@ -366,7 +480,13 @@ class Common
                 'robot_winner_count' => $robotWinnerCount,
                 'robot_loser_count' => $robotLoserCount,
                 'real_lost_pool' => $realLostPool,
-                'reward_total' => array_sum($rewardMap),
+                'killed_room_pool' => $killedRoomPool,
+                'survivor_count' => $survivorCount,
+                'survivor_coin_total' => $survivorCoinTotal,
+                'real_winner_coin_total' => $realWinnerCoinTotal,
+                'distributed_bonus_total' => max(0, $rewardTotal - $realWinnerCoinTotal),
+                'winner_share' => 0,
+                'reward_total' => $rewardTotal,
                 'winners' => $winnerList,
                 'losers' => $loserList
             ];
@@ -378,62 +498,65 @@ class Common
             $summary['loser_count'] += $groupSummary['loser_count'];
             $summary['reward_total'] += $groupSummary['reward_total'];
             $summary['real_lost_pool'] += $groupSummary['real_lost_pool'];
+            $summary['killed_room_pool'] += $groupSummary['killed_room_pool'];
+            $summary['survivor_count'] += $groupSummary['survivor_count'];
+            $summary['survivor_coin_total'] += $groupSummary['survivor_coin_total'];
+            $summary['real_winner_coin_total'] += $groupSummary['real_winner_coin_total'];
+            $summary['distributed_bonus_total'] += $groupSummary['distributed_bonus_total'];
         }
 
         Redis::set($settledKey, json_encode($summary, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         return $summary;
     }
 
-    static function settlementPlayerInfo($record, $reward, $isKilled)
+    static function settlementPlayerInfo($record, $reward, $isKilled, $killedRoomPool = 0, $survivorCoinTotal = 0)
     {
         $userinfo = self::getuserinfo($record['uid']);
+        $points = (int)($userinfo['points'] ?? ($userinfo['coin'] ?? 0));
+        $coin = max(0, (int)($record['coin'] ?? 0));
+        $reward = max(0, (int)$reward);
+        $survivorCoinTotal = max(0, (int)$survivorCoinTotal);
+        $bonus = $isKilled ? 0 : max(0, $reward - $coin);
+        $investmentRatio = !$isKilled && $survivorCoinTotal > 0
+            ? round($coin / $survivorCoinTotal, 8)
+            : 0;
+
         return [
             'uid' => (int)$record['uid'],
             'username' => $userinfo['username'] ?? '',
             'nickname' => $userinfo['nickname'] ?? '',
+            'points' => $points,
+            'balance' => $points,
             'roomid' => (int)($record['roomid'] ?? 0),
             'mode' => self::normalizeMode($record['mode'] ?? self::MODE_AI),
             'smallroomid' => (int)($record['tzid'] ?? 0),
             'smallroomname' => $record['tzname'] ?? self::smallroomname($record['tzid'] ?? 0),
-            'coin' => max(0, (int)($record['coin'] ?? 0)),
-            'reward' => max(0, (int)$reward),
+            'coin' => $coin,
+            'principal_return' => $isKilled ? 0 : $coin,
+            'bonus' => $bonus,
+            'reward' => $reward,
+            'investment_ratio' => $investmentRatio,
+            'survivor_coin_total' => $survivorCoinTotal,
+            'killed_room_pool' => max(0, (int)$killedRoomPool),
             'status' => $isKilled ? 2 : 1
         ];
     }
 
-    static function buildRewardMap($winners, $winnerStakePool, $realLostPool)
+    static function buildRewardMap($winners, $killedRoomPool, $survivorCoinTotal)
     {
         $rewardMap = [];
-        if (!$winners || $winnerStakePool <= 0) {
+        $survivorCoinTotal = max(0, (int)$survivorCoinTotal);
+        if (!$winners || $survivorCoinTotal <= 0) {
             return $rewardMap;
         }
 
-        $shareTotal = 0;
+        $killedRoomPool = max(0, (int)$killedRoomPool);
+
         foreach ($winners as $winner) {
             $id = (int)$winner['id'];
-            $coin = max(0, (int)$winner['coin']);
-            $share = $realLostPool > 0 ? (int)floor($realLostPool * $coin / $winnerStakePool) : 0;
-            $rewardMap[$id] = $coin + $share;
-            $shareTotal += $share;
-        }
-
-        $remainder = $realLostPool - $shareTotal;
-        if ($remainder > 0) {
-            usort($winners, function ($a, $b) {
-                $coinCompare = (int)$b['coin'] <=> (int)$a['coin'];
-                if ($coinCompare !== 0) {
-                    return $coinCompare;
-                }
-                return (int)$a['id'] <=> (int)$b['id'];
-            });
-
-            foreach ($winners as $winner) {
-                if ($remainder <= 0) {
-                    break;
-                }
-                $rewardMap[(int)$winner['id']]++;
-                $remainder--;
-            }
+            $coin = max(0, (int)($winner['coin'] ?? 0));
+            $bonus = (int)floor($killedRoomPool * $coin / $survivorCoinTotal);
+            $rewardMap[$id] = $coin + $bonus;
         }
 
         return $rewardMap;
@@ -490,6 +613,518 @@ class Common
         return is_array($config) ? $config : [];
     }
 
+    protected static function parseEnvFile($path)
+    {
+        $env = [];
+        if (!$path || !is_file($path)) {
+            return $env;
+        }
+
+        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!$lines) {
+            return $env;
+        }
+
+        foreach ($lines as $line) {
+            $line = trim(ltrim($line, "\xEF\xBB\xBF"));
+            if ($line === '' || strpos($line, '#') === 0 || strpos($line, '=') === false) {
+                continue;
+            }
+
+            [$key, $value] = explode('=', $line, 2);
+            $key = trim($key);
+            $value = trim($value);
+            $first = substr($value, 0, 1);
+            $last = substr($value, -1);
+            if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
+                $value = substr($value, 1, -1);
+            }
+            if ($key !== '') {
+                $env[$key] = $value;
+            }
+        }
+
+        return $env;
+    }
+
+    protected static function envValue($env, $key, $default = '')
+    {
+        if (array_key_exists($key, $env)) {
+            return $env[$key];
+        }
+        $value = getenv($key);
+        if ($value !== false && $value !== '') {
+            return $value;
+        }
+        return $default;
+    }
+
+    protected static function appDbConfig()
+    {
+        if (self::$appDbConfig !== null) {
+            return self::$appDbConfig;
+        }
+
+        $serverEnvPath = realpath(base_path('../../..') . DIRECTORY_SEPARATOR . '.env');
+        $env = self::parseEnvFile($serverEnvPath);
+        self::$appDbConfig = [
+            'host' => self::envValue($env, 'DB_HOST', '127.0.0.1'),
+            'port' => self::envValue($env, 'DB_PORT', '3306'),
+            'database' => self::envValue($env, 'DB_DATABASE', 'competitive_game'),
+            'username' => self::envValue($env, 'DB_USERNAME', 'root'),
+            'password' => self::envValue($env, 'DB_PASSWORD', ''),
+        ];
+
+        return self::$appDbConfig;
+    }
+
+    protected static function appPdo()
+    {
+        if (self::$appPdo instanceof \PDO) {
+            return self::$appPdo;
+        }
+
+        $config = self::appDbConfig();
+        $dsn = 'mysql:host=' . $config['host'] .
+            ';port=' . $config['port'] .
+            ';dbname=' . $config['database'] .
+            ';charset=utf8mb4';
+
+        try {
+            self::$appPdo = new \PDO($dsn, $config['username'], $config['password'], [
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                \PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
+            return self::$appPdo;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    protected static function killerUserByUid($uid)
+    {
+        return Db::table('wa_users')->where('id', $uid)->first();
+    }
+
+    protected static function resolveAppUserFromKillerUser($killerUser, $pdo = null, $lock = false)
+    {
+        if (!$killerUser || (int)($killerUser->isrobot ?? 0) === 1) {
+            return null;
+        }
+
+        $account = trim((string)($killerUser->username ?? ''));
+        if ($account === '') {
+            return null;
+        }
+
+        $pdo = $pdo ?: self::appPdo();
+        if (!$pdo) {
+            return false;
+        }
+
+        try {
+            $sql = "SELECT u.id AS user_id, u.account, uc.points
+                    FROM users u
+                    LEFT JOIN user_currencies uc ON uc.user_id = u.id
+                    WHERE u.account = ?
+                    LIMIT 1" . ($lock ? " FOR UPDATE" : "");
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute([$account]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$row) {
+                return null;
+            }
+
+            if ($row['points'] === null) {
+                $insert = $pdo->prepare(
+                    "INSERT IGNORE INTO user_currencies (user_id, points, created_at, updated_at)
+                     VALUES (?, 0, NOW(), NOW())"
+                );
+                $insert->execute([(int)$row['user_id']]);
+
+                $select = $pdo->prepare(
+                    "SELECT points FROM user_currencies WHERE user_id = ? LIMIT 1" . ($lock ? " FOR UPDATE" : "")
+                );
+                $select->execute([(int)$row['user_id']]);
+                $currency = $select->fetch(\PDO::FETCH_ASSOC);
+                $row['points'] = $currency ? $currency['points'] : 0;
+            }
+
+            return [
+                'user_id' => (int)$row['user_id'],
+                'account' => $row['account'],
+                'points' => (float)$row['points'],
+            ];
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    protected static function syncLocalScoreFromPoints($killerUid, $points)
+    {
+        $score = max(0, (int)floor((float)$points));
+        try {
+            Db::table('wa_users')->where('id', $killerUid)->update(['score' => $score]);
+        } catch (\Throwable $e) {
+        }
+        return $score;
+    }
+
+    protected static function getUnifiedPoints($uid, $killerUser = null)
+    {
+        $killerUser = $killerUser ?: self::killerUserByUid($uid);
+        if (!$killerUser) {
+            return 0;
+        }
+
+        if ((int)($killerUser->isrobot ?? 0) === 1) {
+            return (int)($killerUser->score ?? 0);
+        }
+
+        $mapped = self::resolveAppUserFromKillerUser($killerUser);
+        if (is_array($mapped)) {
+            return self::syncLocalScoreFromPoints($uid, $mapped['points']);
+        }
+
+        if ($mapped === false) {
+            return 0;
+        }
+
+        return (int)($killerUser->score ?? 0);
+    }
+
+    protected static function appCurrencySn()
+    {
+        try {
+            $random = strtoupper(bin2hex(random_bytes(4)));
+        } catch (\Throwable $e) {
+            $random = str_pad((string)mt_rand(0, 99999999), 8, '0', STR_PAD_LEFT);
+        }
+
+        return 'CL' . date('YmdHis') . $random;
+    }
+
+    protected static function appRoundPoints($value)
+    {
+        return round((float)$value, 6);
+    }
+
+    protected static function insertAppCurrencyLog($pdo, $userId, $amount, $before, $after, $logType, $description)
+    {
+        $stmt = $pdo->prepare(
+            "INSERT INTO currency_logs
+             (user_id, sn, currency_type, amount, before_balance, after_balance, log_type, description, created_at)
+             VALUES (?, ?, 'points', ?, ?, ?, ?, ?, NOW())"
+        );
+        $stmt->execute([
+            $userId,
+            self::appCurrencySn(),
+            self::appRoundPoints($amount),
+            self::appRoundPoints($before),
+            self::appRoundPoints($after),
+            substr((string)$logType, 0, 50),
+            substr((string)$description, 0, 200),
+        ]);
+        return (int)$pdo->lastInsertId();
+    }
+
+    protected static function isAppDirectGameRewardEnabled($pdo)
+    {
+        try {
+            $stmt = $pdo->prepare("SELECT status FROM system_switches WHERE feature_key = ? LIMIT 1");
+            $stmt->execute(['direct_game_reward']);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            return !$row || (int)($row['status'] ?? 1) === 1;
+        } catch (\Throwable $e) {
+            return true;
+        }
+    }
+
+    protected static function appDirectGameRewardRate($pdo)
+    {
+        try {
+            $stmt = $pdo->prepare("SELECT config_value FROM system_configs WHERE config_key = ? LIMIT 1");
+            $stmt->execute(['direct_game_reward_rate']);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            $rate = isset($row['config_value']) ? (float)$row['config_value'] : self::DIRECT_GAME_REWARD_DEFAULT_RATE;
+            return $rate > 0 ? $rate : self::DIRECT_GAME_REWARD_DEFAULT_RATE;
+        } catch (\Throwable $e) {
+            return self::DIRECT_GAME_REWARD_DEFAULT_RATE;
+        }
+    }
+
+    protected static function maxAppDirectRewardGeneration($validDirectCount)
+    {
+        $count = (int)$validDirectCount;
+        if ($count >= 6) {
+            return 20;
+        }
+        if ($count >= 5) {
+            return 15;
+        }
+        if ($count >= 4) {
+            return 12;
+        }
+        if ($count >= 3) {
+            return 9;
+        }
+        if ($count >= 2) {
+            return 6;
+        }
+        if ($count >= 1) {
+            return 3;
+        }
+        return 0;
+    }
+
+    protected static function appActiveAncestorChain($pdo, $userId)
+    {
+        $chain = [];
+        $currentUserId = (int)$userId;
+        $visited = [$currentUserId => true];
+
+        for ($generation = 2; $generation <= self::DIRECT_GAME_REWARD_MAX_GENERATION; $generation++) {
+            $stmt = $pdo->prepare("SELECT invited_by FROM users WHERE id = ? LIMIT 1");
+            $stmt->execute([$currentUserId]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            $parentId = (int)($row['invited_by'] ?? 0);
+            if ($parentId <= 0 || isset($visited[$parentId])) {
+                break;
+            }
+            $visited[$parentId] = true;
+
+            $parentStmt = $pdo->prepare("SELECT id, is_activated, status FROM users WHERE id = ? LIMIT 1");
+            $parentStmt->execute([$parentId]);
+            $parent = $parentStmt->fetch(\PDO::FETCH_ASSOC);
+            if ($parent && (int)($parent['status'] ?? 0) === 1 && (int)($parent['is_activated'] ?? 0) === 1) {
+                $chain[] = ['userId' => $parentId, 'generation' => $generation];
+            }
+            $currentUserId = $parentId;
+        }
+
+        return $chain;
+    }
+
+    protected static function appValidDirectCount($pdo, $userId)
+    {
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*) AS total
+             FROM users
+             WHERE invited_by = ? AND status = 1 AND is_activated = 1"
+        );
+        $stmt->execute([(int)$userId]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        return (int)($row['total'] ?? 0);
+    }
+
+    protected static function changeAppPointsInAppDb($pdo, $userId, $amount, $logType, $description)
+    {
+        $userId = (int)$userId;
+        $amount = self::appRoundPoints($amount);
+        if ($userId <= 0 || $amount == 0) {
+            return null;
+        }
+
+        $insert = $pdo->prepare(
+            "INSERT IGNORE INTO user_currencies (user_id, points, created_at, updated_at)
+             VALUES (?, 0, NOW(), NOW())"
+        );
+        $insert->execute([$userId]);
+
+        $select = $pdo->prepare("SELECT points FROM user_currencies WHERE user_id = ? LIMIT 1 FOR UPDATE");
+        $select->execute([$userId]);
+        $currency = $select->fetch(\PDO::FETCH_ASSOC);
+        if (!$currency) {
+            return null;
+        }
+
+        $before = self::appRoundPoints($currency['points']);
+        $after = self::appRoundPoints($before + $amount);
+        if ($after < 0) {
+            return null;
+        }
+
+        $update = $pdo->prepare("UPDATE user_currencies SET points = ?, updated_at = NOW() WHERE user_id = ?");
+        $update->execute([$after, $userId]);
+        $logId = self::insertAppCurrencyLog($pdo, $userId, $amount, $before, $after, $logType, $description);
+        return ['before' => $before, 'after' => $after, 'amount' => $amount, 'logId' => $logId];
+    }
+
+    protected static function recordAppGameTurnoverForKiller($pdo, $userId, $sourceType, $amount, $currencyLogId, $description)
+    {
+        $userId = (int)$userId;
+        $amount = self::appRoundPoints(abs((float)$amount));
+        if ($userId <= 0 || $amount <= 0) {
+            return;
+        }
+
+        $savepoint = 'killer_turnover_reward';
+        try {
+            $pdo->exec("SAVEPOINT " . $savepoint);
+
+            $stmt = $pdo->prepare(
+                "INSERT INTO game_turnover_records
+                 (user_id, game_id, source_type, turnover_amount, currency_log_id, biz_id, description,
+                  reward_status, reward_count, total_reward_amount, created_at)
+                 VALUES (?, NULL, ?, ?, ?, NULL, ?, 0, 0, 0, NOW())"
+            );
+            $stmt->execute([
+                $userId,
+                substr((string)$sourceType, 0, 50),
+                $amount,
+                $currencyLogId ? (int)$currencyLogId : null,
+                substr((string)$description, 0, 200),
+            ]);
+            $turnoverId = (int)$pdo->lastInsertId();
+
+            if (!self::isAppDirectGameRewardEnabled($pdo)) {
+                $update = $pdo->prepare(
+                    "UPDATE game_turnover_records
+                     SET reward_status = 2, reward_count = 0, total_reward_amount = 0, reward_processed_at = NOW()
+                     WHERE id = ?"
+                );
+                $update->execute([$turnoverId]);
+                $pdo->exec("RELEASE SAVEPOINT " . $savepoint);
+                return;
+            }
+
+            $rate = self::appDirectGameRewardRate($pdo);
+            $rewardCount = 0;
+            $rewardAmount = 0;
+            $ancestors = self::appActiveAncestorChain($pdo, $userId);
+
+            foreach ($ancestors as $ancestor) {
+                $ancestorUserId = (int)$ancestor['userId'];
+                $generation = (int)$ancestor['generation'];
+                $validDirectCount = self::appValidDirectCount($pdo, $ancestorUserId);
+                $maxGeneration = self::maxAppDirectRewardGeneration($validDirectCount);
+                if ($maxGeneration <= 0 || $generation > $maxGeneration) {
+                    continue;
+                }
+
+                $amountToPay = self::appRoundPoints($amount * $rate);
+                if ($amountToPay <= 0) {
+                    continue;
+                }
+
+                $changed = self::changeAppPointsInAppDb(
+                    $pdo,
+                    $ancestorUserId,
+                    $amountToPay,
+                    'direct_game_reward',
+                    'direct_game_reward:' . $amount . '*' . $rate
+                );
+                if (!$changed) {
+                    continue;
+                }
+
+                $rewardStmt = $pdo->prepare(
+                    "INSERT INTO direct_game_reward_records
+                     (turnover_id, source_user_id, ancestor_user_id, generation, valid_direct_count,
+                      max_generation, turnover_amount, reward_rate, reward_amount, currency_log_id,
+                      status, remark, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NOW())"
+                );
+                $rewardStmt->execute([
+                    $turnoverId,
+                    $userId,
+                    $ancestorUserId,
+                    $generation,
+                    $validDirectCount,
+                    $maxGeneration,
+                    $amount,
+                    $rate,
+                    $amountToPay,
+                    (int)$changed['logId'],
+                    'paid_to_points',
+                ]);
+
+                $rewardCount++;
+                $rewardAmount = self::appRoundPoints($rewardAmount + $amountToPay);
+            }
+
+            $update = $pdo->prepare(
+                "UPDATE game_turnover_records
+                 SET reward_status = 1, reward_rate = ?, reward_count = ?,
+                     total_reward_amount = ?, reward_processed_at = NOW()
+                 WHERE id = ?"
+            );
+            $update->execute([$rate, $rewardCount, $rewardAmount, $turnoverId]);
+            $pdo->exec("RELEASE SAVEPOINT " . $savepoint);
+        } catch (\Throwable $e) {
+            try {
+                $pdo->exec("ROLLBACK TO SAVEPOINT " . $savepoint);
+                $pdo->exec("RELEASE SAVEPOINT " . $savepoint);
+            } catch (\Throwable $rollbackError) {
+            }
+        }
+    }
+
+    protected static function changeAppPointsForKiller($uid, $amount, $logType, $description)
+    {
+        $killerUser = self::killerUserByUid($uid);
+        if (!$killerUser || (int)($killerUser->isrobot ?? 0) === 1) {
+            return null;
+        }
+
+        $pdo = self::appPdo();
+        if (!$pdo) {
+            return false;
+        }
+
+        try {
+            $pdo->beginTransaction();
+            $mapped = self::resolveAppUserFromKillerUser($killerUser, $pdo, true);
+            if ($mapped === null) {
+                $pdo->rollBack();
+                return null;
+            }
+            if ($mapped === false) {
+                $pdo->rollBack();
+                return false;
+            }
+
+            $before = self::appRoundPoints($mapped['points']);
+            $after = self::appRoundPoints($before + (float)$amount);
+            if ($after < 0) {
+                $pdo->rollBack();
+                self::syncLocalScoreFromPoints($uid, $before);
+                return false;
+            }
+
+            $update = $pdo->prepare("UPDATE user_currencies SET points = ?, updated_at = NOW() WHERE user_id = ?");
+            $update->execute([$after, (int)$mapped['user_id']]);
+            $logId = self::insertAppCurrencyLog($pdo, (int)$mapped['user_id'], $amount, $before, $after, $logType, $description);
+            if (in_array((string)$logType, ['killer_bet', 'killer_win'], true)) {
+                self::recordAppGameTurnoverForKiller(
+                    $pdo,
+                    (int)$mapped['user_id'],
+                    (float)$amount < 0 ? 'bet' : 'game_settle',
+                    abs((float)$amount),
+                    $logId,
+                    $description
+                );
+            }
+            $pdo->commit();
+
+            self::syncLocalScoreFromPoints($uid, $after);
+            return [
+                'before' => $before,
+                'after' => $after,
+                'amount' => self::appRoundPoints($amount),
+            ];
+        } catch (\Throwable $e) {
+            try {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+            } catch (\Throwable $rollbackError) {
+            }
+            return false;
+        }
+    }
+
     static function getuserinfo($uid)
     {
         $ifexit = Db::table('wa_users')->where('id', $uid)->first();
@@ -499,6 +1134,7 @@ class Common
                 'username' => '',
                 'nickname' => '',
                 'coin' => 0,
+                'points' => 0,
                 'money' => 0,
                 'isrobot' => 0,
                 'status' => 0,
@@ -506,11 +1142,14 @@ class Common
             ];
         }
 
+        $points = self::getUnifiedPoints($uid, $ifexit);
+
         return [
             'id' => $ifexit->id,
             'username' => $ifexit->username,
             'nickname' => $ifexit->nickname,
-            'coin' => $ifexit->score,
+            'coin' => $points,
+            'points' => $points,
             'money' => $ifexit->money,
             'isrobot' => $ifexit->isrobot,
             'status' => $ifexit->status,
@@ -528,6 +1167,14 @@ class Common
         $coin = max(0, (int)$coin);
         if ($coin <= 0) {
             return 1;
+        }
+
+        $amount = $type == 0 ? -$coin : $coin;
+        $logType = $type == 0 ? 'killer_bet' : 'killer_win';
+        $description = $type == 0 ? 'Killer game bet' : 'Killer game reward';
+        $appChange = self::changeAppPointsForKiller($uid, $amount, $logType, $description);
+        if ($appChange !== null) {
+            return $appChange ? 1 : 0;
         }
 
         if ($type == 0) {
@@ -549,7 +1196,7 @@ class Common
         return 1;
     }
 
-    static function robotmove($roomid = 2, $mode = self::MODE_AI)
+    static function robotmove($roomid = 2, $mode = self::MODE_AI, $broadcast = true)
     {
         $mode = self::normalizeMode($mode);
         if ($mode !== self::MODE_AI) {
@@ -583,11 +1230,14 @@ class Common
                 'smallroomid' => $smallroomid
             ];
 
-            Gateway::sendToGroup(self::roomGroup($roomid, $mode), self::returndata('usertouzhu', [
+            if ($broadcast) {
+                Gateway::sendToGroup(self::roomGroup($roomid, $mode), self::returndata('usertouzhu', [
                 'code' => 1,
                 'msg' => '用户投注位置变更',
                 'info' => $to
             ]));
+
+            }
 
             $coin = self::randomRobotBetAmount();
 
@@ -595,7 +1245,8 @@ class Common
                 'expect' => $expect,
                 'uid' => $v['id'],
                 'roomid' => $roomid,
-                'ifyouxiao' => 1
+                'ifyouxiao' => 1,
+                'status' => 0
             ]);
             $query = self::applyModeWhere($query, $mode);
             $exists = $query->first();
@@ -619,11 +1270,14 @@ class Common
                 Db::table('wa_touzhu')->insert($touzhu);
             }
 
-            Gateway::sendToGroup(self::roomGroup($roomid, $mode), self::returndata('updatesmallcoin', [
+            if ($broadcast) {
+                Gateway::sendToGroup(self::roomGroup($roomid, $mode), self::returndata('updatesmallcoin', [
                 'code' => 1,
                 'msg' => '小房间投注总额更新',
                 'info' => self::getroom_coin_list($roomid, $expect, $mode)
             ]));
+
+            }
 
             $moved[] = $to;
         }

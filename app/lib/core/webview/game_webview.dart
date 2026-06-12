@@ -1,3 +1,6 @@
+import 'dart:collection';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -109,6 +112,25 @@ class GameWebViewState extends State<GameWebView> {
     });
   }
 
+  UnmodifiableListView<UserScript> _initialUserScripts() {
+    final initDataJson = jsonEncode(widget.userInfo.toJson());
+    final messageJson = jsonEncode({
+      'action': 'init',
+      'data': widget.userInfo.toJson(),
+    });
+
+    return UnmodifiableListView<UserScript>([
+      UserScript(
+        injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+        source: '''
+window.__GAME_APP_INIT__ = $initDataJson;
+window.__KILLER_APP_INIT__ = $initDataJson;
+window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
+''',
+      ),
+    ]);
+  }
+
   String _shortUrl(Object? url) {
     final value = (url ?? '').toString();
     if (value.length <= 160) return value;
@@ -188,10 +210,14 @@ class GameWebViewState extends State<GameWebView> {
                   initialUrlRequest: URLRequest(
                     url: WebUri(widget.gameUrl),
                   ),
+                  initialUserScripts: _initialUserScripts(),
                   initialSettings: InAppWebViewSettings(
                     javaScriptEnabled: true,
                     domStorageEnabled: true,
                     databaseEnabled: true,
+                    clearCache: true,
+                    cacheEnabled: false,
+                    cacheMode: CacheMode.LOAD_NO_CACHE,
                     mediaPlaybackRequiresUserGesture: false,
                     allowsInlineMediaPlayback: true,
                     userAgent:
@@ -203,6 +229,7 @@ class GameWebViewState extends State<GameWebView> {
                   ),
                   onWebViewCreated: (controller) {
                     _webViewController = controller;
+                    controller.clearCache();
                     _addDebugLog('webview created');
                     // Attach JSBridge to the controller — registers all JS handlers.
                     widget.jsBridge.attach(controller);
@@ -327,7 +354,7 @@ class GameWebViewState extends State<GameWebView> {
     if (!_debugPanelExpanded) {
       return Positioned(
         top: MediaQuery.of(context).padding.top + 8,
-        right: 8,
+        left: MediaQuery.of(context).size.width / 2 - 24,
         child: Material(
           color: Colors.black54,
           shape: const CircleBorder(),

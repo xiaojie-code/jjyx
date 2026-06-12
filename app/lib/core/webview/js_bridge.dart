@@ -10,24 +10,32 @@ import '../network/api_endpoints.dart';
 class GameUserInfo {
   final String token;
   final int userId;
+  final String account;
   final String nickname;
   final String avatar;
   final double points;
+  final int gameId;
 
   const GameUserInfo({
     required this.token,
     required this.userId,
+    required this.account,
     required this.nickname,
     required this.avatar,
     required this.points,
+    this.gameId = 0,
   });
 
   Map<String, dynamic> toJson() => {
         'token': token,
         'userId': userId,
+        'account': account,
         'nickname': nickname,
         'avatar': avatar,
         'points': points,
+        'balance': points,
+        'coin': points,
+        'gameId': gameId,
       };
 }
 
@@ -44,6 +52,7 @@ class JSBridge {
 
   InAppWebViewController? _controller;
   GameUserInfo? _userInfo;
+  double? _latestPoints;
 
   JSBridge({
     required ApiClient apiClient,
@@ -72,6 +81,7 @@ class JSBridge {
   /// Send the `init` message with user info when the game page finishes loading.
   Future<void> sendInit(GameUserInfo userInfo) async {
     _userInfo = userInfo;
+    _latestPoints = userInfo.points;
     await _sendToH5('init', userInfo.toJson());
   }
 
@@ -83,7 +93,29 @@ class JSBridge {
     await _sendToH5('deductPointsResult', {
       'success': success,
       'balance': balance,
+      'points': balance,
+      'coin': balance,
     });
+  }
+
+  /// Send a generic point change result back to H5.
+  Future<void> sendPointsChangeResult({
+    required bool success,
+    required double balance,
+    required double amount,
+    String? requestId,
+  }) async {
+    final data = {
+      'success': success,
+      'balance': balance,
+      'points': balance,
+      'coin': balance,
+      'amount': amount,
+    };
+    if (requestId != null && requestId.isNotEmpty) {
+      data['requestId'] = requestId;
+    }
+    await _sendToH5('pointsChangeResult', data);
   }
 
   /// Send the result of a skin purchase back to H5.
@@ -124,6 +156,9 @@ class JSBridge {
         case 'deductPoints':
           _handleDeductPoints(data);
           break;
+        case 'changePoints':
+          _handleChangePoints(data);
+          break;
         case 'gameSettle':
           _handleGameSettle(data);
           break;
@@ -150,25 +185,80 @@ class JSBridge {
   Future<void> _handleDeductPoints(Map<String, dynamic> data) async {
     final amount = (data['amount'] as num?)?.toDouble() ?? 0;
     final reason = data['reason'] as String? ?? '';
+    if (amount <= 0) {
+      await sendDeductPointsResult(
+        success: false,
+        balance: _userInfo?.points ?? 0,
+      );
+      return;
+    }
 
     try {
+      final spendAmount = -amount.abs();
       final result = await _apiClient.post<Map<String, dynamic>>(
-        ApiEndpoints.currencyBalance,
+        ApiEndpoints.gamePointsChange(_gameId),
         data: {
-          'amount': amount,
-          'reason': reason,
-          'gameId': _gameId,
-          'type': 'game_spend',
+          'amount': spendAmount,
+          'reason': reason.isNotEmpty ? reason : 'game_spend',
         },
       );
 
-      final balance = (result?['balance'] as num?)?.toDouble() ?? 0;
+      final balance = (result?['balance'] as num?)?.toDouble() ??
+          (result?['points'] as num?)?.toDouble() ??
+          0;
+      _latestPoints = balance;
       await sendDeductPointsResult(success: true, balance: balance);
     } catch (e) {
       debugPrint('[JSBridge] deductPoints failed: $e');
       await sendDeductPointsResult(
         success: false,
-        balance: _userInfo?.points ?? 0,
+        balance: _latestPoints ?? _userInfo?.points ?? 0,
+      );
+    }
+  }
+
+  /// Handle `changePoints` — generic H5 point delta.
+  Future<void> _handleChangePoints(Map<String, dynamic> data) async {
+    final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+    final reason = data['reason'] as String? ?? '';
+    final requestId = data['requestId']?.toString();
+    if (amount == 0) {
+      await sendPointsChangeResult(
+        success: false,
+        balance: _latestPoints ?? _userInfo?.points ?? 0,
+        amount: amount,
+        requestId: requestId,
+      );
+      return;
+    }
+
+    try {
+      final requestData = Map<String, dynamic>.from(data);
+      requestData['amount'] = amount;
+      requestData['reason'] =
+          reason.isNotEmpty ? reason : 'game_points_change';
+      final result = await _apiClient.post<Map<String, dynamic>>(
+        ApiEndpoints.gamePointsChange(_gameId),
+        data: requestData,
+      );
+
+      final balance = (result?['balance'] as num?)?.toDouble() ??
+          (result?['points'] as num?)?.toDouble() ??
+          0;
+      _latestPoints = balance;
+      await sendPointsChangeResult(
+        success: true,
+        balance: balance,
+        amount: amount,
+        requestId: requestId,
+      );
+    } catch (e) {
+      debugPrint('[JSBridge] changePoints failed: $e');
+      await sendPointsChangeResult(
+        success: false,
+        balance: _latestPoints ?? _userInfo?.points ?? 0,
+        amount: amount,
+        requestId: requestId,
       );
     }
   }
@@ -176,11 +266,15 @@ class JSBridge {
   /// Handle `gameSettle` — game over, record results and award items.
   Future<void> _handleGameSettle(Map<String, dynamic> data) async {
     try {
+      final pointsEarned = data['pointsEarned'] ??
+          data['points'] ??
+          data['coin'] ??
+          data['score'];
       await _apiClient.post(
         ApiEndpoints.gameSettle(_gameId),
         data: {
           'rank': data['rank'],
-          'pointsEarned': data['pointsEarned'],
+          'pointsEarned': pointsEarned,
           'items': data['items'],
         },
       );
@@ -194,18 +288,23 @@ class JSBridge {
   Future<void> _handleBuySkin(Map<String, dynamic> data) async {
     final skinId = data['skinId'] as String? ?? '';
     final cost = (data['cost'] as num?)?.toDouble() ?? 0;
+    if (skinId.isEmpty || cost <= 0) {
+      await sendBuySkinResult(success: false, skinId: skinId);
+      return;
+    }
 
     try {
-      await _apiClient.post(
-        ApiEndpoints.currencyBalance,
+      final result = await _apiClient.post<Map<String, dynamic>>(
+        ApiEndpoints.gamePointsChange(_gameId),
         data: {
-          'amount': cost,
-          'reason': 'buy_skin',
+          'amount': -cost.abs(),
+          'reason': 'buy_skin:$skinId',
           'skinId': skinId,
-          'gameId': _gameId,
-          'type': 'game_spend',
         },
       );
+      final balance = (result?['balance'] as num?)?.toDouble() ??
+          (result?['points'] as num?)?.toDouble();
+      if (balance != null) _latestPoints = balance;
       await sendBuySkinResult(success: true, skinId: skinId);
     } catch (e) {
       debugPrint('[JSBridge] buySkin failed: $e');
@@ -226,7 +325,12 @@ class JSBridge {
       );
 
       final points = (result?['points'] as num?)?.toDouble() ?? 0;
-      await _sendToH5('balanceUpdate', {'points': points});
+      _latestPoints = points;
+      await _sendToH5('balanceUpdate', {
+        'points': points,
+        'balance': points,
+        'coin': points,
+      });
     } catch (e) {
       debugPrint('[JSBridge] getBalance failed: $e');
     }

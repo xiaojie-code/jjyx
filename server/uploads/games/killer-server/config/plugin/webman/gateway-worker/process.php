@@ -4,11 +4,13 @@ use Webman\GatewayWorker\Gateway;
 use Webman\GatewayWorker\BusinessWorker;
 use Webman\GatewayWorker\Register;
 
+$isWindows = DIRECTORY_SEPARATOR === '\\';
+
 return [
     'gateway' => [
         'handler'     => Gateway::class,
         'listen'      => 'websocket://0.0.0.0:7272',
-        'count'       => cpu_count(),
+        'count'       => $isWindows ? 1 : cpu_count(),
         'reloadable'  => false,
         'constructor' => ['config' => [
             'lanIp'           => '127.0.0.1',
@@ -21,10 +23,10 @@ return [
     ],
     'worker' => [
         'handler'     => BusinessWorker::class,
-        'count'       => cpu_count()*2,
+        'count'       => $isWindows ? 1 : cpu_count() * 2,
         'constructor' => ['config' => [
             'eventHandler'    => plugin\webman\gateway\Events::class,
-            'name'            => 'ChatBusinessWorker',
+            'name'            => 'KillerBusinessWorker',
             'registerAddress' => '127.0.0.1:1236',
         ]]
     ],

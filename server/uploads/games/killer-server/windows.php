@@ -22,6 +22,16 @@ if (class_exists('Dotenv\Dotenv') && file_exists(base_path() . '/.env')) {
 
 App::loadAllConfig(['route']);
 
+if (DIRECTORY_SEPARATOR === '\\') {
+    $path = getenv('PATH') ?: '';
+    $phpDir = is_file(PHP_BINARY) ? dirname(PHP_BINARY) : PHP_BINDIR;
+    if ($phpDir && stripos($path, $phpDir) === false) {
+        $path = $phpDir . PATH_SEPARATOR . $path;
+        putenv('PATH=' . $path);
+        $_SERVER['PATH'] = $path;
+    }
+}
+
 $errorReporting = config('app.error_reporting');
 if (isset($errorReporting)) {
     error_reporting($errorReporting);
@@ -93,11 +103,30 @@ if ($monitorConfig = config('process.monitor.constructor')) {
 
 function popen_processes($processFiles)
 {
-    $cmd = '"' . PHP_BINARY . '" ' . implode(' ', $processFiles);
-    $descriptorspec = [STDIN, STDOUT, STDOUT];
+    $phpBinary = PHP_BINARY;
+    if (!is_file($phpBinary)) {
+        $candidate = PHP_BINDIR . DIRECTORY_SEPARATOR . (DIRECTORY_SEPARATOR === '\\' ? 'php.exe' : 'php');
+        if (is_file($candidate)) {
+            $phpBinary = $candidate;
+        }
+    }
+    $quotedProcessFiles = array_map(static fn($file) => '"' . $file . '"', $processFiles);
+    $cmd = '"' . $phpBinary . '" ' . implode(' ', $quotedProcessFiles);
+    $logDir = runtime_path() . DIRECTORY_SEPARATOR . 'logs';
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0777, true);
+    }
+    $descriptorspec = [
+        ['pipe', 'r'],
+        ['file', $logDir . DIRECTORY_SEPARATOR . 'windows-child.out.log', 'a'],
+        ['file', $logDir . DIRECTORY_SEPARATOR . 'windows-child.err.log', 'a'],
+    ];
     $resource = proc_open($cmd, $descriptorspec, $pipes, null, null, ['bypass_shell' => true]);
     if (!$resource) {
         exit("Can not execute $cmd\r\n");
+    }
+    if (isset($pipes[0]) && is_resource($pipes[0])) {
+        fclose($pipes[0]);
     }
     return $resource;
 }

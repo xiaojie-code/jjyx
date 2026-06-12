@@ -66,6 +66,924 @@
     </div>
   </div>
 
+<script>
+  (function () {
+    var ACTIVE_SAVE_KEY = "user_local_save_item";
+    var ACTIVE_SAVE_OWNER_KEY = "fishing_active_account";
+    var appInitData = getInitialAppData();
+    var pendingGold = null;
+    var suppressGoldSync = false;
+    var installed = false;
+    var textPatchInstalled = false;
+    var adPatchInstalled = false;
+    var lastKnownGold = null;
+    var nextGoldChangeReason = "";
+    var lastAccountIdentity = "";
+    var saveStoragePatched = false;
+    var nativeStorageGetItem = null;
+    var nativeStorageSetItem = null;
+    var nativeStorageRemoveItem = null;
+    var remoteSaveLoaded = false;
+    var remoteSaveData = null;
+    var suppressSaveUpload = false;
+    var saveUploadTimer = null;
+    var economyPatchInstalled = false;
+    var ECONOMY_VERSION = 3;
+
+    function getInitialAppData() {
+      try {
+        if (window.__GAME_APP_INIT__) return window.__GAME_APP_INIT__;
+        if (window.__APP_GAME_INIT_MESSAGE__ && window.__APP_GAME_INIT_MESSAGE__.data) {
+          return window.__APP_GAME_INIT_MESSAGE__.data;
+        }
+      } catch (error) {}
+      return {};
+    }
+
+    function toNumber(value) {
+      var num = Number(value);
+      return isFinite(num) ? num : 0;
+    }
+
+    function postGameMessage(action, data) {
+      try {
+        if (
+          window.flutter_inappwebview &&
+          typeof window.flutter_inappwebview.callHandler === "function"
+        ) {
+          window.flutter_inappwebview.callHandler(
+            "gameMessage",
+            JSON.stringify({ action: action, data: data || {} })
+          );
+        }
+      } catch (error) {
+        console.warn("[fishing] app bridge failed:", error);
+      }
+    }
+
+    function syncGoldDelta(delta, reason) {
+      if (!delta) return;
+      postGameMessage("changePoints", {
+        amount: delta,
+        reason: reason || (delta > 0 ? "fishing_points_earn" : "fishing_points_spend"),
+      });
+    }
+
+    function scaleEconomyValue(value) {
+      var num = toNumber(value);
+      if (num <= 0) return 0;
+      if (num < 100) return Math.max(1, Math.floor(num));
+      return Math.max(10, Math.floor(num / 100) * 10);
+    }
+
+    function hasRealAccountData() {
+      return !!(appInitData && (appInitData.userId || appInitData.account || appInitData.token));
+    }
+
+    function getAccountIdentity() {
+      if (!hasRealAccountData()) return "";
+      return String(appInitData.userId || appInitData.account || appInitData.token)
+        .replace(/[^a-zA-Z0-9_.-]/g, "_");
+    }
+
+    function getScopedSaveKey() {
+      var account = getAccountIdentity();
+      return account ? ACTIVE_SAVE_KEY + ":" + account : "";
+    }
+
+    function activateAccountSave() {
+      var scopedKey = getScopedSaveKey();
+      if (!scopedKey || scopedKey === lastAccountIdentity) return;
+      var account = getAccountIdentity();
+      var scopedSave = localStorage.getItem(scopedKey);
+      if (scopedSave) {
+        localStorage.setItem(ACTIVE_SAVE_KEY, scopedSave);
+      } else {
+        var activeOwner = localStorage.getItem(ACTIVE_SAVE_OWNER_KEY);
+        var activeSave = localStorage.getItem(ACTIVE_SAVE_KEY);
+        if (activeSave && (!activeOwner || activeOwner === account)) {
+          localStorage.setItem(scopedKey, activeSave);
+        } else {
+          localStorage.removeItem(ACTIVE_SAVE_KEY);
+        }
+      }
+      if (account) {
+        localStorage.setItem(ACTIVE_SAVE_OWNER_KEY, account);
+      }
+      lastAccountIdentity = scopedKey;
+    }
+
+    function mirrorActiveSaveToAccount() {
+      var scopedKey = getScopedSaveKey();
+      if (!scopedKey) return;
+      var raw = localStorage.getItem(ACTIVE_SAVE_KEY);
+      if (raw) {
+        localStorage.setItem(scopedKey, raw);
+        localStorage.setItem(ACTIVE_SAVE_OWNER_KEY, getAccountIdentity());
+      }
+    }
+
+    function getTodayString() {
+      var now = new Date();
+      var y = now.getFullYear();
+      var m = String(now.getMonth() + 1).padStart(2, "0");
+      var d = String(now.getDate()).padStart(2, "0");
+      return y + "-" + m + "-" + d;
+    }
+
+    function dailyRewardKey() {
+      var account = getAccountIdentity() || "guest";
+      return "fishing_daily_login_reward:" + account + ":" + getTodayString();
+    }
+
+    function balanceFromData(data, fallback) {
+      if (typeof data.points !== "undefined") return data.points;
+      if (typeof data.balance !== "undefined") return data.balance;
+      if (typeof data.coin !== "undefined") return data.coin;
+      return typeof fallback !== "undefined" ? fallback : 0;
+    }
+
+    function getQueryParam(name) {
+      try {
+        return new URLSearchParams(window.location.search || "").get(name);
+      } catch (error) {
+        return "";
+      }
+    }
+
+    function getGameId() {
+      return Math.floor(toNumber(
+        appInitData.gameId ||
+        appInitData.game_id ||
+        getQueryParam("gameId") ||
+        getQueryParam("game_id")
+      ));
+    }
+
+    function getAuthToken() {
+      return String(appInitData.token || appInitData.accessToken || appInitData.access_token || "");
+    }
+
+    function getApiPath(suffix) {
+      var gameId = getGameId();
+      if (!gameId) return "";
+      return "/api/game/" + gameId + suffix;
+    }
+
+    function rawGetItem(key) {
+      var getter = nativeStorageGetItem || Storage.prototype.getItem;
+      return getter.call(localStorage, key);
+    }
+
+    function rawSetItem(key, value) {
+      var setter = nativeStorageSetItem || Storage.prototype.setItem;
+      return setter.call(localStorage, key, value);
+    }
+
+    function rawRemoveItem(key) {
+      var remover = nativeStorageRemoveItem || Storage.prototype.removeItem;
+      return remover.call(localStorage, key);
+    }
+
+    function migrateFishingSaveEconomy(save) {
+      if (!save || typeof save !== "object" || save.__jjyxEconomyVersion === ECONOMY_VERSION) {
+        return false;
+      }
+      if (save.fishBoxInfo && Array.isArray(save.fishBoxInfo.items)) {
+        save.fishBoxInfo.items.forEach(function (item) {
+          if (item && typeof item.price !== "undefined") {
+            item.price = scaleEconomyValue(item.price);
+          }
+        });
+      }
+      save.__jjyxEconomyVersion = ECONOMY_VERSION;
+      return true;
+    }
+
+    function migrateStoredFishingSave(key) {
+      if (!key) return false;
+      try {
+        var raw = rawGetItem(key);
+        if (!raw) return false;
+        var save = JSON.parse(raw);
+        if (!migrateFishingSaveEconomy(save)) return false;
+        rawSetItem(key, JSON.stringify(save));
+        return true;
+      } catch (error) {
+        console.warn("[fishing] economy save migration failed:", error);
+        return false;
+      }
+    }
+
+    function migrateActiveFishingSaveEconomy() {
+      var changed = migrateStoredFishingSave(ACTIVE_SAVE_KEY);
+      var scopedKey = getScopedSaveKey();
+      if (scopedKey) changed = migrateStoredFishingSave(scopedKey) || changed;
+      return changed;
+    }
+
+    function unwrapApiResponse(payload) {
+      if (payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "data")) {
+        return payload.data;
+      }
+      return payload;
+    }
+
+    function sendApiJsonSync(method, path, body) {
+      var token = getAuthToken();
+      if (!path || !token || !window.XMLHttpRequest) return null;
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open(method, path, false);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("Accept", "application/json");
+        xhr.setRequestHeader("Authorization", "Bearer " + token);
+        xhr.send(body ? JSON.stringify(body) : null);
+        if (xhr.status < 200 || xhr.status >= 300) {
+          console.warn("[fishing] api sync failed:", method, path, xhr.status, xhr.responseText);
+          return null;
+        }
+        var parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+        if (parsed && typeof parsed.code !== "undefined" && parsed.code !== 0) {
+          console.warn("[fishing] api sync code failed:", parsed);
+          return null;
+        }
+        return unwrapApiResponse(parsed);
+      } catch (error) {
+        console.warn("[fishing] api sync error:", method, path, error);
+        return null;
+      }
+    }
+
+    function sendApiJsonAsync(method, path, body) {
+      var token = getAuthToken();
+      if (!path || !token || !window.fetch) return Promise.resolve(null);
+      return fetch(path, {
+        method: method,
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": "Bearer " + token,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      }).then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      }).then(function (payload) {
+        if (payload && typeof payload.code !== "undefined" && payload.code !== 0) {
+          throw new Error(payload.message || "api failed");
+        }
+        return unwrapApiResponse(payload);
+      }).catch(function (error) {
+        console.warn("[fishing] api async error:", method, path, error);
+        return null;
+      });
+    }
+
+    function markDailyRewardLocal(amount, balance, duplicate) {
+      var key = dailyRewardKey();
+      rawSetItem(key, JSON.stringify({
+        account: getAccountIdentity() || "guest",
+        date: getTodayString(),
+        amount: Math.max(0, Math.floor(toNumber(amount))),
+        balance: Math.max(0, Math.floor(toNumber(balance))),
+        duplicate: !!duplicate,
+        claimedAt: new Date().toISOString(),
+      }));
+    }
+
+    function clearDailyRewardLocalIfNeeded(dailyClaimed) {
+      if (!dailyClaimed) {
+        rawRemoveItem(dailyRewardKey());
+      }
+    }
+
+    function updateLocalSaveGold(gold) {
+      try {
+        var raw = localStorage.getItem("user_local_save_item");
+        if (!raw) return;
+        var save = JSON.parse(raw);
+        save.gold = Math.max(0, Math.floor(toNumber(gold)));
+        localStorage.setItem("user_local_save_item", JSON.stringify(save));
+        mirrorActiveSaveToAccount();
+      } catch (error) {
+        console.warn("[fishing] update local save failed:", error);
+      }
+    }
+
+    function normalizeSaveForRuntime(saveData, balance, dailyClaimed) {
+      if (!saveData || typeof saveData !== "object") return null;
+      var save = JSON.parse(JSON.stringify(saveData));
+      if (typeof balance !== "undefined" && balance !== null) {
+        save.gold = Math.max(0, Math.floor(toNumber(balance)));
+      }
+      if (dailyClaimed === true) {
+        save.isGetGold = true;
+        save.fishingDailyRewardDate = getTodayString();
+      } else if (dailyClaimed === false && save.fishingDailyRewardDate !== getTodayString()) {
+        save.isGetGold = false;
+      }
+      migrateFishingSaveEconomy(save);
+      return save;
+    }
+
+    function writeActiveSaveFromRemote(saveData, balance, dailyClaimed) {
+      var save = normalizeSaveForRuntime(saveData, balance, dailyClaimed);
+      if (!save) return null;
+      suppressSaveUpload = true;
+      try {
+        rawSetItem(ACTIVE_SAVE_KEY, JSON.stringify(save));
+        mirrorActiveSaveToAccount();
+      } finally {
+        suppressSaveUpload = false;
+      }
+      return save;
+    }
+
+    function applySaveToGame(saveData) {
+      if (!saveData || !window.UserBaseInfo || typeof window.UserBaseInfo.ChangeUserBaseInfoFormat !== "function") {
+        return;
+      }
+      suppressGoldSync = true;
+      suppressSaveUpload = true;
+      try {
+        window.UserBaseInfo.ChangeUserBaseInfoFormat(saveData);
+        if (typeof window.UserBaseInfo.saveUserInfoData === "function") {
+          window.UserBaseInfo.saveUserInfoData(true);
+        }
+        var canvas = window.cc && cc.director && cc.director.getScene()
+          ? cc.director.getScene().getChildByName("Canvas")
+          : null;
+        if (canvas) {
+          canvas.emit("updateGameView");
+        }
+      } catch (error) {
+        console.warn("[fishing] apply save failed:", error);
+      } finally {
+        suppressSaveUpload = false;
+        suppressGoldSync = false;
+      }
+    }
+
+    function loadRemoteSaveSync(force) {
+      if (remoteSaveLoaded && !force) return remoteSaveData;
+      remoteSaveLoaded = true;
+      var path = getApiPath("/save");
+      var data = sendApiJsonSync("GET", path);
+      if (!data) return remoteSaveData;
+
+      pendingGold = Math.max(0, Math.floor(toNumber(balanceFromData(data, pendingGold || 0))));
+      lastKnownGold = pendingGold;
+      clearDailyRewardLocalIfNeeded(data.dailyClaimed === true);
+      if (data.dailyClaimed === true) {
+        markDailyRewardLocal(0, pendingGold, true);
+      }
+
+      if (data.saveData) {
+        remoteSaveData = writeActiveSaveFromRemote(data.saveData, pendingGold, data.dailyClaimed === true);
+        return remoteSaveData;
+      }
+
+      updateLocalSaveGold(pendingGold);
+      return remoteSaveData;
+    }
+
+    function uploadActiveSave(rawValue) {
+      if (suppressSaveUpload) return;
+      var path = getApiPath("/save");
+      if (!path || !getAuthToken()) return;
+      var saveData = null;
+      try {
+        saveData = typeof rawValue === "string" ? JSON.parse(rawValue) : rawValue;
+      } catch (error) {
+        console.warn("[fishing] parse save for upload failed:", error);
+        return;
+      }
+      if (!saveData || typeof saveData !== "object") return;
+
+      if (saveUploadTimer) clearTimeout(saveUploadTimer);
+      saveUploadTimer = setTimeout(function () {
+        sendApiJsonAsync("POST", path, { saveData: saveData }).then(function (data) {
+          if (!data) return;
+          var balance = balanceFromData(data, pendingGold || saveData.gold || 0);
+          pendingGold = Math.max(0, Math.floor(toNumber(balance)));
+          lastKnownGold = pendingGold;
+          if (data.saveData) {
+            remoteSaveData = writeActiveSaveFromRemote(data.saveData, pendingGold, data.dailyClaimed === true);
+          }
+        });
+      }, 900);
+    }
+
+    function installSaveStoragePatch() {
+      if (saveStoragePatched || !window.Storage || !Storage.prototype) return;
+      saveStoragePatched = true;
+      nativeStorageGetItem = Storage.prototype.getItem;
+      nativeStorageSetItem = Storage.prototype.setItem;
+      nativeStorageRemoveItem = Storage.prototype.removeItem;
+
+      Storage.prototype.getItem = function patchedGetItem(key) {
+        if (this === localStorage && key === ACTIVE_SAVE_KEY) {
+          loadRemoteSaveSync(false);
+        }
+        return nativeStorageGetItem.apply(this, arguments);
+      };
+
+      Storage.prototype.setItem = function patchedSetItem(key, value) {
+        var result = nativeStorageSetItem.apply(this, arguments);
+        if (this === localStorage && key === ACTIVE_SAVE_KEY) {
+          mirrorActiveSaveToAccount();
+          uploadActiveSave(value);
+        }
+        return result;
+      };
+    }
+
+    function normalizeGameText(value) {
+      if (typeof value !== "string") return value;
+      return value
+        .replace(/游戏币|金币|金幣|钻石|鑽石|蓝钻|藍鑽|好运币|好運幣|劳动力星|劳动星/g, "积分")
+        .replace(/获取积分/g, "获取积分");
+    }
+
+    function walkNode(node, visitor) {
+      if (!node) return;
+      visitor(node);
+      var children = node.children || [];
+      for (var i = 0; i < children.length; i++) {
+        walkNode(children[i], visitor);
+      }
+    }
+
+    function hideNode(node) {
+      if (node) node.active = false;
+    }
+
+    function hideAdRewardNode(labelNode) {
+      var current = labelNode;
+      for (var i = 0; i < 4 && current; i++) {
+        if (cc.Button && typeof current.getComponent === "function" && current.getComponent(cc.Button)) {
+          hideNode(current);
+          return;
+        }
+        current = current.parent;
+      }
+    }
+
+    function normalizeSceneTextAndAdButtons() {
+      if (!window.cc || !cc.director || !cc.Label) return;
+      var scene = cc.director.getScene && cc.director.getScene();
+      if (!scene) return;
+      walkNode(scene, function (node) {
+        var name = String(node.name || "").toLowerCase();
+        if (
+          name.indexOf("gift_video") >= 0 ||
+          name.indexOf("video") >= 0 ||
+          name.indexOf("get_glod") >= 0 ||
+          name.indexOf("get_gold") >= 0
+        ) {
+          hideNode(node);
+        }
+        if (typeof node.getComponent !== "function") return;
+        var label = node.getComponent(cc.Label);
+        if (!label) return;
+        var next = normalizeGameText(label.string);
+        if (next !== label.string) label.string = next;
+        if (/观看视频|看视频|视频广告|广告奖励|获取积分/.test(next)) {
+          hideAdRewardNode(node);
+        }
+      });
+    }
+
+    function installTextPatch() {
+      if (textPatchInstalled || !window.cc || !cc.Label || !cc.Label.prototype) return;
+      var proto = cc.Label.prototype;
+      var owner = proto;
+      var descriptor = null;
+      while (owner && !descriptor) {
+        descriptor = Object.getOwnPropertyDescriptor(owner, "string");
+        owner = Object.getPrototypeOf(owner);
+      }
+      if (descriptor && descriptor.set && descriptor.get) {
+        Object.defineProperty(proto, "string", {
+          configurable: true,
+          enumerable: descriptor.enumerable,
+          get: function () {
+            return descriptor.get.call(this);
+          },
+          set: function (value) {
+            descriptor.set.call(this, normalizeGameText(value));
+          },
+        });
+      }
+      textPatchInstalled = true;
+      normalizeSceneTextAndAdButtons();
+    }
+
+    function refreshFishingGold(balance) {
+      var gold = Math.max(0, Math.floor(toNumber(balance)));
+      pendingGold = gold;
+      lastKnownGold = gold;
+      updateLocalSaveGold(gold);
+
+      if (!window.UserBaseInfo || typeof window.UserBaseInfo.setUserGold !== "function") {
+        return;
+      }
+
+      suppressGoldSync = true;
+      try {
+        window.UserBaseInfo.setUserGold(gold);
+        if (typeof window.UserBaseInfo.saveUserInfoData === "function") {
+          window.UserBaseInfo.saveUserInfoData(true);
+        }
+        var canvas = window.cc && cc.director && cc.director.getScene()
+          ? cc.director.getScene().getChildByName("Canvas")
+          : null;
+        if (canvas) {
+          canvas.emit("updateGameView");
+        }
+      } finally {
+        suppressGoldSync = false;
+      }
+    }
+
+    function readCurrentGold() {
+      if (!window.UserBaseInfo || typeof window.UserBaseInfo.getUserGold !== "function") {
+        return null;
+      }
+      return Math.max(0, Math.floor(toNumber(window.UserBaseInfo.getUserGold())));
+    }
+
+    function syncCurrentGold(reason) {
+      var current = readCurrentGold();
+      if (current === null) return;
+      if (lastKnownGold === null) {
+        lastKnownGold = current;
+        updateLocalSaveGold(current);
+        return;
+      }
+      var delta = current - lastKnownGold;
+      if (delta !== 0) {
+        updateLocalSaveGold(current);
+        if (!suppressGoldSync) {
+          syncGoldDelta(delta, reason || nextGoldChangeReason || "");
+        }
+        lastKnownGold = current;
+      }
+    }
+
+    function installAdPatch() {
+      if (adPatchInstalled || !window.AdvertisementTools) return;
+      adPatchInstalled = true;
+      window.AdvertisementTools.getVideoErrCode = function () { return -1; };
+      window.AdvertisementTools.createRewardedVideoAd = function () { return false; };
+      window.AdvertisementTools.loadRewardedVideoAd = function () { return false; };
+      window.AdvertisementTools.showRewardedVideoAd = function (callback) {
+        if (callback) callback(false);
+        return false;
+      };
+      window.AdvertisementTools.createFishGetBannerAd = function () { return false; };
+      window.AdvertisementTools.createSkillUpdateBannerAd = function () { return false; };
+      window.AdvertisementTools.closeSkillUpdateBannerAd = function () {};
+      window.AdvertisementTools.closeFishGetBannerAd = function () {};
+    }
+
+    function scaleItemPrices(items) {
+      if (!Array.isArray(items)) return;
+      items.forEach(function (group) {
+        if (!Array.isArray(group)) return;
+        group.forEach(function (item) {
+          if (item && typeof item.price !== "undefined" && !item.__jjyxEconomyScaled) {
+            item.price = scaleEconomyValue(item.price);
+            Object.defineProperty(item, "__jjyxEconomyScaled", { value: true });
+          }
+        });
+      });
+    }
+
+    function scaleSkillCosts() {
+      if (
+        !window.SKILL_BASE_INFO ||
+        !Array.isArray(window.SKILL_BASE_INFO.lvGold) ||
+        window.SKILL_BASE_INFO.__jjyxEconomyScaled
+      ) {
+        return;
+      }
+      window.SKILL_BASE_INFO.lvGold = window.SKILL_BASE_INFO.lvGold.map(scaleEconomyValue);
+      Object.defineProperty(window.SKILL_BASE_INFO, "__jjyxEconomyScaled", { value: true });
+    }
+
+    function scaleSceneCosts() {
+      if (typeof window.getSceneCount !== "function" || typeof window.getSceneInfo !== "function") return;
+      for (var i = 0; i < window.getSceneCount(); i += 1) {
+        var scene = window.getSceneInfo(i);
+        if (scene && typeof scene.consume !== "undefined" && !scene.__jjyxEconomyScaled) {
+          scene.consume = scaleEconomyValue(scene.consume);
+          Object.defineProperty(scene, "__jjyxEconomyScaled", { value: true });
+        }
+      }
+    }
+
+    function scaleTaskRewards() {
+      if (typeof window.getTaskForID !== "function") return;
+      for (var i = 0; i < 300; i += 1) {
+        var task = window.getTaskForID(i);
+        if (!task) continue;
+        if (task.type === 1) continue;
+        if (typeof task.gold !== "undefined" && !task.__jjyxEconomyScaled) {
+          task.gold = scaleEconomyValue(task.gold);
+          Object.defineProperty(task, "__jjyxEconomyScaled", { value: true });
+        }
+      }
+    }
+
+    function patchFishPriceFactory() {
+      if (
+        typeof window.CreateFishInfoForID !== "function" ||
+        window.CreateFishInfoForID.__jjyxEconomyPatched
+      ) {
+        return;
+      }
+      var originalCreateFishInfoForID = window.CreateFishInfoForID;
+      window.CreateFishInfoForID = function patchedCreateFishInfoForID() {
+        var fish = originalCreateFishInfoForID.apply(this, arguments);
+        if (fish && typeof fish.getFishPrice === "function" && !fish.__jjyxEconomyPatched) {
+          var originalGetFishPrice = fish.getFishPrice.bind(fish);
+          fish.getFishPrice = function patchedGetFishPrice() {
+            return scaleEconomyValue(originalGetFishPrice());
+          };
+          Object.defineProperty(fish, "__jjyxEconomyPatched", { value: true });
+        }
+        return fish;
+      };
+      Object.defineProperty(window.CreateFishInfoForID, "__jjyxEconomyPatched", { value: true });
+    }
+
+    function patchUserEconomyMethods() {
+      if (!window.UserBaseInfo || window.UserBaseInfo.__jjyxEconomyPatched) return;
+
+      if (typeof window.UserBaseInfo.getGiftGlod === "function") {
+        var originalGetGiftGlod = window.UserBaseInfo.getGiftGlod.bind(window.UserBaseInfo);
+        window.UserBaseInfo.getGiftGlod = function patchedGetGiftGlod() {
+          return scaleEconomyValue(originalGetGiftGlod());
+        };
+      }
+
+      if (typeof window.UserBaseInfo.sellGarbageItem === "function") {
+        var originalSellGarbageItem = window.UserBaseInfo.sellGarbageItem.bind(window.UserBaseInfo);
+        window.UserBaseInfo.sellGarbageItem = function patchedSellGarbageItem(gold) {
+          nextGoldChangeReason = "fish_sell";
+          try {
+            return originalSellGarbageItem(scaleEconomyValue(gold));
+          } finally {
+            setTimeout(function () {
+              if (nextGoldChangeReason === "fish_sell") nextGoldChangeReason = "";
+            }, 0);
+          }
+        };
+      }
+
+      var shouldMigrateMemory = migrateActiveFishingSaveEconomy();
+      if (shouldMigrateMemory && typeof window.UserBaseInfo.getFishItems === "function") {
+        var fishItems = window.UserBaseInfo.getFishItems();
+        if (Array.isArray(fishItems)) {
+          fishItems.forEach(function (item) {
+            if (item && typeof item.price !== "undefined") {
+              item.price = scaleEconomyValue(item.price);
+            }
+          });
+        }
+      }
+
+      for (var type = 0; type <= 5; type += 1) {
+        if (typeof window.UserBaseInfo.getUserPackageItems === "function") {
+          var packageItems = window.UserBaseInfo.getUserPackageItems(type);
+          if (Array.isArray(packageItems)) {
+            packageItems.forEach(scaleLoadedItemPrice);
+          }
+        }
+      }
+      [
+        "getUseBaitItem",
+        "getUseRodItem",
+        "getUseHookItem",
+        "getUseRopeItem",
+        "getUseNetItem",
+      ].forEach(function (method) {
+        if (typeof window.UserBaseInfo[method] !== "function") return;
+        var userItem = window.UserBaseInfo[method]();
+        if (userItem && typeof userItem.getItemInfo === "function") {
+          scaleLoadedItemPrice(userItem.getItemInfo());
+        }
+        if (userItem && typeof userItem.getItemAttribute === "function") {
+          scaleAttributePrice(userItem.getItemAttribute());
+        }
+      });
+      if (typeof window.UserBaseInfo.getUseBoxItem === "function") {
+        scaleLoadedItemPrice(window.UserBaseInfo.getUseBoxItem());
+      }
+
+      Object.defineProperty(window.UserBaseInfo, "__jjyxEconomyPatched", { value: true });
+    }
+
+    function scaleAttributePrice(attribute) {
+      if (!attribute || typeof attribute.price === "undefined" || attribute.__jjyxEconomyScaled) {
+        return;
+      }
+      attribute.price = scaleEconomyValue(attribute.price);
+      Object.defineProperty(attribute, "__jjyxEconomyScaled", { value: true });
+    }
+
+    function scaleLoadedItemPrice(item) {
+      if (!item) return;
+      scaleAttributePrice(item.itemAttribute);
+      if (typeof item.price !== "undefined" && !item.__jjyxEconomyScaled) {
+        item.price = scaleEconomyValue(item.price);
+        Object.defineProperty(item, "__jjyxEconomyScaled", { value: true });
+      }
+    }
+
+    function installEconomyPatch() {
+      scaleItemPrices(window.ITEM_INFOS);
+      scaleSkillCosts();
+      scaleSceneCosts();
+      scaleTaskRewards();
+      patchFishPriceFactory();
+      patchUserEconomyMethods();
+
+      if (
+        window.ITEM_INFOS &&
+        window.SKILL_BASE_INFO &&
+        window.UserBaseInfo &&
+        typeof window.CreateFishInfoForID === "function" &&
+        typeof window.getTaskForID === "function"
+      ) {
+        economyPatchInstalled = true;
+      }
+    }
+
+    function installUserGoldBridge() {
+      if (installed || !window.UserBaseInfo || typeof window.UserBaseInfo.setUserGold !== "function") {
+        return;
+      }
+      installed = true;
+
+      var originalSetUserGold = window.UserBaseInfo.setUserGold.bind(window.UserBaseInfo);
+      var originalGetUserGold = typeof window.UserBaseInfo.getUserGold === "function"
+        ? window.UserBaseInfo.getUserGold.bind(window.UserBaseInfo)
+        : function () { return 0; };
+      var originalSaveUserInfoData = typeof window.UserBaseInfo.saveUserInfoData === "function"
+        ? window.UserBaseInfo.saveUserInfoData.bind(window.UserBaseInfo)
+        : null;
+      var originalOnNotifyEvent = typeof window.UserBaseInfo.onNotifyEvent === "function"
+        ? window.UserBaseInfo.onNotifyEvent.bind(window.UserBaseInfo)
+        : null;
+      var originalGetDayReward = typeof window.UserBaseInfo.getDayReward === "function"
+        ? window.UserBaseInfo.getDayReward.bind(window.UserBaseInfo)
+        : null;
+
+      window.UserBaseInfo.setUserGold = function patchedSetUserGold(value) {
+        var before = toNumber(originalGetUserGold());
+        var result = originalSetUserGold(value);
+        var after = toNumber(originalGetUserGold());
+        updateLocalSaveGold(after);
+        if (!suppressGoldSync) {
+          syncGoldDelta(after - before, nextGoldChangeReason || "");
+        }
+        lastKnownGold = Math.max(0, Math.floor(after));
+        return result;
+      };
+
+      if (originalSaveUserInfoData) {
+        window.UserBaseInfo.saveUserInfoData = function patchedSaveUserInfoData() {
+          var result = originalSaveUserInfoData.apply(window.UserBaseInfo, arguments);
+          migrateActiveFishingSaveEconomy();
+          mirrorActiveSaveToAccount();
+          syncCurrentGold();
+          return result;
+        };
+      }
+
+      if (originalOnNotifyEvent) {
+        window.UserBaseInfo.onNotifyEvent = function patchedOnNotifyEvent(callback) {
+          return originalOnNotifyEvent(function () {
+            var result = callback && callback.apply(this, arguments);
+            setTimeout(function () { syncCurrentGold(); }, 0);
+            return result;
+          });
+        };
+      }
+
+      if (originalGetDayReward) {
+        window.UserBaseInfo.getDayReward = function patchedGetDayReward() {
+          var key = dailyRewardKey();
+          if (localStorage.getItem(key)) {
+            if (typeof window.UserBaseInfo.setTadayGetGold === "function") {
+              window.UserBaseInfo.setTadayGetGold(true);
+            }
+            return 0;
+          }
+
+          var rewardAmount = scaleEconomyValue(500);
+          var claimData = null;
+          var pointsPath = getApiPath("/points/change");
+          if (pointsPath && getAuthToken()) {
+            claimData = sendApiJsonSync("POST", pointsPath, {
+              amount: rewardAmount,
+              reason: "fishing_daily_login",
+            });
+
+            if (!claimData) {
+              return 0;
+            }
+
+            var claimBalance = Math.max(0, Math.floor(toNumber(balanceFromData(claimData, pendingGold || 0))));
+            if (claimData.duplicate || Number(claimData.amount || 0) <= 0) {
+              markDailyRewardLocal(0, claimBalance, true);
+              if (typeof window.UserBaseInfo.setTadayGetGold === "function") {
+                window.UserBaseInfo.setTadayGetGold(true);
+              }
+              refreshFishingGold(claimBalance);
+              return 0;
+            }
+          }
+
+          nextGoldChangeReason = "fishing_daily_login";
+          suppressGoldSync = true;
+          try {
+            if (claimData && typeof window.UserBaseInfo.setTadayGetGold === "function") {
+              window.UserBaseInfo.setTadayGetGold(false);
+            }
+            var originalReward = Number(originalGetDayReward.apply(window.UserBaseInfo, arguments) || 0);
+            var reward = claimData ? Number(claimData.amount || rewardAmount) : originalReward;
+            if (reward > 0) {
+              var balance = claimData
+                ? Math.max(0, Math.floor(toNumber(balanceFromData(claimData, pendingGold || reward))))
+                : Math.max(0, Math.floor(toNumber(readCurrentGold() || reward)));
+              markDailyRewardLocal(reward, balance, false);
+              refreshFishingGold(balance);
+              mirrorActiveSaveToAccount();
+            }
+            return reward;
+          } finally {
+            suppressGoldSync = false;
+            nextGoldChangeReason = "";
+          }
+        };
+      }
+
+      if (pendingGold !== null) {
+        refreshFishingGold(pendingGold);
+      }
+    }
+
+    window.onAppMessage = function onAppMessage(message) {
+      if (!message) return;
+      if (typeof message === "string") {
+        try {
+          message = JSON.parse(message);
+        } catch (error) {
+          return;
+        }
+      }
+
+      var action = message.action;
+      var data = message.data || {};
+      if (action === "init") {
+        appInitData = data;
+        lastAccountIdentity = "";
+        remoteSaveLoaded = false;
+        remoteSaveData = null;
+        activateAccountSave();
+        var loadedSave = loadRemoteSaveSync(true);
+        if (loadedSave) {
+          applySaveToGame(loadedSave);
+        }
+        refreshFishingGold(balanceFromData(data, 0));
+      } else if (action === "balanceUpdate" || action === "pointsChangeResult") {
+        if (data.success === false || typeof data.points !== "undefined" || typeof data.balance !== "undefined") {
+          refreshFishingGold(balanceFromData(data, pendingGold || 0));
+        }
+      }
+    };
+
+    installSaveStoragePatch();
+    activateAccountSave();
+    loadRemoteSaveSync(false);
+    if (hasRealAccountData()) {
+      refreshFishingGold(balanceFromData(appInitData, 0));
+    }
+    setInterval(function () {
+      installTextPatch();
+      installAdPatch();
+      if (!economyPatchInstalled) installEconomyPatch();
+      installUserGoldBridge();
+      normalizeSceneTextAndAdButtons();
+      if (!suppressGoldSync) syncCurrentGold();
+    }, 300);
+  })();
+</script>
+
 <script src="src/settings.1338d.js" charset="utf-8"></script>
 
 <script src="main.f849a.js" charset="utf-8"></script>

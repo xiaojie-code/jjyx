@@ -44,9 +44,10 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
 
   Future<void> _loadBalance() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-            '/api/currency/withdraw/balance',
-          );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+                '/api/currency/withdraw/balance',
+              );
       if (!mounted) return;
       setState(() {
         final totalEarned =
@@ -78,9 +79,10 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
 
   Future<void> _loadWithdrawSecurity() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-            '/api/currency/withdraw/security',
-          );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+                '/api/currency/withdraw/security',
+              );
       if (!mounted) return;
       setState(() {
         _hasWithdrawPassword = result?['hasPassword'] == true;
@@ -97,15 +99,15 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
         reset: reset,
         onSubmit: (phone, password, confirmPassword) async {
           await ref.read(apiClientProvider).post(
-                reset
-                    ? '/api/currency/withdraw/password/reset'
-                    : '/api/currency/withdraw/password',
-                data: {
-                  'phone': phone,
-                  'password': password,
-                  'confirmPassword': confirmPassword,
-                },
-              );
+            reset
+                ? '/api/currency/withdraw/password/reset'
+                : '/api/currency/withdraw/password',
+            data: {
+              'phone': phone,
+              'password': password,
+              'confirmPassword': confirmPassword,
+            },
+          );
         },
       ),
     );
@@ -145,6 +147,10 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
       Toast.warning(context, '请填写收款人姓名');
       return;
     }
+    if (_paymentMethod == 'bank') {
+      _showBankUnavailableDialog();
+      return;
+    }
     if (_accountCtrl.text.trim().isEmpty) {
       Toast.warning(
         context,
@@ -158,6 +164,7 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
       if (!_hasWithdrawPassword) {
         final setupOk = await _showWithdrawPasswordSetupDialog();
         if (!setupOk) return;
+        if (!mounted) return;
       }
 
       final fee = (_selectedAmount * 0.2).toInt();
@@ -333,7 +340,12 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                         Icons.account_balance_wallet,
                       ),
                       const SizedBox(width: 12),
-                      _buildMethodCard('bank', '银行卡', Icons.credit_card),
+                      _buildMethodCard(
+                        'bank',
+                        '银行卡',
+                        Icons.credit_card,
+                        enabled: false,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 24),
@@ -357,8 +369,7 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                   TextField(
                     controller: _accountCtrl,
                     decoration: InputDecoration(
-                      labelText:
-                          _paymentMethod == 'alipay' ? '支付宝账号' : '银行卡号',
+                      labelText: _paymentMethod == 'alipay' ? '支付宝账号' : '银行卡号',
                       hintText:
                           _paymentMethod == 'alipay' ? '手机号或邮箱' : '请输入银行卡号',
                       prefixIcon: Icon(_paymentMethod == 'alipay'
@@ -422,7 +433,8 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
   }
 
   Widget _buildRecordItem(Map<String, dynamic> record) {
-    final transactionType = record['transactionType']?.toString() ?? 'withdrawal';
+    final transactionType =
+        record['transactionType']?.toString() ?? 'withdrawal';
     if (transactionType == 'income') {
       return _buildIncomeRecordItem(record);
     }
@@ -477,8 +489,11 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
               statusText,
               style: TextStyle(
                 fontSize: 12,
-                color:
-                    status == 0 ? Colors.orange : status == 1 ? Colors.green : Colors.red,
+                color: status == 0
+                    ? Colors.orange
+                    : status == 1
+                        ? Colors.green
+                        : Colors.red,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -493,8 +508,9 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
     final title = record['title']?.toString() ?? '推广收益';
     final sourceNickname = record['sourceNickname']?.toString() ?? '';
     final sourceAccount = record['sourceAccount']?.toString() ?? '';
-    final source =
-        sourceNickname.isNotEmpty ? '$sourceNickname（$sourceAccount）' : sourceAccount;
+    final source = sourceNickname.isNotEmpty
+        ? '$sourceNickname（$sourceAccount）'
+        : sourceAccount;
     final timeStr = _formatTime(record['createdAt']?.toString() ?? '');
 
     return Container(
@@ -513,7 +529,8 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w500),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -546,31 +563,68 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
     }
   }
 
-  Widget _buildMethodCard(String method, String label, IconData icon) {
+  Future<void> _showBankUnavailableDialog() {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('提示'),
+        content: const Text('此功能待开放'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMethodCard(
+    String method,
+    String label,
+    IconData icon, {
+    bool enabled = true,
+  }) {
     final selected = _paymentMethod == method;
+    final active = enabled && selected;
     return Expanded(
       child: GestureDetector(
-        onTap: () => setState(() => _paymentMethod = method),
+        behavior: HitTestBehavior.opaque,
+        onTap: enabled
+            ? () => setState(() => _paymentMethod = method)
+            : _showBankUnavailableDialog,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 16),
           decoration: BoxDecoration(
-            color: selected ? Colors.blue.shade50 : Colors.white,
+            color: !enabled
+                ? Colors.grey.shade100
+                : active
+                    ? Colors.blue.shade50
+                    : Colors.white,
             border: Border.all(
-              color: selected ? Colors.blue : Colors.grey.shade300,
-              width: selected ? 2 : 1,
+              color: active ? Colors.blue : Colors.grey.shade300,
+              width: active ? 2 : 1,
             ),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
             children: [
-              Icon(icon, size: 28, color: selected ? Colors.blue : Colors.grey),
+              Icon(
+                icon,
+                size: 28,
+                color: active ? Colors.blue : Colors.grey.shade400,
+              ),
               const SizedBox(height: 6),
               Text(
                 label,
                 style: TextStyle(
                   fontSize: 14,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                  color: selected ? Colors.blue : Colors.black87,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                  color: active
+                      ? Colors.blue
+                      : enabled
+                          ? Colors.black87
+                          : Colors.grey.shade500,
                 ),
               ),
             ],
@@ -584,7 +638,8 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(fontSize: 14, color: Colors.black87)),
+        Text(label,
+            style: const TextStyle(fontSize: 14, color: Colors.black87)),
         Text(
           value,
           style: TextStyle(
@@ -673,44 +728,46 @@ class _WithdrawPasswordSetupDialogState
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.reset ? '重置提现密码' : '设置提现密码'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _phoneCtrl,
-            keyboardType: TextInputType.phone,
-            maxLength: 11,
-            decoration: const InputDecoration(
-              labelText: '预留手机号',
-              hintText: '请输入11位手机号',
-              counterText: '',
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _phoneCtrl,
+              keyboardType: TextInputType.phone,
+              maxLength: 11,
+              decoration: const InputDecoration(
+                labelText: '预留手机号',
+                hintText: '请输入11位手机号',
+                counterText: '',
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _passwordCtrl,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: '提现密码',
-              hintText: '请输入6位数字',
-              counterText: '',
+            const SizedBox(height: 8),
+            TextField(
+              controller: _passwordCtrl,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '提现密码',
+                hintText: '请输入6位数字',
+                counterText: '',
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _confirmCtrl,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: '确认提现密码',
-              hintText: '请再次输入6位数字',
-              counterText: '',
+            const SizedBox(height: 8),
+            TextField(
+              controller: _confirmCtrl,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '确认提现密码',
+                hintText: '请再次输入6位数字',
+                counterText: '',
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -769,30 +826,32 @@ class _WithdrawPasswordInputDialogState
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('输入提现密码'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.phoneMasked.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(
-                '预留手机号：${widget.phoneMasked}',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.phoneMasked.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  '预留手机号：${widget.phoneMasked}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ),
+            TextField(
+              controller: _passwordCtrl,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '提现密码',
+                hintText: '请输入6位数字',
+                counterText: '',
               ),
             ),
-          TextField(
-            controller: _passwordCtrl,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: '提现密码',
-              hintText: '请输入6位数字',
-              counterText: '',
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(onPressed: () => _close(null), child: const Text('取消')),

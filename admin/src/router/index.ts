@@ -88,6 +88,12 @@ const router = createRouter({
           meta: { title: '推广管理', icon: 'Promotion' },
         },
         {
+          path: 'reward-backfill',
+          name: 'RewardBackfill',
+          component: () => import('@/views/rewards/RewardBackfill.vue'),
+          meta: { title: '奖励补账', icon: 'Coin' },
+        },
+        {
           path: 'social',
           name: 'SocialManage',
           component: () => import('@/views/social/SocialManage.vue'),

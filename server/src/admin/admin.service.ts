@@ -467,6 +467,9 @@ export class AdminService {
   async reviewRecharge(id: number, operatorId: number, data: { action: 'approve' | 'reject'; remark?: string }) {
     return this.rechargeService.adminReview(id, operatorId, data);
   }
+  async sendRechargeActivationCode(id: number, operatorId: number, data: { code?: string }) {
+    return this.rechargeService.adminSendActivationCode(id, operatorId, data);
+  }
   async getRechargeStats() {
     return this.rechargeService.adminStats();
   }
@@ -477,6 +480,9 @@ export class AdminService {
   }
   async updateConfig(key: string, value: string) {
     return this.currencyService.updateConfig(key, value);
+  }
+  async backfillLegacyRewardMechanisms(data: any) {
+    return this.currencyService.backfillLegacyRewardMechanisms(data || {});
   }
 
   // ===== 分销 =====

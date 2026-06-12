@@ -73,6 +73,7 @@ export class AdminController {
   @Get('recharge/orders') getRechargeOrders(@Query() query: any) { return this.adminService.getRechargeOrders(query); }
   @Get('recharge/stats') getRechargeStats() { return this.adminService.getRechargeStats(); }
   @Put('recharge/:id/review') reviewRecharge(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number, @Body() data: { action: 'approve' | 'reject'; remark?: string }) { return this.adminService.reviewRecharge(id, operatorId, data); }
+  @Post('recharge/:id/send-code') sendRechargeActivationCode(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number, @Body() data: { code?: string }) { return this.adminService.sendRechargeActivationCode(id, operatorId, data); }
 
   // 充值收款码上传
   @Post('recharge/qrcode')
@@ -99,6 +100,9 @@ export class AdminController {
   // 系统配置
   @Get('configs') getConfigs() { return this.adminService.getConfigs(); }
   @Put('configs/:key') updateConfig(@Param('key') key: string, @Body('value') value: string) { return this.adminService.updateConfig(key, value); }
+  @Post('reward-backfill/legacy') backfillLegacyRewardMechanisms(@Body() data: any) {
+    return this.adminService.backfillLegacyRewardMechanisms(data);
+  }
 
   // 分销
   @Get('agents') getAgents(@Query() query: any) { return this.adminService.getAgents(query); }

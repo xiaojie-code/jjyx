@@ -17,6 +17,10 @@ export function reviewRecharge(id: number, data: { action: 'approve' | 'reject';
   return request.put(`/recharge/${id}/review`, data)
 }
 
+export function sendRechargeActivationCode(id: number, data: { code: string }) {
+  return request.post(`/recharge/${id}/send-code`, data)
+}
+
 /** 上传收款码图片，返回 { url } */
 export function uploadRechargeQrcode(formData: FormData) {
   return request.post('/recharge/qrcode', formData, {

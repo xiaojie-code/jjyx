@@ -31,6 +31,24 @@ Write-Host "Network profile: $($Endpoint.NetworkProfile)"
 Write-Host "API_BASE_URL: $($Endpoint.ApiBaseUrl)"
 Write-Host "WS_BASE_URL: $($Endpoint.WsBaseUrl)"
 
+function Copy-TimestampedApk {
+	$apkDir = Join-Path $RepoRoot 'app\build\app\outputs\flutter-apk'
+	$sourceApk = Join-Path $apkDir 'app-debug.apk'
+	if (-not (Test-Path -LiteralPath $sourceApk)) {
+		throw "APK not found: $sourceApk"
+	}
+
+	$safeHost = if ($Endpoint.ApiHost) {
+		$Endpoint.ApiHost -replace '[^0-9A-Za-z.-]', '-'
+	} else {
+		'local'
+	}
+	$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+	$targetApk = Join-Path $apkDir "jjyx-$($Endpoint.NetworkProfile)-$safeHost-$timestamp-debug.apk"
+	Copy-Item -LiteralPath $sourceApk -Destination $targetApk -Force
+	Write-Host "Timestamped APK: $targetApk"
+}
+
 Set-Location (Join-Path $RepoRoot 'app')
 $FlutterArgs = @(
 	'--no-version-check',
@@ -48,3 +66,9 @@ if ($VerboseBuild) {
 }
 
 & 'D:\myApp\flutter\flutter\bin\flutter.bat' @FlutterArgs
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0) {
+	exit $exitCode
+}
+
+Copy-TimestampedApk

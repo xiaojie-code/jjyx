@@ -15,7 +15,7 @@ export class UserCurrency {
   @Column({ type: 'int', unique: true, name: 'user_id' })
   userId: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 18, scale: 6, default: 0 })
   points: number;
 
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })

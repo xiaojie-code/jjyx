@@ -11,7 +11,10 @@ export class CurrencyScheduler implements OnModuleInit {
   /** 启动时初始化默认配置 */
   async onModuleInit() {
     await this.currencyService.ensureDefaultConfigs();
-    this.logger.log('系统配置初始化完成');
+    const pendingRewards = await this.currencyService.processPendingDirectGameRewards(500);
+    this.logger.log(
+      `系统配置初始化完成，未处理游戏流水奖励补处理: processed=${pendingRewards.processed || 0}, rewards=${pendingRewards.rewardCount || 0}`,
+    );
   }
 
   /** 每天0:00 奖励积分产出 */
@@ -22,12 +25,14 @@ export class CurrencyScheduler implements OnModuleInit {
     this.logger.log('每日奖励积分产出完成');
   }
 
-  /** 每天1:00 积分返还 */
-  @Cron('0 0 1 * * *')
+  /** 每天00:00:01 发放当日每周积分返还 */
+  @Cron('1 0 0 * * *')
   async handleDailyReturn() {
-    this.logger.log('开始执行每日积分返还...');
-    await this.currencyService.dailyPointReturn();
-    this.logger.log('每日积分返还完成');
+    this.logger.log('开始执行每周积分返还每日发放...');
+    const result = await this.currencyService.dailyPointReturn();
+    this.logger.log(
+      `每周积分返还每日发放完成: records=${result.paidRecords || 0}, points=${result.paidPoints || 0}`,
+    );
   }
 
   /** 每天2:00 积分扣除 */
@@ -38,11 +43,13 @@ export class CurrencyScheduler implements OnModuleInit {
     this.logger.log('每日积分扣除完成');
   }
 
-  /** 每周一3:00 统计上周扣除并创建返还计划 */
-  @Cron('0 0 3 * * 1')
+  /** 每周日23:59:59 统计本周消费并创建下周返还计划 */
+  @Cron('59 59 23 * * 0')
   async handleWeeklyReturn() {
-    this.logger.log('开始执行每周返还计划生成...');
-    await this.currencyService.weeklyReturnSetup();
-    this.logger.log('每周返还计划生成完成');
+    this.logger.log('开始执行每周积分返还结算...');
+    const result = await this.currencyService.weeklyReturnSetup();
+    this.logger.log(
+      `每周积分返还结算完成: created=${result.created}, periodId=${result.periodId || 0}`,
+    );
   }
 }

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en-us">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
@@ -7,7 +7,7 @@
       name="viewport"
       content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=yes"
     />
-    <title>Saima</title>
+    <title>赛马游戏</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico" />
     <link rel="stylesheet" href="TemplateData/style.css" />
     <style>
@@ -85,7 +85,7 @@
       <div id="unity-warning"></div>
       <div id="unity-footer">
         <div id="unity-webgl-logo"></div>
-        <div id="unity-build-title">Saima</div>
+        <div id="unity-build-title">赛马游戏</div>
         <div id="unity-fullscreen-button"></div>
       </div>
     </div>
@@ -96,7 +96,8 @@
       var progressBarFull = document.querySelector("#unity-progress-bar-full");
       var progressText = document.querySelector("#unity-progress-text");
       var warningBanner = document.querySelector("#unity-warning");
-      var appInitData = {};
+      var appInitData = window.__GAME_APP_INIT__ || window.__SAIMA_APP_INIT__ || {};
+      window.__SAIMA_APP_INIT__ = appInitData;
 
       window.onAppMessage = function onAppMessage(message) {
         if (!message || message.action !== "init") return;
@@ -124,15 +125,58 @@
         updateBannerVisibility();
       }
 
+      function clearSaimaRuntimeCache() {
+        var tasks = [];
+        try {
+          if (window.caches && caches.keys) {
+            tasks.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(
+                  keys
+                    .filter(function (key) {
+                      return /Unity|Saima|赛马|saima/i.test(key);
+                    })
+                    .map(function (key) {
+                      return caches.delete(key);
+                    })
+                );
+              })
+            );
+          }
+        } catch (_) {}
+
+        try {
+          if (window.indexedDB && indexedDB.deleteDatabase) {
+            tasks.push(
+              new Promise(function (resolve) {
+                var req = indexedDB.deleteDatabase("UnityCache");
+                req.onsuccess = req.onerror = req.onblocked = function () {
+                  resolve();
+                };
+                setTimeout(resolve, 800);
+              })
+            );
+          }
+        } catch (_) {}
+
+        return Promise.race([
+          Promise.all(tasks),
+          new Promise(function (resolve) {
+            setTimeout(resolve, 1000);
+          }),
+        ]);
+      }
+
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/WebGL.loader.js";
+      var assetVersion = "20260611-saima-unity-restore2";
+      var loaderUrl = buildUrl + "/WebGL.loader.js?v=" + assetVersion;
       var config = {
-        dataUrl: buildUrl + "/WebGL.data.gz",
-        frameworkUrl: buildUrl + "/WebGL.framework.js.gz",
-        codeUrl: buildUrl + "/WebGL.wasm.gz",
+        dataUrl: buildUrl + "/WebGL.data.gz?v=" + assetVersion,
+        frameworkUrl: buildUrl + "/WebGL.framework.js.gz?v=" + assetVersion,
+        codeUrl: buildUrl + "/WebGL.wasm.gz?v=" + assetVersion,
         streamingAssetsUrl: "StreamingAssets",
         companyName: "Unity",
-        productName: "Saima",
+        productName: "赛马游戏",
         productVersion: "1.0",
         showBanner: unityShowBanner,
       };
@@ -154,28 +198,32 @@
         console.error("[saima] unhandled rejection:", event.reason);
       });
 
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = function () {
-        createUnityInstance(canvas, config, function (progress) {
-          var percent = Math.floor(100 * progress);
-          progressBarFull.style.width = percent + "%";
-          progressText.textContent = percent + "%";
-        })
-          .then(function (unityInstance) {
-            loadingBar.style.display = "none";
-            window.unityInstance = unityInstance;
-            console.log("[saima] unity ready");
+      function loadUnity() {
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onload = function () {
+          createUnityInstance(canvas, config, function (progress) {
+            var percent = Math.floor(100 * progress);
+            progressBarFull.style.width = percent + "%";
+            progressText.textContent = percent + "%";
           })
-          .catch(function (message) {
-            console.error("[saima] unity failed:", message);
-            unityShowBanner(message, "error");
-          });
-      };
-      script.onerror = function () {
-        unityShowBanner("Unable to load Unity loader.", "error");
-      };
-      document.body.appendChild(script);
+            .then(function (unityInstance) {
+              loadingBar.style.display = "none";
+              window.unityInstance = unityInstance;
+              console.log("[saima] unity ready");
+            })
+            .catch(function (message) {
+              console.error("[saima] unity failed:", message);
+              unityShowBanner(message, "error");
+            });
+        };
+        script.onerror = function () {
+          unityShowBanner("Unity 加载器加载失败", "error");
+        };
+        document.body.appendChild(script);
+      }
+
+      clearSaimaRuntimeCache().then(loadUnity).catch(loadUnity);
     </script>
   </body>
 </html>

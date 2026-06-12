@@ -134,6 +134,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     _socketService.disconnect();
+    NotificationService.instance.updateVendorPushEnabled(false);
     await TokenStorage.clearTokens();
     state = const AuthState();
   }
