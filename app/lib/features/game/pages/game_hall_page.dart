@@ -73,7 +73,45 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
 
   bool _isSnakeGame(Map<String, dynamic> game) {
     final text = _gameSearchText(game);
-    return text.contains('蛇') || text.contains('snake');
+    return text.contains('蛇') ||
+        text.contains('贪吃蛇') ||
+        text.contains('snake') ||
+        text.contains('ssdzz');
+  }
+
+  bool _isFishingGame(Map<String, dynamic> game) {
+    final text = _gameSearchText(game);
+    return text.contains('实况钓鱼') ||
+        text.contains('钓鱼') ||
+        text.contains('捕鱼') ||
+        text.contains('fishing') ||
+        text.contains('skdy');
+  }
+
+  bool _isKillerGame(Map<String, dynamic> game) {
+    final text = _gameSearchText(game);
+    return text.contains('大逃杀') ||
+        text.contains('逃杀') ||
+        text.contains('杀手') ||
+        text.contains('killer') ||
+        text.contains('dts');
+  }
+
+  bool _isHorseGame(Map<String, dynamic> game) {
+    final text = _gameSearchText(game);
+    return text.contains('赛马') ||
+        text.contains('saima') ||
+        text.contains('horse') ||
+        text.contains('smyx');
+  }
+
+  String _displayGameName(Map<String, dynamic> game) {
+    if (_isLotteryGame(game)) return '幸运转盘';
+    if (_isFishingGame(game)) return '实况钓鱼';
+    if (_isSnakeGame(game)) return '蛇蛇大作战';
+    if (_isKillerGame(game)) return '大逃杀';
+    if (_isHorseGame(game)) return '赛马';
+    return (game['name'] ?? '').toString();
   }
 
   String _gameDescription(Map<String, dynamic> game) {
@@ -96,20 +134,16 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         text.contains('zhuanpan')) {
       return 'assets/game-icons/xyzp.png';
     }
-    if (text.contains('钓鱼') || text.contains('fishing')) {
+    if (_isFishingGame(game)) {
       return 'assets/game-icons/skdy.png';
     }
     if (_isSnakeGame(game)) {
       return 'assets/game-icons/ssdzz.jpg';
     }
-    if (text.contains('大逃杀') ||
-        text.contains('逃杀') ||
-        text.contains('killer')) {
+    if (_isKillerGame(game)) {
       return 'assets/game-icons/dts.jpg';
     }
-    if (text.contains('赛马') ||
-        text.contains('saima') ||
-        text.contains('horse')) {
+    if (_isHorseGame(game)) {
       return 'assets/game-icons/smyx.png';
     }
     return null;
@@ -804,6 +838,23 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       return;
     }
 
+    if (_isHorseGame(game)) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('测试中'),
+          content: const Text('敬请期待'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     final user = ref.read(authProvider).user;
     if (user == null) return;
     if (!checkActivation(context, user.isActivated)) return;
@@ -825,7 +876,8 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       final rawUrl =
           (startResult?['gameUrl'] ?? game['gameUrl'] ?? game['game_url'] ?? '')
               .toString();
-      if (rawUrl.isEmpty) {
+      final safeRawUrl = _normalizeKnownGameUrl(game, rawUrl);
+      if (safeRawUrl.isEmpty) {
         throw Exception('game url is empty');
       }
 
@@ -836,7 +888,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         points = (balance?['points'] as num?)?.toDouble() ?? 0;
       } catch (_) {}
 
-      final gameUrl = _resolveGameUrl(rawUrl, gameId);
+      final gameUrl = _resolveGameUrl(safeRawUrl, gameId);
       final orientation =
           (startResult?['orientation'] ?? game['orientation'] ?? 'landscape')
               .toString();
@@ -896,6 +948,23 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     ).toString();
   }
 
+  bool _isInvalidGameUrl(String rawUrl) {
+    final text = rawUrl.trim().toLowerCase();
+    return text.isEmpty ||
+        text == '__placeholder__' ||
+        text.contains('/__placeholder__');
+  }
+
+  String _normalizeKnownGameUrl(Map<String, dynamic> game, String rawUrl) {
+    if (!_isInvalidGameUrl(rawUrl)) return rawUrl;
+    if (_isSnakeGame(game)) return '/uploads/games/snake/index.html';
+    if (_isFishingGame(game)) return '/uploads/games/fishing/index.html';
+    if (_isKillerGame(game)) return '/uploads/games/killer/index.html';
+    if (_isHorseGame(game)) return '/uploads/games/saima/index.html';
+    if (_isLotteryGame(game)) return 'lottery://native';
+    return '';
+  }
+
   Uri _appendGameShellVersion(Uri uri, int gameId) {
     final params = Map<String, String>.from(uri.queryParameters);
     params['game_shell_v'] = _gameShellVersion;
@@ -938,7 +1007,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
                               _buildGameIcon(game),
                               const SizedBox(height: 10),
                               Text(
-                                game['name'] ?? '',
+                                _displayGameName(game),
                                 style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,

@@ -24,6 +24,48 @@ type LotteryPrize = {
 const LOTTERY_TEAM_UNIT_SIZE = 10;
 const LOTTERY_MAJOR_INTERVAL = 200;
 const HORSE_BET_OPTIONS = [10, 50, 100, 300, 500, 1000];
+const DEFAULT_GAME_ENTRIES = [
+  {
+    name: '蛇蛇大作战',
+    description: '经典贪吃蛇小游戏 围堵对战，轻松上分',
+    gameUrl: '/uploads/games/snake/index.html',
+    sortOrder: 10,
+    orientation: 'landscape',
+    keywords: ['蛇', '贪吃蛇', 'snake', 'ssdzz'],
+  },
+  {
+    name: '实况钓鱼',
+    description: '实况钓鱼小游戏',
+    gameUrl: '/uploads/games/fishing/index.html',
+    sortOrder: 20,
+    orientation: 'landscape',
+    keywords: ['实况钓鱼', '钓鱼', '捕鱼', 'fishing', 'skdy'],
+  },
+  {
+    name: '大逃杀',
+    description: '大逃杀小游戏',
+    gameUrl: '/uploads/games/killer/index.html',
+    sortOrder: 30,
+    orientation: 'portrait',
+    keywords: ['大逃杀', '逃杀', '杀手', 'killer', 'dts'],
+  },
+  {
+    name: '赛马',
+    description: '赛马小游戏',
+    gameUrl: '/uploads/games/saima/index.html',
+    sortOrder: 40,
+    orientation: 'landscape',
+    keywords: ['赛马', 'saima', 'horse', 'smyx'],
+  },
+  {
+    name: '幸运转盘',
+    description: '幸运转盘抽奖',
+    gameUrl: 'lottery://native',
+    sortOrder: 50,
+    orientation: 'portrait',
+    keywords: ['幸运转盘', '转盘', '抽奖', 'lottery', 'wheel', 'xyzp'],
+  },
+] as const;
 const LOTTERY_PRIZES: LotteryPrize[] = [
   { level: 1, name: '沧恒云芯智能AI机器人', type: 'physical', amount: 0, probabilityText: '0%' },
   { level: 2, name: '云芯智慧大屏100寸', type: 'physical', amount: 0, probabilityText: '0%' },
@@ -50,9 +92,100 @@ export class GameService {
     private readonly dataSource: DataSource,
   ) {}
 
+  private gameSearchText(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
+    return `${game?.name || ''} ${game?.description || ''} ${game?.gameUrl || ''}`.toLowerCase();
+  }
+
+  private isPlaceholderGameUrl(value?: string | null) {
+    const text = String(value || '').trim().toLowerCase();
+    return !text || text === '__placeholder__' || text.includes('/__placeholder__');
+  }
+
+  private findDefaultGameEntry(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
+    const text = this.gameSearchText(game);
+    return DEFAULT_GAME_ENTRIES.find((entry) =>
+      entry.keywords.some((keyword) => text.includes(keyword.toLowerCase())),
+    );
+  }
+
+  private withDefaultGameEntry(game: Game) {
+    const entry = this.findDefaultGameEntry(game);
+    if (!entry) return game;
+    return {
+      ...game,
+      name: entry.name,
+      description: entry.description,
+      gameUrl: entry.gameUrl,
+      sortOrder: entry.sortOrder,
+      orientation: entry.orientation,
+    };
+  }
+
+  private gameMatchesDefaultEntry(game: Game, entry: (typeof DEFAULT_GAME_ENTRIES)[number]) {
+    const text = this.gameSearchText(game);
+    return entry.keywords.some((keyword) => text.includes(keyword.toLowerCase()));
+  }
+
+  private needsDefaultGameRepair(game: Game, entry: (typeof DEFAULT_GAME_ENTRIES)[number]) {
+    return (
+      game.name !== entry.name ||
+      game.description !== entry.description ||
+      game.gameUrl !== entry.gameUrl ||
+      Number(game.sortOrder) !== entry.sortOrder ||
+      game.orientation !== entry.orientation
+    );
+  }
+
+  private async ensureDefaultGameEntries() {
+    const games = await this.gameRepo.find();
+    const repairedIds = new Set<number>();
+
+    for (const entry of DEFAULT_GAME_ENTRIES) {
+      const existing = games.find(
+        (game) => !repairedIds.has(game.id) && this.gameMatchesDefaultEntry(game, entry),
+      );
+
+      if (existing) {
+        repairedIds.add(existing.id);
+        if (this.needsDefaultGameRepair(existing, entry)) {
+          existing.name = entry.name;
+          existing.description = entry.description;
+          existing.gameUrl = entry.gameUrl;
+          existing.sortOrder = entry.sortOrder;
+          existing.orientation = entry.orientation;
+          await this.gameRepo.save(existing);
+        }
+        continue;
+      }
+
+      const created = await this.gameRepo.save(this.gameRepo.create({
+        name: entry.name,
+        icon: null,
+        description: entry.description,
+        gameUrl: entry.gameUrl,
+        entryCost: 0,
+        status: 1,
+        sortOrder: entry.sortOrder,
+        orientation: entry.orientation,
+      }));
+      repairedIds.add(created.id);
+    }
+
+    const danglingPlaceholders = games.filter(
+      (game) =>
+        !repairedIds.has(game.id) &&
+        game.status === 1 &&
+        this.isPlaceholderGameUrl(game.gameUrl),
+    );
+    for (const game of danglingPlaceholders) {
+      game.status = 2;
+      await this.gameRepo.save(game);
+    }
+  }
+
   /** 游戏列表 */
   async getGameList() {
-    await this.ensureLotteryGameEntry();
+    await this.ensureDefaultGameEntries();
     const games = await this.gameRepo.find({ where: { status: 1 }, order: { sortOrder: 'ASC' } });
     return games.map((game) => this.withResolvedOrientation(game));
   }
@@ -79,6 +212,7 @@ export class GameService {
 
   /** 游戏详情 */
   async getGameDetail(id: number) {
+    await this.ensureDefaultGameEntries();
     const game = await this.gameRepo.findOne({ where: { id } });
     if (!game) throw new NotFoundException('游戏不存在');
     return this.withResolvedOrientation(game);
@@ -86,6 +220,7 @@ export class GameService {
 
   /** 启动游戏（检查激活+扣入场费+扣下注） */
   async startGame(userId: number, gameId: number, betAmount?: number) {
+    await this.ensureDefaultGameEntries();
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user?.isActivated) throw new ForbiddenException('请先激活游戏');
 
@@ -146,9 +281,10 @@ export class GameService {
   }
 
   private withResolvedOrientation(game: Game) {
+    const resolvedGame = this.withDefaultGameEntry(game);
     return {
-      ...game,
-      orientation: this.resolveGameOrientation(game),
+      ...resolvedGame,
+      orientation: this.resolveGameOrientation(resolvedGame),
     };
   }
 
