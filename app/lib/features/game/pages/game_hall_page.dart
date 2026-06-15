@@ -120,7 +120,31 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
   String _gameDescription(Map<String, dynamic> game) {
     final description = (game['description'] ?? '').toString().trim();
     if (_isSnakeGame(game)) {
-      return '指尖落牌，体验四方桌的人间喜乐；横车跃马，感受楚河两岸的运筹帷幄。';
+      return '雀棋双玩，麻将象棋一站式棋牌乐园，搓麻对弈两不误';
+    }
+    if (_isFishingGame(game)) {
+      if (description.isNotEmpty &&
+          description != '实况钓鱼小游戏' &&
+          description != '休闲钓鱼 · 3场次') {
+        return description;
+      }
+      return '高写实垂钓模拟手游！还原全球实景水域，自由搭配全套渔具，足不出户体验沉浸式野钓乐趣。';
+    }
+    if (_isKillerGame(game)) {
+      if (description.isNotEmpty &&
+          description != '大逃杀小游戏' &&
+          description != '2D卡通竞技') {
+        return description;
+      }
+      return '轻松卡通大逃杀，单局极速开战！画风可爱操作简单，正面乱斗随心玩，碎片时间随时解压对战。';
+    }
+    if (_isHorseGame(game)) {
+      if (description.isNotEmpty &&
+          description != '赛马小游戏' &&
+          description != '联机投注竞猜') {
+        return description;
+      }
+      return '联机投注竞猜，解压欢乐的休闲赛马游戏，单局 2 分钟极速开局，零门槛轻松上手！';
     }
     return description;
   }

@@ -27,7 +27,7 @@ const HORSE_BET_OPTIONS = [10, 50, 100, 300, 500, 1000];
 const DEFAULT_GAME_ENTRIES = [
   {
     name: '象雀对弈',
-    description: '指尖落牌，体验四方桌的人间喜乐；横车跃马，感受楚河两岸的运筹帷幄。',
+    description: '雀棋双玩，麻将象棋一站式棋牌乐园，搓麻对弈两不误',
     gameUrl: '/uploads/games/snake/index.html',
     sortOrder: 10,
     orientation: 'landscape',
@@ -35,7 +35,7 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '实况钓鱼',
-    description: '实况钓鱼小游戏',
+    description: '高写实垂钓模拟手游！还原全球实景水域，自由搭配全套渔具，足不出户体验沉浸式野钓乐趣。',
     gameUrl: '/uploads/games/fishing/index.html',
     sortOrder: 20,
     orientation: 'landscape',
@@ -43,7 +43,7 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '大逃杀',
-    description: '大逃杀小游戏',
+    description: '轻松卡通大逃杀，单局极速开战！画风可爱操作简单，正面乱斗随心玩，碎片时间随时解压对战。',
     gameUrl: '/uploads/games/killer/index.html',
     sortOrder: 30,
     orientation: 'portrait',
@@ -51,7 +51,7 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '赛马',
-    description: '赛马小游戏',
+    description: '联机投注竞猜，解压欢乐的休闲赛马游戏，单局 2 分钟极速开局，零门槛轻松上手！',
     gameUrl: '/uploads/games/saima/index.html',
     sortOrder: 40,
     orientation: 'landscape',
