@@ -40,6 +40,19 @@ export class User {
   @Column({ type: 'boolean', default: false, name: 'is_activated' })
   isActivated: boolean;
 
+  @Column({
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    name: 'activation_amount',
+    comment: '用户激活档位金额：500或2000',
+  })
+  activationAmount: number | null;
+
+  @Column({ type: 'int', nullable: true, name: 'activated_cdk_id', comment: '用户激活使用的CDK ID' })
+  activatedCdkId: number | null;
+
   @Column({ type: 'int', default: 0 })
   shares: number;
 

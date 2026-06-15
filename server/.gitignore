@@ -23,3 +23,4 @@ npm-debug.log*
 /uploads/*
 !/uploads/games/
 !/uploads/games/**
+/uploads/games/**/*.bak-*

@@ -1,5 +1,8 @@
 html {
   -ms-touch-action: none;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 body, canvas, div {
@@ -52,8 +55,10 @@ body {
 #Cocos2dGameContainer {
   position: absolute;
   margin: 0;
-  left: 0px;
-  top: 0px;
+  left: 0;
+  top: 0;
+  width: 100vw !important;
+  height: 100vh !important;
 
   display: -webkit-box;
   -webkit-box-orient: horizontal;
@@ -62,6 +67,8 @@ body {
 }
 
 canvas {
+  width: 100vw !important;
+  height: 100vh !important;
   background-color: rgba(0, 0, 0, 0);
 }
 

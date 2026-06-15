@@ -108,7 +108,7 @@ class _AiChatPageState extends ConsumerState<AiChatPage> {
                   Text('请先激活后使用',
                       style: TextStyle(fontSize: 18, color: Colors.grey, fontWeight: FontWeight.w500)),
                   SizedBox(height: 8),
-                  Text('前往"我的"→"激活游戏"输入激活码',
+                  Text('前往"我的"→"激活"输入激活码',
                       style: TextStyle(fontSize: 14, color: Colors.grey)),
                 ],
               ),

@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   Inject,
   forwardRef,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
@@ -15,6 +16,7 @@ import { Mint } from 'mint-filter';
 import { User } from '../entities/user.entity';
 import { UserCurrency } from '../entities/user-currency.entity';
 import { Cdk } from '../entities/cdk.entity';
+import { CdkType } from '../entities/cdk-type.entity';
 import { SystemSwitch } from '../entities/system-switch.entity';
 import { Conversation } from '../entities/conversation.entity';
 import { ConversationMember } from '../entities/conversation-member.entity';
@@ -24,8 +26,15 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { MatrixService } from '../matrix/matrix.service';
 
+const LOW_ACTIVATION_AMOUNT = 500;
+const HIGH_ACTIVATION_AMOUNT = 2000;
+const LOW_ACTIVATION_POINTS = 2500;
+const HIGH_ACTIVATION_POINTS = 10000;
+const LOW_ACTIVATION_SHARES = 50;
+const HIGH_ACTIVATION_SHARES = 200;
+
 @Injectable()
-export class UserService {
+export class UserService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -33,6 +42,8 @@ export class UserService {
     private readonly currencyRepo: Repository<UserCurrency>,
     @InjectRepository(Cdk)
     private readonly cdkRepo: Repository<Cdk>,
+    @InjectRepository(CdkType)
+    private readonly cdkTypeRepo: Repository<CdkType>,
     @InjectRepository(SystemSwitch)
     private readonly switchRepo: Repository<SystemSwitch>,
     @InjectRepository(Conversation)
@@ -46,6 +57,76 @@ export class UserService {
     @Inject(forwardRef(() => MatrixService))
     private readonly matrixService: MatrixService,
   ) {}
+
+  async onModuleInit() {
+    await this.ensureActivationColumns();
+  }
+
+  private async ensureActivationColumns() {
+    const alters = [
+      `ALTER TABLE users ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '用户激活档位金额：500或2000' AFTER is_activated`,
+      `ALTER TABLE users ADD COLUMN activated_cdk_id INT NULL COMMENT '用户激活使用的CDK ID' AFTER activation_amount`,
+      `ALTER TABLE users ADD INDEX idx_users_activation_amount (activation_amount)`,
+      `ALTER TABLE cdk_types ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额：500或2000' AFTER description`,
+      `ALTER TABLE cdks ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额快照：500或2000' AFTER items_json`,
+    ];
+    for (const sql of alters) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {}
+    }
+    await this.dataSource.query(
+      `UPDATE users SET activation_amount = ? WHERE is_activated = 1 AND activation_amount IS NULL`,
+      [HIGH_ACTIVATION_AMOUNT],
+    );
+    await this.dataSource.query(
+      `UPDATE cdks SET activation_amount = ? WHERE activation_amount IS NULL`,
+      [HIGH_ACTIVATION_AMOUNT],
+    );
+  }
+
+  private normalizeActivationAmount(value: any): number | null {
+    const amount = Number(value);
+    if (amount === LOW_ACTIVATION_AMOUNT || amount === HIGH_ACTIVATION_AMOUNT) {
+      return amount;
+    }
+    return null;
+  }
+
+  private inferActivationAmountFromItems(itemsJson: any): number | null {
+    if (!Array.isArray(itemsJson)) return null;
+    for (const item of itemsJson) {
+      const key = String(item?.item || item?.key || '').trim();
+      const amount = this.normalizeActivationAmount(item?.amount ?? item?.value);
+      if (
+        amount &&
+        ['activation_amount', 'activationAmount', 'recharge_amount', 'rechargeAmount'].includes(key)
+      ) {
+        return amount;
+      }
+    }
+    return null;
+  }
+
+  private async resolveCdkActivationAmount(cdk: Cdk, manager?: any): Promise<number> {
+    const directAmount = this.normalizeActivationAmount(cdk.activationAmount);
+    if (directAmount) return directAmount;
+
+    const cdkType = manager
+      ? await manager.findOne(CdkType, { where: { id: cdk.cdkTypeId } })
+      : await this.cdkTypeRepo.findOne({ where: { id: cdk.cdkTypeId } });
+    const typeAmount = this.normalizeActivationAmount(cdkType?.activationAmount);
+    if (typeAmount) return typeAmount;
+
+    return this.inferActivationAmountFromItems(cdk.itemsJson) ?? HIGH_ACTIVATION_AMOUNT;
+  }
+
+  private getActivationReward(activationAmount: number) {
+    if (activationAmount === LOW_ACTIVATION_AMOUNT) {
+      return { points: LOW_ACTIVATION_POINTS, shares: LOW_ACTIVATION_SHARES };
+    }
+    return { points: HIGH_ACTIVATION_POINTS, shares: HIGH_ACTIVATION_SHARES };
+  }
 
   /** 检查功能开关 */
   private async checkSwitch(key: string) {
@@ -231,6 +312,7 @@ export class UserService {
         avatar: savedUser.avatar,
         userType: savedUser.userType,
         isActivated: savedUser.isActivated,
+        activationAmount: savedUser.activationAmount == null ? null : Number(savedUser.activationAmount),
       },
     };
   }
@@ -270,6 +352,7 @@ export class UserService {
         avatar: user.avatar,
         userType: user.userType,
         isActivated: user.isActivated,
+        activationAmount: user.activationAmount == null ? null : Number(user.activationAmount),
       },
     };
   }
@@ -288,6 +371,7 @@ export class UserService {
       avatar: user.avatar,
       userType: user.userType,
       isActivated: user.isActivated,
+      activationAmount: user.activationAmount == null ? null : Number(user.activationAmount),
       shares: user.shares,
       inviteCode: user.inviteCode,
       currency: currency
@@ -409,6 +493,9 @@ export class UserService {
     const cdk = await this.cdkRepo.findOne({ where: { code, status: 0 } });
     if (!cdk) throw new BadRequestException('激活码无效或已被使用');
 
+    const activationAmount = await this.resolveCdkActivationAmount(cdk);
+    const activationReward = this.getActivationReward(activationAmount);
+
     // 事务：标记CDK已使用 + 激活用户 + 发放奖励
     await this.dataSource.transaction(async (manager) => {
       // 标记CDK
@@ -416,18 +503,21 @@ export class UserService {
         status: 1,
         usedBy: userId,
         usedAt: new Date(),
+        activationAmount,
       });
 
       // 激活用户 + 发放持股数
       await manager.update(User, userId, {
         isActivated: true,
-        shares: 200,
+        shares: activationReward.shares,
+        activationAmount,
+        activatedCdkId: cdk.id,
       });
 
       // 激活送10000积分
       await manager.query(
-        `UPDATE user_currencies SET points = points + 10000 WHERE user_id = ?`,
-        [userId],
+        `UPDATE user_currencies SET points = points + ? WHERE user_id = ?`,
+        [activationReward.points, userId],
       );
 
       // 发放CDK奖励到货币账户
@@ -471,7 +561,7 @@ export class UserService {
     // 激活后只自动添加客服联系人，总群需由客服邀请后进入
     await this.ensureCustomerServiceContact(userId);
 
-    return { message: '激活成功', shares: 200 };
+    return { message: '激活成功', shares: activationReward.shares, activationAmount };
   }
 
   /** 获取邀请记录（直推+间推） */

@@ -22,8 +22,8 @@ class _RechargePageState extends ConsumerState<RechargePage> {
   String _qrcode = '';
   String _payeeName = '';
   String _notice = '';
-  List<String> _packages = [];
-  String? _selectedPackage;
+  final List<int> _amountOptions = const [500, 2000];
+  int? _selectedAmount;
   List<Map<String, dynamic>> _orders = [];
 
   @override
@@ -50,12 +50,6 @@ class _RechargePageState extends ConsumerState<RechargePage> {
         _qrcode = result?['qrcode']?.toString() ?? '';
         _payeeName = result?['payeeName']?.toString() ?? '';
         _notice = result?['notice']?.toString() ?? '';
-        final pkgStr = result?['packages']?.toString() ?? '';
-        _packages = pkgStr
-            .split(RegExp(r'[,，]'))
-            .map((e) => e.trim())
-            .where((e) => e.isNotEmpty)
-            .toList();
         _loading = false;
       });
     } catch (_) {
@@ -92,6 +86,10 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       Toast.warning(context, '请填写正确的11位手机号');
       return;
     }
+    if (_selectedAmount == null) {
+      Toast.warning(context, '请选择充值金额');
+      return;
+    }
     setState(() => _submitting = true);
     try {
       await ref.read(apiClientProvider).post(
@@ -99,17 +97,15 @@ class _RechargePageState extends ConsumerState<RechargePage> {
         data: {
           'realName': name,
           'phone': phone,
-          if (_selectedPackage != null)
-            'amount': double.tryParse(
-                _selectedPackage!.replaceAll(RegExp(r'[^0-9.]'), '')),
-          if (_selectedPackage != null) 'packageName': _selectedPackage,
+          'amount': _selectedAmount,
+          'packageName': '${_selectedAmount}元档',
         },
       );
       if (!mounted) return;
       Toast.success(context, '充值申请已提交，管理员核实后会发送激活码');
       _nameCtrl.clear();
       _phoneCtrl.clear();
-      setState(() => _selectedPackage = null);
+      setState(() => _selectedAmount = null);
       _loadOrders();
     } catch (e) {
       if (!mounted) return;
@@ -163,10 +159,8 @@ class _RechargePageState extends ConsumerState<RechargePage> {
                   _buildQrcodeCard(),
                   const SizedBox(height: 16),
                   // 套餐选择
-                  if (_packages.isNotEmpty) ...[
-                    _buildPackageCard(),
-                    const SizedBox(height: 16),
-                  ],
+                  _buildPackageCard(),
+                  const SizedBox(height: 16),
                   // 信息填写
                   _buildFormCard(),
                   const SizedBox(height: 16),
@@ -293,18 +287,18 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('选择套餐（选填）', style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('选择充值金额', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
           Wrap(
             spacing: 10,
             runSpacing: 10,
-            children: _packages.map((p) {
-              final selected = _selectedPackage == p;
+            children: _amountOptions.map((amount) {
+              final selected = _selectedAmount == amount;
               return ChoiceChip(
-                label: Text('$p 元'),
+                label: Text('$amount 元'),
                 selected: selected,
                 onSelected: (v) =>
-                    setState(() => _selectedPackage = v ? p : null),
+                    setState(() => _selectedAmount = v ? amount : null),
               );
             }).toList(),
           ),

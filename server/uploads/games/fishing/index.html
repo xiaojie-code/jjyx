@@ -37,7 +37,7 @@
   <!--<link rel="apple-touch-icon" href=".png" />-->
   <!--<link rel="apple-touch-icon-precomposed" href=".png" />-->
 
-  <link rel="stylesheet" type="text/css" href="style-mobile.25fc5.css"/>
+  <link rel="stylesheet" type="text/css" href="style-mobile.25fc5.css?v=20260615-fullscreen"/>
   <link rel="icon" href="favicon.8de18.ico"/>
   <script>
     // H5 平台适配
@@ -89,6 +89,31 @@
     var saveUploadTimer = null;
     var economyPatchInstalled = false;
     var ECONOMY_VERSION = 3;
+
+    function fitCocosCanvasToViewport() {
+      var width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth || 0;
+      var height = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
+      if (!width || !height) return;
+      var container = document.getElementById("Cocos2dGameContainer");
+      var canvas = document.getElementById("GameCanvas");
+      [document.documentElement, document.body, container, canvas].forEach(function (node) {
+        if (!node || !node.style) return;
+        node.style.width = width + "px";
+        node.style.height = height + "px";
+        node.style.margin = "0";
+        node.style.padding = "0";
+        if (node === container || node === canvas) {
+          node.style.left = "0";
+          node.style.top = "0";
+        }
+      });
+      try {
+        if (window.cc && cc.view) {
+          cc.view.setFrameSize(width, height);
+          cc.view.resizeWithBrowserSize(true);
+        }
+      } catch (_) {}
+    }
 
     function getInitialAppData() {
       try {
@@ -530,6 +555,126 @@
       }
     }
 
+    function getNodeLabelText(node) {
+      var parts = [];
+      walkNode(node, function (child) {
+        if (!child || typeof child.getComponent !== "function" || !cc.Label) return;
+        var label = child.getComponent(cc.Label);
+        if (label && typeof label.string !== "undefined") {
+          parts.push(String(label.string || ""));
+        }
+      });
+      return parts.join(" ");
+    }
+
+    function getButtonEventText(button) {
+      var parts = [];
+      try {
+        (button.clickEvents || []).forEach(function (event) {
+          parts.push(String(event.handler || ""));
+          parts.push(String(event.customEventData || ""));
+        });
+      } catch (_) {}
+      return parts.join(" ");
+    }
+
+    function patchGarbageDialogButtons(view) {
+      if (!view || !view.select_op_node) return;
+      var selectNode = view.select_op_node;
+      var identifyButton = null;
+      var discardButton = null;
+
+      walkNode(selectNode, function (node) {
+        if (!node || typeof node.getComponent !== "function" || !cc.Button) return;
+        var button = node.getComponent(cc.Button);
+        if (!button) return;
+        var name = String(node.name || "").toLowerCase();
+        var text = getNodeLabelText(node);
+        var eventText = getButtonEventText(button);
+        if (
+          text.indexOf("鉴定") >= 0 ||
+          eventText.indexOf("onSeePrice") >= 0 ||
+          name.indexOf("see") >= 0 ||
+          name.indexOf("price") >= 0 ||
+          name.indexOf("video") >= 0 ||
+          name.indexOf("identify") >= 0 ||
+          name.indexOf("appraisal") >= 0
+        ) {
+          identifyButton = node;
+        }
+        if (
+          text.indexOf("丢弃") >= 0 ||
+          eventText.indexOf("onDiscard") >= 0 ||
+          name.indexOf("discard") >= 0 ||
+          name.indexOf("drop") >= 0
+        ) {
+          discardButton = node;
+        }
+      });
+
+      if (!discardButton && identifyButton) {
+        var buttons = [];
+        walkNode(selectNode, function (node) {
+          if (!node || node === identifyButton || typeof node.getComponent !== "function" || !cc.Button) return;
+          if (node.getComponent(cc.Button)) buttons.push(node);
+        });
+        discardButton = buttons[0] || null;
+      }
+
+      if (identifyButton) {
+        identifyButton.active = false;
+      }
+      if (discardButton) {
+        discardButton.active = true;
+        try {
+          var layout = selectNode.getComponent && selectNode.getComponent(cc.Layout);
+          if (layout) layout.enabled = false;
+        } catch (_) {}
+        discardButton.x = 0;
+        if (typeof discardButton.setPosition === "function") {
+          discardButton.setPosition(cc.v2(0, discardButton.y || 0));
+        }
+      }
+      if (view.sell_op_node) {
+        view.sell_op_node.active = false;
+      }
+    }
+
+    function patchFishingGarbageDialog() {
+      if (!window.cc || !cc.director) return;
+      var scene = cc.director.getScene && cc.director.getScene();
+      if (!scene) return;
+      walkNode(scene, function (node) {
+        if (!node || typeof node.getComponent !== "function") return;
+        var view = null;
+        try {
+          view = node.getComponent("GarbageView");
+        } catch (_) {}
+        if (!view) return;
+        if (!view.__discardOnlyPatched) {
+          view.__discardOnlyPatched = true;
+          var originalCleanInfo = typeof view.cleanInfo === "function" ? view.cleanInfo.bind(view) : null;
+          var originalOnShow = typeof view.onShow === "function" ? view.onShow.bind(view) : null;
+          if (originalCleanInfo) {
+            view.cleanInfo = function patchedCleanInfo() {
+              var result = originalCleanInfo.apply(view, arguments);
+              setTimeout(function () { patchGarbageDialogButtons(view); }, 0);
+              return result;
+            };
+          }
+          if (originalOnShow) {
+            view.onShow = function patchedOnShow() {
+              var result = originalOnShow.apply(view, arguments);
+              setTimeout(function () { patchGarbageDialogButtons(view); }, 0);
+              setTimeout(function () { patchGarbageDialogButtons(view); }, 120);
+              return result;
+            };
+          }
+        }
+        patchGarbageDialogButtons(view);
+      });
+    }
+
     function normalizeSceneTextAndAdButtons() {
       if (!window.cc || !cc.director || !cc.Label) return;
       var scene = cc.director.getScene && cc.director.getScene();
@@ -540,7 +685,10 @@
           name.indexOf("gift_video") >= 0 ||
           name.indexOf("video") >= 0 ||
           name.indexOf("get_glod") >= 0 ||
-          name.indexOf("get_gold") >= 0
+          name.indexOf("get_gold") >= 0 ||
+          name.indexOf("day_reward") >= 0 ||
+          name.indexOf("daily") >= 0 ||
+          name.indexOf("login_reward") >= 0
         ) {
           hideNode(node);
         }
@@ -551,6 +699,10 @@
         if (next !== label.string) label.string = next;
         if (/观看视频|看视频|视频广告|广告奖励|获取积分/.test(next)) {
           hideAdRewardNode(node);
+        }
+        if (/今日首次登陆获得积分|今日首次登录获得积分|首次登录|首次登陆|登录奖励|登陆奖励/.test(next)) {
+          hideAdRewardNode(node);
+          hideNode(node);
         }
       });
     }
@@ -876,59 +1028,11 @@
 
       if (originalGetDayReward) {
         window.UserBaseInfo.getDayReward = function patchedGetDayReward() {
-          var key = dailyRewardKey();
-          if (localStorage.getItem(key)) {
-            if (typeof window.UserBaseInfo.setTadayGetGold === "function") {
-              window.UserBaseInfo.setTadayGetGold(true);
-            }
-            return 0;
+          if (typeof window.UserBaseInfo.setTadayGetGold === "function") {
+            window.UserBaseInfo.setTadayGetGold(true);
           }
-
-          var rewardAmount = scaleEconomyValue(500);
-          var claimData = null;
-          var pointsPath = getApiPath("/points/change");
-          if (pointsPath && getAuthToken()) {
-            claimData = sendApiJsonSync("POST", pointsPath, {
-              amount: rewardAmount,
-              reason: "fishing_daily_login",
-            });
-
-            if (!claimData) {
-              return 0;
-            }
-
-            var claimBalance = Math.max(0, Math.floor(toNumber(balanceFromData(claimData, pendingGold || 0))));
-            if (claimData.duplicate || Number(claimData.amount || 0) <= 0) {
-              markDailyRewardLocal(0, claimBalance, true);
-              if (typeof window.UserBaseInfo.setTadayGetGold === "function") {
-                window.UserBaseInfo.setTadayGetGold(true);
-              }
-              refreshFishingGold(claimBalance);
-              return 0;
-            }
-          }
-
-          nextGoldChangeReason = "fishing_daily_login";
-          suppressGoldSync = true;
-          try {
-            if (claimData && typeof window.UserBaseInfo.setTadayGetGold === "function") {
-              window.UserBaseInfo.setTadayGetGold(false);
-            }
-            var originalReward = Number(originalGetDayReward.apply(window.UserBaseInfo, arguments) || 0);
-            var reward = claimData ? Number(claimData.amount || rewardAmount) : originalReward;
-            if (reward > 0) {
-              var balance = claimData
-                ? Math.max(0, Math.floor(toNumber(balanceFromData(claimData, pendingGold || reward))))
-                : Math.max(0, Math.floor(toNumber(readCurrentGold() || reward)));
-              markDailyRewardLocal(reward, balance, false);
-              refreshFishingGold(balance);
-              mirrorActiveSaveToAccount();
-            }
-            return reward;
-          } finally {
-            suppressGoldSync = false;
-            nextGoldChangeReason = "";
-          }
+          markDailyRewardLocal(0, pendingGold || readCurrentGold() || 0, true);
+          return 0;
         };
       }
 
@@ -970,15 +1074,22 @@
     installSaveStoragePatch();
     activateAccountSave();
     loadRemoteSaveSync(false);
+    fitCocosCanvasToViewport();
+    window.addEventListener("resize", fitCocosCanvasToViewport);
+    window.addEventListener("orientationchange", function () {
+      setTimeout(fitCocosCanvasToViewport, 120);
+    });
     if (hasRealAccountData()) {
       refreshFishingGold(balanceFromData(appInitData, 0));
     }
     setInterval(function () {
+      fitCocosCanvasToViewport();
       installTextPatch();
       installAdPatch();
       if (!economyPatchInstalled) installEconomyPatch();
       installUserGoldBridge();
       normalizeSceneTextAndAdButtons();
+      patchFishingGarbageDialog();
       if (!suppressGoldSync) syncCurrentGold();
     }, 300);
   })();

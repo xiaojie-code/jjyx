@@ -13,6 +13,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
@@ -25,6 +28,7 @@ class MainActivity: FlutterActivity() {
     private val apkChannelName = "com.example.app/apk_installer"
     private val notifChannelName = "com.example.app/notifications"
     private val pushChannelName = "com.example.app/push"
+    private val windowChannelName = "com.example.app/window"
     private val NOTIFICATION_CHANNEL_ID = "new_message_alert_v2"
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activeRingtone: Ringtone? = null
@@ -59,6 +63,20 @@ class MainActivity: FlutterActivity() {
                 }
                 "registerVendorPush" -> {
                     result.success(getPushDeviceInfo(includeToken = true))
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, windowChannelName).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "enterGameFullscreen" -> {
+                    configureGameFullscreenWindow()
+                    result.success(true)
+                }
+                "exitGameFullscreen" -> {
+                    restoreAppWindow()
+                    result.success(true)
                 }
                 else -> result.notImplemented()
             }
@@ -139,6 +157,48 @@ class MainActivity: FlutterActivity() {
         }
 
         handleNotificationIntent(intent, deliverNow = false)
+    }
+
+    private fun configureGameFullscreenWindow() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let { controller ->
+                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                controller.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility =
+                android.view.View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+    }
+
+    private fun restoreAppWindow() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true)
+            window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_VISIBLE
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

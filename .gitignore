@@ -31,3 +31,8 @@ Thumbs.db
 *.log
 *.zip
 .codex/
+runtime-logs/
+dump.rdb
+build-log.txt
+*.bak-*
+server/uploads/games/killer/Build/*.bak-*

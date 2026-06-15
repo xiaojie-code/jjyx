@@ -9,8 +9,12 @@ import { Repository } from 'typeorm';
 import { RechargeOrder } from '../entities/recharge-order.entity';
 import { User } from '../entities/user.entity';
 import { SystemConfig } from '../entities/system-config.entity';
+import { Cdk } from '../entities/cdk.entity';
+import { CdkType } from '../entities/cdk-type.entity';
 import { ServiceNotificationService } from '../notification/service-notification.service';
 import { SmsService } from './sms.service';
+
+const RECHARGE_AMOUNT_OPTIONS = [500, 2000];
 
 @Injectable()
 export class RechargeService implements OnModuleInit {
@@ -21,6 +25,10 @@ export class RechargeService implements OnModuleInit {
     private readonly userRepo: Repository<User>,
     @InjectRepository(SystemConfig)
     private readonly configRepo: Repository<SystemConfig>,
+    @InjectRepository(Cdk)
+    private readonly cdkRepo: Repository<Cdk>,
+    @InjectRepository(CdkType)
+    private readonly cdkTypeRepo: Repository<CdkType>,
     private readonly serviceNotificationService: ServiceNotificationService,
     private readonly smsService: SmsService,
   ) {}
@@ -61,6 +69,8 @@ export class RechargeService implements OnModuleInit {
       `ALTER TABLE recharge_orders ADD COLUMN admin_remark VARCHAR(200) NULL`,
       `ALTER TABLE recharge_orders ADD COLUMN operator_id INT NULL`,
       `ALTER TABLE recharge_orders ADD COLUMN handled_at DATETIME NULL`,
+      `ALTER TABLE cdk_types ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额：500或2000' AFTER description`,
+      `ALTER TABLE cdks ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额快照：500或2000' AFTER items_json`,
     ];
     for (const sql of alters) {
       try {
@@ -71,6 +81,39 @@ export class RechargeService implements OnModuleInit {
     }
   }
 
+  private normalizeRechargeAmount(value: any): number | null {
+    const amount = Number(value);
+    return RECHARGE_AMOUNT_OPTIONS.includes(amount) ? amount : null;
+  }
+
+  private inferActivationAmountFromItems(itemsJson: any): number | null {
+    if (!Array.isArray(itemsJson)) return null;
+    for (const item of itemsJson) {
+      const key = String(item?.item || item?.key || '').trim();
+      const amount = this.normalizeRechargeAmount(item?.amount ?? item?.value);
+      if (
+        amount &&
+        ['activation_amount', 'activationAmount', 'recharge_amount', 'rechargeAmount'].includes(key)
+      ) {
+        return amount;
+      }
+    }
+    return null;
+  }
+
+  private async resolveCdkActivationAmount(code: string): Promise<number | null> {
+    const cdk = await this.cdkRepo.findOne({ where: { code } });
+    if (!cdk) return null;
+    const directAmount = this.normalizeRechargeAmount(cdk.activationAmount);
+    if (directAmount) return directAmount;
+
+    const cdkType = await this.cdkTypeRepo.findOne({ where: { id: cdk.cdkTypeId } });
+    const typeAmount = this.normalizeRechargeAmount(cdkType?.activationAmount);
+    if (typeAmount) return typeAmount;
+
+    return this.inferActivationAmountFromItems(cdk.itemsJson);
+  }
+
   /** App 端：获取收款信息（二维码、收款人、说明、套餐） */
   async getRechargeInfo() {
     const qrcode = await this.getConfig('recharge_qrcode', '');
@@ -79,8 +122,8 @@ export class RechargeService implements OnModuleInit {
       'recharge_notice',
       '请先扫码付款，再填写姓名和手机号提交，管理员核实后会通过短信发送激活码。',
     );
-    const packages = await this.getConfig('recharge_packages', '');
-    return { qrcode, payeeName, notice, packages };
+    const packages = RECHARGE_AMOUNT_OPTIONS.join(',');
+    return { qrcode, payeeName, notice, packages, amountOptions: RECHARGE_AMOUNT_OPTIONS };
   }
 
   /** App 端：提交充值申请 */
@@ -99,8 +142,8 @@ export class RechargeService implements OnModuleInit {
       data.amount === undefined || data.amount === null
         ? null
         : Number(data.amount);
-    if (amount !== null && (!Number.isFinite(amount) || amount < 0)) {
-      throw new BadRequestException('充值金额不合法');
+    if (amount === null || !RECHARGE_AMOUNT_OPTIONS.includes(amount)) {
+      throw new BadRequestException('请选择充值金额：500或2000');
     }
 
     // 防重复：同一用户存在待核实订单时不允许重复提交
@@ -116,7 +159,7 @@ export class RechargeService implements OnModuleInit {
       realName,
       phone,
       amount,
-      packageName: String(data.packageName || '').trim() || null,
+      packageName: `${amount}元档`,
       status: 0,
     });
     await this.orderRepo.save(order);
@@ -266,6 +309,17 @@ export class RechargeService implements OnModuleInit {
     if (!realName) throw new BadRequestException('付款人姓名为空，不能发送短信');
     if (!phone) throw new BadRequestException('手机号为空，不能发送短信');
     if (!code) throw new BadRequestException('请填写激活码');
+    const orderAmount = this.normalizeRechargeAmount(order.amount);
+    if (!orderAmount) {
+      throw new BadRequestException('订单充值金额不合法，请让用户重新选择500或2000提交');
+    }
+    const codeAmount = await this.resolveCdkActivationAmount(code);
+    if (!codeAmount) {
+      throw new BadRequestException('激活码未配置500/2000档位，不能发送');
+    }
+    if (codeAmount !== orderAmount) {
+      throw new BadRequestException(`激活码档位为${codeAmount}，与订单充值${orderAmount}不一致`);
+    }
 
     await this.smsService.sendActivationCode({
       mobile: phone,

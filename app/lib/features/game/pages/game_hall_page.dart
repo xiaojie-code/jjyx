@@ -19,7 +19,7 @@ class GameHallPage extends ConsumerStatefulWidget {
 }
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
-  static const String _gameShellVersion = '20260612-game-points-downscale';
+  static const String _gameShellVersion = '20260615-killer-fullscreen-stretch2';
 
   List<Map<String, dynamic>> _games = [];
   bool _loading = true;
@@ -75,6 +75,9 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     final text = _gameSearchText(game);
     return text.contains('蛇') ||
         text.contains('贪吃蛇') ||
+        text.contains('麻象') ||
+        text.contains('象雀') ||
+        text.contains('对弈') ||
         text.contains('snake') ||
         text.contains('ssdzz');
   }
@@ -108,7 +111,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
   String _displayGameName(Map<String, dynamic> game) {
     if (_isLotteryGame(game)) return '幸运转盘';
     if (_isFishingGame(game)) return '实况钓鱼';
-    if (_isSnakeGame(game)) return '蛇蛇大作战';
+    if (_isSnakeGame(game)) return '象雀对弈';
     if (_isKillerGame(game)) return '大逃杀';
     if (_isHorseGame(game)) return '赛马';
     return (game['name'] ?? '').toString();
@@ -116,12 +119,10 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
 
   String _gameDescription(Map<String, dynamic> game) {
     final description = (game['description'] ?? '').toString().trim();
-    const snakeSuffix = '围堵对战，轻松上分';
-    if (!_isSnakeGame(game) || description.contains(snakeSuffix)) {
-      return description;
+    if (_isSnakeGame(game)) {
+      return '指尖落牌，体验四方桌的人间喜乐；横车跃马，感受楚河两岸的运筹帷幄。';
     }
-    if (description.isEmpty) return snakeSuffix;
-    return '$description $snakeSuffix';
+    return description;
   }
 
   String? _localGameIconAsset(Map<String, dynamic> game) {
@@ -138,7 +139,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       return 'assets/game-icons/skdy.png';
     }
     if (_isSnakeGame(game)) {
-      return 'assets/game-icons/ssdzz.jpg';
+      return 'video/image.png';
     }
     if (_isKillerGame(game)) {
       return 'assets/game-icons/dts.jpg';
@@ -838,7 +839,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       return;
     }
 
-    if (_isHorseGame(game)) {
+    if (_isSnakeGame(game) || _isHorseGame(game)) {
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -925,6 +926,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
             jsBridge: jsBridge,
             onExit: closeGameRoute,
             orientation: orientation,
+            showExitButton: false,
           ),
         ),
       );
@@ -1023,7 +1025,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
                                     fontSize: 12,
                                     color: Colors.grey,
                                   ),
-                                  maxLines: 2,
+                                  maxLines: 4,
                                   overflow: TextOverflow.ellipsis,
                                   textAlign: TextAlign.center,
                                 ),

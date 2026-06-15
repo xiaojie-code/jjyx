@@ -7,6 +7,8 @@ import { Withdrawal } from '../entities/withdrawal.entity';
 import { SystemConfig } from '../entities/system-config.entity';
 import { DailyDeduction } from '../entities/daily-deduction.entity';
 import { RechargeOrder } from '../entities/recharge-order.entity';
+import { Cdk } from '../entities/cdk.entity';
+import { CdkType } from '../entities/cdk-type.entity';
 import { User } from '../entities/user.entity';
 import { GameTurnoverRecord } from '../entities/game-turnover-record.entity';
 import { DirectGameRewardRecord } from '../entities/direct-game-reward-record.entity';
@@ -28,6 +30,8 @@ import { NotificationModule } from '../notification/notification.module';
       SystemConfig,
       DailyDeduction,
       RechargeOrder,
+      Cdk,
+      CdkType,
       User,
       GameTurnoverRecord,
       DirectGameRewardRecord,

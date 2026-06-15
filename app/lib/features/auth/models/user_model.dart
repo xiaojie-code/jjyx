@@ -5,6 +5,7 @@ class UserModel {
   final String avatar;
   final int userType;
   final bool isActivated;
+  final double? activationAmount;
 
   UserModel({
     required this.id,
@@ -13,6 +14,7 @@ class UserModel {
     required this.avatar,
     this.userType = 1,
     required this.isActivated,
+    this.activationAmount,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,7 @@ class UserModel {
       avatar: json['avatar'] as String? ?? '',
       userType: int.tryParse(json['userType']?.toString() ?? '') ?? 1,
       isActivated: json['isActivated'] as bool? ?? false,
+      activationAmount: (json['activationAmount'] as num?)?.toDouble(),
     );
   }
 
@@ -86,6 +89,7 @@ class ProfileModel {
         avatar: json['avatar'] as String? ?? '',
         userType: int.tryParse(json['userType']?.toString() ?? '') ?? 1,
         isActivated: json['isActivated'] as bool? ?? false,
+        activationAmount: (json['activationAmount'] as num?)?.toDouble(),
       ),
       shares: json['shares'] as int? ?? 0,
       inviteCode: json['inviteCode'] as String? ?? '',

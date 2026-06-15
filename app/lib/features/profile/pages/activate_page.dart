@@ -56,7 +56,7 @@ class _ActivatePageState extends ConsumerState<ActivatePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('激活游戏')),
+      appBar: AppBar(title: const Text('激活')),
       resizeToAvoidBottomInset: true,
       body: LayoutBuilder(
         builder: (context, constraints) {

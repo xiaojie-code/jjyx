@@ -21,6 +21,16 @@ export class Cdk {
   @Column({ type: 'json', name: 'items_json', nullable: true, comment: '奖励物品配置 [{"item":"points","amount":100}]' })
   itemsJson: any;
 
+  @Column({
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    name: 'activation_amount',
+    comment: '激活档位金额快照：500或2000',
+  })
+  activationAmount: number | null;
+
   @Column({ type: 'tinyint', default: 0, comment: '0未使用 1已使用' })
   status: number;
 

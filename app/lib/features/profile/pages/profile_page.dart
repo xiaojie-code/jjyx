@@ -126,8 +126,13 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     ],
                     _buildMenuItem(
                       Icons.card_giftcard,
-                      '激活游戏',
+                      '激活',
                       () => _push(const ActivatePage()),
+                    ),
+                    _buildMenuItem(
+                      Icons.inventory_2,
+                      '资产包',
+                      () {},
                     ),
                     _buildMenuItem(
                       Icons.payment,
@@ -447,9 +452,9 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
     if (text.contains('killer_bet') || text.contains('大逃杀投注')) {
       return '大逃杀投入积分';
     }
-    if (text.contains('snake_round_settle')) return '蛇蛇大作战结算奖励';
-    if (text.contains('snake_revive')) return '蛇蛇大作战积分复活';
-    if (text.contains('snake_skin_buy')) return '蛇蛇大作战购买皮肤';
+    if (text.contains('snake_round_settle')) return '象雀对弈结算奖励';
+    if (text.contains('snake_revive')) return '象雀对弈积分复活';
+    if (text.contains('snake_skin_buy')) return '象雀对弈购买皮肤';
     if (text.contains('horse_bet')) return '赛马投入积分';
     if (text.contains('horse_win')) return '赛马获胜结算';
     if (text.contains('lottery_win')) return '幸运转盘中奖';
@@ -483,7 +488,12 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
         text.contains('卖鱼')) {
       return '实况钓鱼';
     }
-    if (text.contains('snake') || text.contains('蛇')) return '蛇蛇大作战';
+    if (text.contains('snake') ||
+        text.contains('蛇') ||
+        text.contains('麻象') ||
+        text.contains('象雀')) {
+      return '象雀对弈';
+    }
     if (text.contains('killer') ||
         text.contains('大逃杀') ||
         text.contains('逃杀')) {

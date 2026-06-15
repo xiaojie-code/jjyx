@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, In } from 'typeorm';
 import { Matrix } from '../entities/matrix.entity';
@@ -6,10 +6,11 @@ import { MatrixSlot } from '../entities/matrix-slot.entity';
 import { MatrixIncome } from '../entities/matrix-income.entity';
 import { User } from '../entities/user.entity';
 
-/** 启动金额（可后续改为配置项） */
-const DEFAULT_START_FUND = 2000;
-/** 每个坑位的收益比例*/
-const SLOT_INCOME_RATE = 0.35;
+const DEFAULT_ACTIVATION_AMOUNT = 2000;
+const LOW_ACTIVATION_AMOUNT = 500;
+const HIGH_ACTIVATION_AMOUNT = 2000;
+const LOW_SLOT_INCOME_RATE = 0.25;
+const HIGH_SLOT_INCOME_RATE = 0.35;
 /** 指定账号深层推广树激活奖励 */
 const SPECIAL_TREE_REWARD_ACCOUNTS = ['333333', '666666'];
 const SPECIAL_TREE_REWARD_AMOUNT = 200;
@@ -30,8 +31,19 @@ type ReferralTreeNode = ReferralBrief & {
   directRoot: ReferralBrief | null;
 };
 
+type SlotIncomeSnapshot = {
+  incomeAmount: number;
+  incomeType: string;
+  remainingFund: number;
+  reentryCount: number;
+  baseFund: number;
+  rewardRate: number;
+  ownerActivationAmount: number;
+  sourceActivationAmount: number;
+};
+
 @Injectable()
-export class MatrixService {
+export class MatrixService implements OnModuleInit {
   private readonly logger = new Logger(MatrixService.name);
 
   constructor(
@@ -45,6 +57,43 @@ export class MatrixService {
     private readonly userRepo: Repository<User>,
     private readonly dataSource: DataSource,
   ) {}
+
+  async onModuleInit() {
+    await this.ensureMatrixRewardColumns();
+  }
+
+  private async ensureMatrixRewardColumns() {
+    const alters = [
+      `ALTER TABLE users ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '用户激活档位金额：500或2000' AFTER is_activated`,
+      `ALTER TABLE users ADD COLUMN activated_cdk_id INT NULL COMMENT '用户激活使用的CDK ID' AFTER activation_amount`,
+      `ALTER TABLE users ADD INDEX idx_users_activation_amount (activation_amount)`,
+      `ALTER TABLE cdk_types ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额：500或2000' AFTER description`,
+      `ALTER TABLE cdks ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额快照：500或2000' AFTER items_json`,
+      `ALTER TABLE matrix_slots ADD COLUMN base_fund DECIMAL(16,8) NOT NULL DEFAULT 0 COMMENT '本坑位收益计算基数' AFTER income_amount`,
+      `ALTER TABLE matrix_slots ADD COLUMN reward_rate DECIMAL(10,6) NOT NULL DEFAULT 0.350000 COMMENT '本坑位实际收益比例快照' AFTER base_fund`,
+      `ALTER TABLE matrix_slots ADD COLUMN owner_activation_amount DECIMAL(10,2) NULL COMMENT '矩阵顶点用户激活档位' AFTER reward_rate`,
+      `ALTER TABLE matrix_slots ADD COLUMN source_activation_amount DECIMAL(10,2) NULL COMMENT '入位用户激活档位' AFTER owner_activation_amount`,
+      `ALTER TABLE matrix_incomes ADD COLUMN base_fund DECIMAL(16,8) NULL COMMENT '收益计算基数' AFTER amount`,
+      `ALTER TABLE matrix_incomes ADD COLUMN reward_rate DECIMAL(10,6) NULL COMMENT '收益比例快照' AFTER base_fund`,
+      `ALTER TABLE matrix_incomes ADD COLUMN owner_activation_amount DECIMAL(10,2) NULL COMMENT '收益归属用户激活档位' AFTER reward_rate`,
+      `ALTER TABLE matrix_incomes ADD COLUMN source_activation_amount DECIMAL(10,2) NULL COMMENT '贡献用户激活档位' AFTER owner_activation_amount`,
+    ];
+
+    for (const sql of alters) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {}
+    }
+
+    await this.dataSource.query(
+      `UPDATE users SET activation_amount = ? WHERE is_activated = 1 AND activation_amount IS NULL`,
+      [HIGH_ACTIVATION_AMOUNT],
+    );
+    await this.dataSource.query(
+      `UPDATE cdks SET activation_amount = ? WHERE activation_amount IS NULL`,
+      [HIGH_ACTIVATION_AMOUNT],
+    );
+  }
 
   private async getActualFilledCount(matrixId: number, manager: any): Promise<number> {
     const rows = await manager.query(
@@ -110,6 +159,53 @@ export class MatrixService {
       params,
     );
     return Number(rows?.[0]?.total || 0);
+  }
+
+  private normalizeActivationAmount(value: any): number {
+    return Number(value) === LOW_ACTIVATION_AMOUNT
+      ? LOW_ACTIVATION_AMOUNT
+      : HIGH_ACTIVATION_AMOUNT;
+  }
+
+  private async getUserActivationAmount(userId: number, manager: any): Promise<number> {
+    const user = await manager.findOne(User, {
+      where: { id: Number(userId) },
+      select: ['id', 'activationAmount'],
+    });
+    return this.normalizeActivationAmount(user?.activationAmount ?? DEFAULT_ACTIVATION_AMOUNT);
+  }
+
+  private resolveSlotRewardRate(ownerActivationAmount: number, sourceActivationAmount: number): number {
+    return ownerActivationAmount === HIGH_ACTIVATION_AMOUNT &&
+      sourceActivationAmount === HIGH_ACTIVATION_AMOUNT
+      ? HIGH_SLOT_INCOME_RATE
+      : LOW_SLOT_INCOME_RATE;
+  }
+
+  private createSlotIncomeEntity(
+    manager: any,
+    data: {
+      ownerId: number;
+      matrixId: number;
+      slotNumber: number;
+      fromUserId: number;
+      snapshot: SlotIncomeSnapshot;
+      description: string;
+    },
+  ) {
+    return manager.create(MatrixIncome, {
+      ownerId: data.ownerId,
+      matrixId: data.matrixId,
+      slotNumber: data.slotNumber,
+      fromUserId: data.fromUserId,
+      amount: data.snapshot.incomeAmount,
+      baseFund: data.snapshot.baseFund,
+      rewardRate: data.snapshot.rewardRate,
+      ownerActivationAmount: data.snapshot.ownerActivationAmount,
+      sourceActivationAmount: data.snapshot.sourceActivationAmount,
+      incomeType: data.snapshot.incomeType,
+      description: data.description,
+    });
   }
 
   /**
@@ -347,8 +443,14 @@ export class MatrixService {
     if (nextSlotNumber === 0) return; // 没有合适的空位
 
     // 计算收益（按用户轮次
-    const { incomeAmount, incomeType, remainingFund, reentryCount } =
-      await this.calculateSlotIncomeByRound(nextSlotNumber, isNewUser, userId, manager);
+    const incomeSnapshot = await this.calculateSlotIncomeByRound(
+      nextSlotNumber,
+      isNewUser,
+      userId,
+      targetOwnerId,
+      manager,
+    );
+    const { incomeAmount, incomeType, remainingFund, reentryCount } = incomeSnapshot;
 
     const actualIncomeAmount = incomeAmount;
     const actualRemainingFund = remainingFund;
@@ -366,6 +468,10 @@ export class MatrixService {
       isNewUser,
       isDirect,
       incomeAmount: actualIncomeAmount,
+      baseFund: incomeSnapshot.baseFund,
+      rewardRate: incomeSnapshot.rewardRate,
+      ownerActivationAmount: incomeSnapshot.ownerActivationAmount,
+      sourceActivationAmount: incomeSnapshot.sourceActivationAmount,
       incomeType,
       remainingFund: actualRemainingFund,
       reentryCount: actualReentryCount,
@@ -377,16 +483,15 @@ export class MatrixService {
 
     // 记录收益
     if (actualIncomeAmount > 0) {
-      const income = manager.create(MatrixIncome, {
+      const income = this.createSlotIncomeEntity(manager, {
         ownerId: targetOwnerId,
         matrixId: currentMatrix.id,
         slotNumber: nextSlotNumber,
         fromUserId: userId,
-        amount: actualIncomeAmount,
-        incomeType,
+        snapshot: incomeSnapshot,
         description: isNewUser
           ? `新用户入位第${nextSlotNumber}号坑位`
-          : `老用户再次入位第${nextSlotNumber}号坑位（{actualReentryCount}次）`,
+          : `老用户再次入位第${nextSlotNumber}号坑位（${actualReentryCount}次）`,
       });
       await manager.save(MatrixIncome, income);
 
@@ -532,9 +637,12 @@ export class MatrixService {
     slotNumber: number,
     isNewUser: boolean,
     userId: number,
+    matrixOwnerId: number,
     manager: any,
-  ): Promise<{ incomeAmount: number; incomeType: string; remainingFund: number; reentryCount: number }> {
-    let baseFund = DEFAULT_START_FUND;
+  ): Promise<SlotIncomeSnapshot> {
+    const ownerActivationAmount = await this.getUserActivationAmount(matrixOwnerId, manager);
+    const sourceActivationAmount = await this.getUserActivationAmount(userId, manager);
+    let baseFund = sourceActivationAmount;
     let userRound = 1;
 
     if (!isNewUser) {
@@ -561,8 +669,8 @@ export class MatrixService {
       userRound = completedCount + 1;
     }
 
-    // 收益 = 资金基数 * 35%（保留完整精度）
-    const incomeAmount = baseFund * SLOT_INCOME_RATE;
+    const rewardRate = this.resolveSlotRewardRate(ownerActivationAmount, sourceActivationAmount);
+    const incomeAmount = baseFund * rewardRate;
     const remainingFund = baseFund - incomeAmount;
 
     // 收益小于 0.1 则不计入
@@ -574,6 +682,10 @@ export class MatrixService {
         incomeType: finalIncome > 0 ? 'claimable' : 'none',
         remainingFund,
         reentryCount: userRound - 1,
+        baseFund,
+        rewardRate,
+        ownerActivationAmount,
+        sourceActivationAmount,
       };
     } else {
       return {
@@ -581,6 +693,10 @@ export class MatrixService {
         incomeType: finalIncome > 0 ? 'next_fund' : 'none',
         remainingFund,
         reentryCount: userRound - 1,
+        baseFund,
+        rewardRate,
+        ownerActivationAmount,
+        sourceActivationAmount,
       };
     }
   }
@@ -637,8 +753,14 @@ export class MatrixService {
         );
         if (nextSlot > 0) {
           // 计算收益
-          const { incomeAmount, incomeType, remainingFund, reentryCount } =
-            await this.calculateSlotIncomeByRound(nextSlot, false, matrix.ownerId, manager);
+          const incomeSnapshot = await this.calculateSlotIncomeByRound(
+            nextSlot,
+            false,
+            matrix.ownerId,
+            user.invitedBy,
+            manager,
+          );
+          const { incomeAmount, incomeType, remainingFund, reentryCount } = incomeSnapshot;
 
           const entryUser = await manager.findOne(User, { where: { id: matrix.ownerId } });
           const isDirect = Number(entryUser?.invitedBy) === Number(user.invitedBy);
@@ -650,6 +772,10 @@ export class MatrixService {
             isNewUser: false,
             isDirect,
             incomeAmount,
+            baseFund: incomeSnapshot.baseFund,
+            rewardRate: incomeSnapshot.rewardRate,
+            ownerActivationAmount: incomeSnapshot.ownerActivationAmount,
+            sourceActivationAmount: incomeSnapshot.sourceActivationAmount,
             incomeType,
             remainingFund,
             reentryCount,
@@ -659,13 +785,12 @@ export class MatrixService {
           superiorMatrix.filledCount = await this.syncMatrixFilledCount(superiorMatrix, manager);
 
           if (incomeAmount > 0) {
-            const income = manager.create(MatrixIncome, {
+            const income = this.createSlotIncomeEntity(manager, {
               ownerId: user.invitedBy,
               matrixId: superiorMatrix.id,
               slotNumber: nextSlot,
               fromUserId: matrix.ownerId,
-              amount: incomeAmount,
-              incomeType,
+              snapshot: incomeSnapshot,
               description: `老用户出局后再次入位第${nextSlot}号坑位`,
             });
             await manager.save(MatrixIncome, income);
@@ -757,8 +882,14 @@ export class MatrixService {
     if (targetSlot === 0) return;
 
     // 计算收益
-    const { incomeAmount, incomeType, remainingFund, reentryCount } =
-      await this.calculateSlotIncomeByRound(targetSlot, isNewUser, userId, manager);
+    const incomeSnapshot = await this.calculateSlotIncomeByRound(
+      targetSlot,
+      isNewUser,
+      userId,
+      firstLayerUserId,
+      manager,
+    );
+    const { incomeAmount, incomeType, remainingFund, reentryCount } = incomeSnapshot;
 
     const entryUser = await manager.findOne(User, { where: { id: userId } });
     const isDirect = Number(entryUser?.invitedBy) === Number(firstLayerUserId);
@@ -770,6 +901,10 @@ export class MatrixService {
       isNewUser,
       isDirect,
       incomeAmount,
+      baseFund: incomeSnapshot.baseFund,
+      rewardRate: incomeSnapshot.rewardRate,
+      ownerActivationAmount: incomeSnapshot.ownerActivationAmount,
+      sourceActivationAmount: incomeSnapshot.sourceActivationAmount,
       incomeType,
       remainingFund,
       reentryCount,
@@ -779,13 +914,12 @@ export class MatrixService {
     firstLayerMatrix.filledCount = await this.syncMatrixFilledCount(firstLayerMatrix, manager);
 
     if (incomeAmount > 0) {
-      const income = manager.create(MatrixIncome, {
+      const income = this.createSlotIncomeEntity(manager, {
         ownerId: firstLayerUserId,
         matrixId: firstLayerMatrix.id,
         slotNumber: targetSlot,
         fromUserId: userId,
-        amount: incomeAmount,
-        incomeType,
+        snapshot: incomeSnapshot,
         description: `用户补位入第${targetSlot}号坑位`,
       });
       await manager.save(MatrixIncome, income);
@@ -854,8 +988,14 @@ export class MatrixService {
     );
     if (nextSlotNumber === 0) return;
 
-    const { incomeAmount, incomeType, remainingFund, reentryCount } =
-      await this.calculateSlotIncomeByRound(nextSlotNumber, isNewUser, userId, manager);
+    const incomeSnapshot = await this.calculateSlotIncomeByRound(
+      nextSlotNumber,
+      isNewUser,
+      userId,
+      targetOwnerId,
+      manager,
+    );
+    const { incomeAmount, incomeType, remainingFund, reentryCount } = incomeSnapshot;
 
     const actualIncomeAmount = incomeAmount;
     const actualRemainingFund = remainingFund;
@@ -872,6 +1012,10 @@ export class MatrixService {
       isNewUser,
       isDirect,
       incomeAmount: actualIncomeAmount,
+      baseFund: incomeSnapshot.baseFund,
+      rewardRate: incomeSnapshot.rewardRate,
+      ownerActivationAmount: incomeSnapshot.ownerActivationAmount,
+      sourceActivationAmount: incomeSnapshot.sourceActivationAmount,
       incomeType,
       remainingFund: actualRemainingFund,
       reentryCount: actualReentryCount,
@@ -881,14 +1025,13 @@ export class MatrixService {
     currentMatrix.filledCount = await this.syncMatrixFilledCount(currentMatrix, manager);
 
     if (actualIncomeAmount > 0) {
-      const income = manager.create(MatrixIncome, {
+      const income = this.createSlotIncomeEntity(manager, {
         ownerId: targetOwnerId,
         matrixId: currentMatrix.id,
         slotNumber: nextSlotNumber,
         fromUserId: userId,
-        amount: actualIncomeAmount,
-        incomeType,
-        description: `老用户出局后跟随入位第${nextSlotNumber}号坑位（{actualReentryCount}次）`,
+        snapshot: incomeSnapshot,
+        description: `老用户出局后跟随入位第${nextSlotNumber}号坑位（${actualReentryCount}次）`,
       });
       await manager.save(MatrixIncome, income);
 
@@ -1289,7 +1432,7 @@ export class MatrixService {
     const currentRound = completedCount + 1;
 
     // 获取当前矩阵的实际启动资金
-    let currentFund = DEFAULT_START_FUND;
+    let currentFund = await this.getUserActivationAmount(userId, this.dataSource.manager);
     const currentMatrix = await this.matrixRepo.findOne({
       where: { ownerId: userId, status: 1 },
     });

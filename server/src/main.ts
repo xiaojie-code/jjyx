@@ -35,6 +35,12 @@ async function bootstrap() {
   }, express.static(join(process.cwd(), 'uploads'), {
     fallthrough: false,
     setHeaders: (res, filePath) => {
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      } else if (normalizedPath.includes('/uploads/games/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
       // Unity WebGL gzip 压缩文件需要正确的 Content-Encoding
       if (filePath.endsWith('.framework.js.unityweb')) {
         res.setHeader('Content-Encoding', 'gzip');

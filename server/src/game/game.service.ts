@@ -26,12 +26,12 @@ const LOTTERY_MAJOR_INTERVAL = 200;
 const HORSE_BET_OPTIONS = [10, 50, 100, 300, 500, 1000];
 const DEFAULT_GAME_ENTRIES = [
   {
-    name: '蛇蛇大作战',
-    description: '经典贪吃蛇小游戏 围堵对战，轻松上分',
+    name: '象雀对弈',
+    description: '指尖落牌，体验四方桌的人间喜乐；横车跃马，感受楚河两岸的运筹帷幄。',
     gameUrl: '/uploads/games/snake/index.html',
     sortOrder: 10,
     orientation: 'landscape',
-    keywords: ['蛇', '贪吃蛇', 'snake', 'ssdzz'],
+    keywords: ['蛇', '贪吃蛇', '麻象', '象雀', '对弈', 'snake', 'ssdzz'],
   },
   {
     name: '实况钓鱼',
@@ -222,7 +222,7 @@ export class GameService {
   async startGame(userId: number, gameId: number, betAmount?: number) {
     await this.ensureDefaultGameEntries();
     const user = await this.userRepo.findOne({ where: { id: userId } });
-    if (!user?.isActivated) throw new ForbiddenException('请先激活游戏');
+    if (!user?.isActivated) throw new ForbiddenException('请先激活');
 
     const game = await this.gameRepo.findOne({ where: { id: gameId } });
     if (!game) throw new NotFoundException('游戏不存在');

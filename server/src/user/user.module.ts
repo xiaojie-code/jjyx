@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../entities/user.entity';
 import { UserCurrency } from '../entities/user-currency.entity';
 import { Cdk } from '../entities/cdk.entity';
+import { CdkType } from '../entities/cdk-type.entity';
 import { SystemSwitch } from '../entities/system-switch.entity';
 import { Conversation } from '../entities/conversation.entity';
 import { ConversationMember } from '../entities/conversation-member.entity';
@@ -15,7 +16,7 @@ import { MatrixModule } from '../matrix/matrix.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, UserCurrency, Cdk, SystemSwitch, Conversation, ConversationMember, Friendship, Message]),
+    TypeOrmModule.forFeature([User, UserCurrency, Cdk, CdkType, SystemSwitch, Conversation, ConversationMember, Friendship, Message]),
     AuthModule,
     forwardRef(() => MatrixModule),
   ],

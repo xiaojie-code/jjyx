@@ -6,46 +6,58 @@ import {
 } from 'typeorm';
 
 /**
- * 矩阵收益记录�?- 记录每笔收益的产生和领取
+ * 鐭╅樀鏀剁泭璁板綍琛?- 璁板綍姣忕瑪鏀剁泭鐨勪骇鐢熷拰棰嗗彇
  */
 @Entity('matrix_incomes')
 export class MatrixIncome {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
 
-  /** 收益归属用户ID（矩阵顶点） */
+  /** 鏀剁泭褰掑睘鐢ㄦ埛ID锛堢煩闃甸《鐐癸級 */
   @Column({ name: 'owner_id' })
   ownerId: number;
 
-  /** 来源矩阵ID */
+  /** 鏉ユ簮鐭╅樀ID */
   @Column({ name: 'matrix_id' })
   matrixId: number;
 
-  /** 来源坑位编号 */
+  /** 鏉ユ簮鍧戜綅缂栧彿 */
   @Column({ name: 'slot_number', type: 'tinyint' })
   slotNumber: number;
 
-  /** 贡献用户ID（入位的用户�?*/
+  /** 璐＄尞鐢ㄦ埛ID锛堝叆浣嶇殑鐢ㄦ埛锛?*/
   @Column({ name: 'from_user_id' })
   fromUserId: number;
 
-  /** 收益金额 */
+  /** 鏀剁泭閲戦 */
   @Column({ name: 'amount', type: 'decimal', precision: 16, scale: 8 })
   amount: number;
 
-  /** 收益类型：claimable=可领�? next_fund=下轮开启资�?*/
+  @Column({ name: 'base_fund', type: 'decimal', precision: 16, scale: 8, nullable: true })
+  baseFund: number | null;
+
+  @Column({ name: 'reward_rate', type: 'decimal', precision: 10, scale: 6, nullable: true })
+  rewardRate: number | null;
+
+  @Column({ name: 'owner_activation_amount', type: 'decimal', precision: 10, scale: 2, nullable: true })
+  ownerActivationAmount: number | null;
+
+  @Column({ name: 'source_activation_amount', type: 'decimal', precision: 10, scale: 2, nullable: true })
+  sourceActivationAmount: number | null;
+
+  /** 鏀剁泭绫诲瀷锛歝laimable=鍙鍙? next_fund=涓嬭疆寮€鍚祫閲?*/
   @Column({ name: 'income_type', type: 'varchar', length: 20 })
   incomeType: string;
 
-  /** 是否已领取（仅claimable类型有效�?*/
+  /** 鏄惁宸查鍙栵紙浠卌laimable绫诲瀷鏈夋晥锛?*/
   @Column({ name: 'is_claimed', type: 'boolean', default: false })
   isClaimed: boolean;
 
-  /** 领取时间 */
+  /** 棰嗗彇鏃堕棿 */
   @Column({ name: 'claimed_at', type: 'datetime', nullable: true })
   claimedAt: Date;
 
-  /** 描述 */
+  /** 鎻忚堪 */
   @Column({ name: 'description', type: 'varchar', length: 200, nullable: true })
   description: string;
 

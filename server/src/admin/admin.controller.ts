@@ -43,7 +43,7 @@ export class AdminController {
   @Delete('lottery/:id') deleteLottery(@Param('id', ParseIntPipe) id: number) { return this.adminService.deleteLottery(id); }
 
   // CDK
-  @Post('cdk/generate') generateCdks(@Body('cdkTypeId') cdkTypeId: number, @Body('count') count: number, @Body('itemsJson') itemsJson: any) { return this.adminService.generateCdks(cdkTypeId, count, itemsJson); }
+  @Post('cdk/generate') generateCdks(@Body() data: any) { return this.adminService.generateCdks(data); }
   @Get('cdk/list') getCdkList(@Query() query: any) {
     const pagination = new PaginationDto();
     pagination.page = parseInt(query.page, 10) || 1;

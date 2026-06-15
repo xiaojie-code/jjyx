@@ -28,6 +28,8 @@ import { MeetingService } from '../chat/meeting.service';
 import { MeetingGateway } from '../chat/meeting.gateway';
 import { PaginationDto } from '../common/dto/pagination.dto';
 
+const CDK_ACTIVATION_AMOUNT_OPTIONS = [500, 2000];
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -410,46 +412,175 @@ export class AdminService {
   }
 
   // ===== CDK =====
-  async generateCdks(cdkTypeId: number, count: number, itemsJson: any) {
+  private normalizeActivationAmount(value: any): number | null {
+    const amount = Number(value);
+    return CDK_ACTIVATION_AMOUNT_OPTIONS.includes(amount) ? amount : null;
+  }
+
+  private getActivationAmountLabel(activationAmount: any) {
+    const amount = this.normalizeActivationAmount(activationAmount);
+    return amount ? `充值${amount}激活码` : '';
+  }
+
+  private getDefaultCdkTypeMeta(activationAmount: number) {
+    if (activationAmount === 500) {
+      return {
+        name: '充值500激活码',
+        description: '充值500元用户专用激活码',
+      };
+    }
+    return {
+      name: '充值2000激活码',
+      description: '充值2000元用户专用激活码',
+    };
+  }
+
+  private async ensureCdkActivationColumns() {
+    const alters = [
+      `ALTER TABLE cdk_types ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额：500或2000' AFTER description`,
+      `ALTER TABLE cdks ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额快照：500或2000' AFTER items_json`,
+    ];
+    for (const sql of alters) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {}
+    }
+    for (const activationAmount of CDK_ACTIVATION_AMOUNT_OPTIONS) {
+      await this.findOrCreateCdkTypeByAmount(activationAmount);
+    }
+  }
+
+  private async findOrCreateCdkTypeByAmount(activationAmount: number) {
+    const normalized = this.normalizeActivationAmount(activationAmount);
+    if (!normalized) throw new BadRequestException('请选择CDK档位：500或2000');
+
+    const existing = await this.cdkTypeRepo.findOne({
+      where: { activationAmount: normalized as any },
+    });
+    if (existing) return existing;
+
+    const meta = this.getDefaultCdkTypeMeta(normalized);
+    return this.cdkTypeRepo.save(
+      this.cdkTypeRepo.create({
+        name: meta.name,
+        description: meta.description,
+        activationAmount: normalized,
+      }),
+    );
+  }
+
+  async generateCdks(data: any) {
+    await this.ensureCdkActivationColumns();
+    const count = Math.floor(Number(data?.count) || 0);
+    if (count < 1 || count > 1000) throw new BadRequestException('生成数量需要在1到1000之间');
+    const requestedActivationAmount = this.normalizeActivationAmount(data?.activationAmount);
+    let cdkType: CdkType | null = null;
+
+    if (requestedActivationAmount) {
+      cdkType = await this.findOrCreateCdkTypeByAmount(requestedActivationAmount);
+    } else {
+      cdkType = await this.cdkTypeRepo.findOne({ where: { id: Number(data?.cdkTypeId) } });
+    }
+    if (!cdkType) throw new NotFoundException('CDK类型不存在');
+    const cdkActivationAmount = this.normalizeActivationAmount(cdkType.activationAmount);
+    if (!cdkActivationAmount) throw new BadRequestException('请先给CDK类型配置500或2000档位');
+    const itemsJson = Array.isArray(data?.itemsJson) ? data.itemsJson : [];
     const cdks = [];
     for (let i = 0; i < count; i++) {
       cdks.push(
         this.cdkRepo.create({
           code: uuidv4().replace(/-/g, '').substring(0, 16).toUpperCase(),
-          cdkTypeId,
+          cdkTypeId: cdkType.id,
           itemsJson,
+          activationAmount: cdkActivationAmount,
           status: 0,
         }),
       );
     }
     await this.cdkRepo.save(cdks);
-    return { generated: count };
+    return { generated: count, activationAmount: cdkActivationAmount, cdkTypeId: cdkType.id };
   }
   async getCdkList(query: any, pagination: PaginationDto) {
+    await this.ensureCdkActivationColumns();
     const qb = this.cdkRepo.createQueryBuilder('c');
-    if (query.status !== undefined)
-      qb.where('c.status = :status', { status: query.status });
+    let hasWhere = false;
+    if (query.status !== undefined && query.status !== '') {
+      qb.where('c.status = :status', { status: Number(query.status) });
+      hasWhere = true;
+    }
+    const activationAmount = this.normalizeActivationAmount(query.activationAmount);
+    if (activationAmount) {
+      const typeIds = (
+        await this.cdkTypeRepo.find({
+          select: ['id'],
+          where: { activationAmount: activationAmount as any },
+        })
+      ).map((type) => Number(type.id));
+      const clauses = ['c.activation_amount = :activationAmount'];
+      const params: any = { activationAmount };
+      if (typeIds.length > 0) {
+        clauses.push('(c.activation_amount IS NULL AND c.cdk_type_id IN (:...typeIds))');
+        params.typeIds = typeIds;
+      }
+      const clause = `(${clauses.join(' OR ')})`;
+      if (hasWhere) qb.andWhere(clause, params);
+      else qb.where(clause, params);
+    }
     const total = await qb.getCount();
     const list = await qb
       .skip((pagination.page - 1) * pagination.pageSize)
       .take(pagination.pageSize)
       .orderBy('c.created_at', 'DESC')
       .getMany();
+    const typeIds = [...new Set(list.map((item) => Number(item.cdkTypeId)).filter(Boolean))];
+    const types = typeIds.length > 0
+      ? await this.cdkTypeRepo.createQueryBuilder('t').where('t.id IN (:...ids)', { ids: typeIds }).getMany()
+      : [];
+    const typeMap = new Map(types.map((type) => [Number(type.id), type]));
     return {
-      list,
+      list: list.map((item) => {
+        const type = typeMap.get(Number(item.cdkTypeId));
+        const activationAmount =
+          this.normalizeActivationAmount(item.activationAmount) ||
+          this.normalizeActivationAmount(type?.activationAmount);
+        return {
+          ...item,
+          activationAmount,
+          activationAmountLabel: this.getActivationAmountLabel(activationAmount),
+          cdkTypeName: this.getActivationAmountLabel(activationAmount) || type?.name || '',
+          rawCdkTypeName: type?.name || '',
+        };
+      }),
       total,
       page: pagination.page,
       pageSize: pagination.pageSize,
     };
   }
   async getCdkTypes() {
-    return this.cdkTypeRepo.find();
+    await this.ensureCdkActivationColumns();
+    return this.cdkTypeRepo.find({ order: { activationAmount: 'ASC', id: 'ASC' } });
   }
   async createCdkType(data: any) {
-    return this.cdkTypeRepo.save(this.cdkTypeRepo.create(data));
+    await this.ensureCdkActivationColumns();
+    const activationAmount = this.normalizeActivationAmount(data.activationAmount);
+    if (!activationAmount) throw new BadRequestException('请选择CDK档位：500或2000');
+    return this.cdkTypeRepo.save(this.cdkTypeRepo.create({
+      name: String(data.name || '').trim(),
+      description: String(data.description || '').trim() || null,
+      activationAmount,
+    }));
   }
   async updateCdkType(id: number, data: any) {
-    await this.cdkTypeRepo.update(id, data);
+    await this.ensureCdkActivationColumns();
+    const payload: any = {};
+    if (data.name !== undefined) payload.name = String(data.name || '').trim();
+    if (data.description !== undefined) payload.description = String(data.description || '').trim() || null;
+    if (data.activationAmount !== undefined) {
+      const activationAmount = this.normalizeActivationAmount(data.activationAmount);
+      if (!activationAmount) throw new BadRequestException('请选择CDK档位：500或2000');
+      payload.activationAmount = activationAmount;
+    }
+    await this.cdkTypeRepo.update(id, payload);
   }
 
   // ===== 提现 =====
@@ -638,6 +769,7 @@ export class AdminService {
         ...s,
         userNickname: userMap.get(Number(s.userId))?.nickname || '',
         userAccount: userMap.get(Number(s.userId))?.account || '',
+        userActivationAmount: userMap.get(Number(s.userId))?.activationAmount || null,
       })),
     };
   }
@@ -675,7 +807,9 @@ export class AdminService {
       list: list.map((i) => ({
         ...i,
         ownerNickname: userMap.get(Number(i.ownerId))?.nickname || '',
+        ownerActivationAmount: i.ownerActivationAmount || userMap.get(Number(i.ownerId))?.activationAmount || null,
         fromUserNickname: userMap.get(Number(i.fromUserId))?.nickname || '',
+        fromUserActivationAmount: i.sourceActivationAmount || userMap.get(Number(i.fromUserId))?.activationAmount || null,
       })),
       total,
       page: pagination.page,

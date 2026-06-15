@@ -227,17 +227,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
                   icon: Icons.paid_rounded,
                   color: const Color(0xFF667085),
                 ),
-                if (_configs.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: Center(
-                      child: Text(
-                        '暂无可用合成配置',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ),
-                  )
-                else ...[
+                if (_configs.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   ..._configs.map(_buildConfigCard),
                 ],

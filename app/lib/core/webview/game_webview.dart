@@ -39,6 +39,9 @@ class GameWebView extends StatefulWidget {
   /// 游戏屏幕方向：'landscape' 横屏，'portrait' 竖屏
   final String orientation;
 
+  /// Whether to show the app-level floating close button.
+  final bool showExitButton;
+
   const GameWebView({
     super.key,
     required this.gameUrl,
@@ -47,6 +50,7 @@ class GameWebView extends StatefulWidget {
     required this.jsBridge,
     required this.onExit,
     this.orientation = 'landscape',
+    this.showExitButton = true,
   });
 
   @override
@@ -54,6 +58,10 @@ class GameWebView extends StatefulWidget {
 }
 
 class GameWebViewState extends State<GameWebView> {
+  static const MethodChannel _windowChannel = MethodChannel(
+    'com.example.app/window',
+  );
+
   InAppWebViewController? _webViewController;
   bool _isLoading = true;
   bool _hasError = false;
@@ -86,8 +94,17 @@ class GameWebViewState extends State<GameWebView> {
       ]);
     }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _setGameFullscreen(true);
     _addDebugLog('open ${_shortUrl(widget.gameUrl)}');
     _addDebugLog('orientation ${widget.orientation}');
+  }
+
+  Future<void> _setGameFullscreen(bool enabled) async {
+    try {
+      await _windowChannel.invokeMethod(
+        enabled ? 'enterGameFullscreen' : 'exitGameFullscreen',
+      );
+    } catch (_) {}
   }
 
   void _addDebugLog(String message) {
@@ -148,6 +165,7 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
       SystemUiMode.manual,
       overlays: SystemUiOverlay.values,
     );
+    _setGameFullscreen(false);
     super.dispose();
   }
 
@@ -215,9 +233,9 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
                     javaScriptEnabled: true,
                     domStorageEnabled: true,
                     databaseEnabled: true,
-                    clearCache: true,
-                    cacheEnabled: false,
-                    cacheMode: CacheMode.LOAD_NO_CACHE,
+                    clearCache: false,
+                    cacheEnabled: true,
+                    cacheMode: CacheMode.LOAD_DEFAULT,
                     mediaPlaybackRequiresUserGesture: false,
                     allowsInlineMediaPlayback: true,
                     userAgent:
@@ -229,7 +247,6 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
                   ),
                   onWebViewCreated: (controller) {
                     _webViewController = controller;
-                    controller.clearCache();
                     _addDebugLog('webview created');
                     // Attach JSBridge to the controller — registers all JS handlers.
                     widget.jsBridge.attach(controller);
@@ -294,7 +311,7 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
             if (_isLoading && !_hasError) _buildLoadingOverlay(),
 
             // Exit button overlay at top-left
-            _buildExitButton(),
+            if (widget.showExitButton) _buildExitButton(),
 
             _buildDebugTools(),
           ],

@@ -13,9 +13,12 @@ class PromotionRewardPage extends ConsumerStatefulWidget {
 }
 
 class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
-  static const double _startupAmount = 2000;
-  static const double _rewardRate = 0.35;
-  static const double _oldUserReentryBase = 1300;
+  double get _myActivationAmount {
+    final amount = ref.read(authProvider).user?.activationAmount;
+    return amount == 500 ? 500 : 2000;
+  }
+
+  double get _myRewardRate => _myActivationAmount == 2000 ? 0.35 : 0.25;
 
   bool _loading = true;
   String? _error;
@@ -49,7 +52,7 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('请先激活游戏'),
+        title: const Text('请先激活'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -614,9 +617,9 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
       final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>('/api/matrix/current');
       final matrix = PromotionMatrixViewModel.fromMatrixData(
         result ?? {},
-        startupAmount: _startupAmount,
-        rewardRate: _rewardRate,
-        oldUserReentryBase: _oldUserReentryBase,
+        startupAmount: _myActivationAmount,
+        rewardRate: _myRewardRate,
+        oldUserReentryBase: _myActivationAmount * (1 - _myRewardRate),
       );
       if (!mounted) return;
       setState(() {
@@ -798,7 +801,10 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
         children: [
           const Text('当前推广矩阵', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Text('启动金额 ${_formatAmount(_startupAmount)} · 收益比例 35%', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          Text(
+            '我的档位 ${_formatAmount(_myActivationAmount)} · 当前基础比例 ${(_myRewardRate * 100).toStringAsFixed(0)}%',
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+          ),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -859,12 +865,13 @@ class _PromotionRewardPageState extends ConsumerState<PromotionRewardPage> {
         children: [
           const Text('收益口径', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
           const SizedBox(height: 10),
-          _ruleLine('新用户 1-4 号坑位', '${_formatAmount(matrix.newUserReward)} 可领取'),
-          _ruleLine('新用户 5-6 号坑位', '${_formatAmount(matrix.newUserReward)} 锁定下轮'),
-          _ruleLine('老用户入位', '启动资金 × 35%'),
+          _ruleLine('2000档用户互推', '启动资金 × 35%'),
+          _ruleLine('涉及500档用户', '启动资金 × 25%'),
+          _ruleLine('500档新用户首轮', '500 × 25% = 125'),
+          _ruleLine('2000档新用户首轮', '2000 × 35% = 700'),
           const SizedBox(height: 4),
           const Text(
-            '老用户的启动资金 = 自己矩阵上一轮5、6号位收益之和。\n例如：5、6号位是新用户 → 启动资金1400 → 收益490',
+            '5、6号位的收益进入下一轮启动资金，下一轮继续按对应档位比例递减计算。',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ],

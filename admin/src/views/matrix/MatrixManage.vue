@@ -116,6 +116,16 @@
             <el-table-column label="金额" width="100" align="right">
               <template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template>
             </el-table-column>
+            <el-table-column label="基数/比例" width="130" align="center">
+              <template #default="{ row }">
+                {{ Number(row.baseFund || 0).toFixed(2) }} × {{ ((Number(row.rewardRate || 0)) * 100).toFixed(0) }}%
+              </template>
+            </el-table-column>
+            <el-table-column label="档位" width="140" align="center">
+              <template #default="{ row }">
+                {{ row.ownerActivationAmount || '-' }} / {{ row.fromUserActivationAmount || '-' }}
+              </template>
+            </el-table-column>
             <el-table-column label="类型" width="100" align="center">
               <template #default="{ row }">
                 <el-tag :type="row.incomeType === 'claimable' ? 'success' : 'warning'" size="small">
@@ -180,6 +190,14 @@
           </el-table-column>
           <el-table-column label="收益" width="90" align="right">
             <template #default="{ row }">{{ Number(row.incomeAmount).toFixed(2) }}</template>
+          </el-table-column>
+          <el-table-column label="基数/比例" width="130" align="center">
+            <template #default="{ row }">
+              {{ Number(row.baseFund || 0).toFixed(2) }} × {{ ((Number(row.rewardRate || 0)) * 100).toFixed(0) }}%
+            </template>
+          </el-table-column>
+          <el-table-column label="档位" width="120" align="center">
+            <template #default="{ row }">{{ row.sourceActivationAmount || row.userActivationAmount || '-' }}元</template>
           </el-table-column>
           <el-table-column label="收益类型" width="100" align="center">
             <template #default="{ row }">

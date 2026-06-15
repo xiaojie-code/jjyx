@@ -74,6 +74,9 @@
             <el-form-item label="手机号">
               <el-input v-model="sendCodeForm.phone" disabled />
             </el-form-item>
+            <el-form-item label="充值金额">
+              <el-input v-model="sendCodeForm.amountText" disabled />
+            </el-form-item>
             <el-form-item label="激活码" required>
               <el-input
                 v-model.trim="sendCodeForm.code"
@@ -122,7 +125,7 @@
               <el-input v-model="cfg.recharge_payee_name" placeholder="例如 张三" />
             </el-form-item>
             <el-form-item label="充值套餐">
-              <el-input v-model="cfg.recharge_packages" placeholder="多个用逗号分隔，如 100,200,500" />
+              <el-input model-value="500,2000" disabled />
             </el-form-item>
             <el-form-item label="充值说明">
               <el-input v-model="cfg.recharge_notice" type="textarea" :rows="4" placeholder="给用户的充值步骤说明" />
@@ -167,6 +170,7 @@ const currentSendCodeOrder = ref<any | null>(null)
 const sendCodeForm = reactive({
   realName: '',
   phone: '',
+  amountText: '',
   code: '',
 })
 
@@ -206,6 +210,7 @@ function openSendCodeDialog(row: any) {
   currentSendCodeOrder.value = row
   sendCodeForm.realName = row.realName || ''
   sendCodeForm.phone = row.phone || ''
+  sendCodeForm.amountText = row.amount != null ? `${row.amount} 元` : ''
   sendCodeForm.code = ''
   sendCodeDialogVisible.value = true
 }
@@ -285,7 +290,6 @@ async function loadConfig() {
 async function saveConfig() {
   await Promise.all([
     updateConfig('recharge_payee_name', cfg.recharge_payee_name || ''),
-    updateConfig('recharge_packages', cfg.recharge_packages || ''),
     updateConfig('recharge_notice', cfg.recharge_notice || ''),
   ])
   ElMessage.success('设置已保存')

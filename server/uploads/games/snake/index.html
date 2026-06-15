@@ -37,7 +37,7 @@
   <!--<link rel="apple-touch-icon" href=".png" />-->
   <!--<link rel="apple-touch-icon-precomposed" href=".png" />-->
 
-  <link rel="stylesheet" type="text/css" href="style-mobile.25fc5.css"/>
+  <link rel="stylesheet" type="text/css" href="style-mobile.25fc5.css?v=20260615-fullscreen"/>
   <link rel="icon" href="favicon.8de18.ico"/>
 </head>
 <body>
@@ -131,6 +131,31 @@
       revives: 0,
       settled: false
     };
+
+    function fitCocosCanvasToViewport() {
+      var width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth || 0;
+      var height = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
+      if (!width || !height) return;
+      var container = document.getElementById("Cocos2dGameContainer");
+      var canvas = document.getElementById("GameCanvas");
+      [document.documentElement, document.body, container, canvas].forEach(function (node) {
+        if (!node || !node.style) return;
+        node.style.width = width + "px";
+        node.style.height = height + "px";
+        node.style.margin = "0";
+        node.style.padding = "0";
+        if (node === container || node === canvas) {
+          node.style.left = "0";
+          node.style.top = "0";
+        }
+      });
+      try {
+        if (window.cc && cc.view) {
+          cc.view.setFrameSize(width, height);
+          cc.view.resizeWithBrowserSize(true);
+        }
+      } catch (_) {}
+    }
 
     function toNumber(value) {
       var num = Number(value);
@@ -720,6 +745,93 @@
       } catch (_) {}
     }
 
+    function walkCocosNode(node, visitor) {
+      if (!node) return;
+      visitor(node);
+      var children = node.children || [];
+      for (var i = 0; i < children.length; i += 1) {
+        walkCocosNode(children[i], visitor);
+      }
+    }
+
+    function getNodeText(node) {
+      var parts = [];
+      function collect(child, depth) {
+        try {
+          if (!child.getComponent || !window.cc || !cc.Label) return;
+          var label = child.getComponent(cc.Label);
+          if (label && typeof label.string !== "undefined") {
+            parts.push(String(label.string || ""));
+          }
+        } catch (_) {}
+        if (depth >= 2) return;
+        var children = child.children || [];
+        for (var i = 0; i < children.length; i += 1) {
+          collect(children[i], depth + 1);
+        }
+      }
+      collect(node, 0);
+      return parts.join(" ");
+    }
+
+    function hasOwnLabel(node) {
+      try {
+        return !!(node && node.getComponent && window.cc && cc.Label && node.getComponent(cc.Label));
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function findMenuButtonTarget(node) {
+      var current = node;
+      for (var i = 0; i < 5 && current; i += 1) {
+        try {
+          var name = String(current.name || "").toLowerCase();
+          if (
+            (current.getComponent && window.cc && cc.Button && current.getComponent(cc.Button)) ||
+            name.indexOf("btn") >= 0 ||
+            name.indexOf("button") >= 0
+          ) {
+            return current;
+          }
+        } catch (_) {}
+        current = current.parent;
+      }
+      return null;
+    }
+
+    function hideMenuNode(node) {
+      var target = findMenuButtonTarget(node);
+      if (target && target.parent) {
+        target.active = false;
+        return;
+      }
+      if (hasOwnLabel(node)) {
+        node.active = false;
+      }
+    }
+
+    function hideMainMenuControls() {
+      if (!window.cc || !cc.director || !cc.Label) return;
+      var scene = cc.director.getScene && cc.director.getScene();
+      if (!scene) return;
+      walkCocosNode(scene, function (node) {
+        var name = String(node.name || "").toLowerCase();
+        var text = getNodeText(node);
+        if (
+          text.indexOf("无尽模式") >= 0 ||
+          text.indexOf("签到") >= 0 ||
+          name.indexOf("endless") >= 0 ||
+          name.indexOf("signin") >= 0 ||
+          name.indexOf("sign_in") >= 0 ||
+          name.indexOf("checkin") >= 0 ||
+          name.indexOf("qiandao") >= 0
+        ) {
+          hideMenuNode(node);
+        }
+      });
+    }
+
     function getUI(type) {
       try {
         return cc.GameGlobal.UIManager.getUI(type);
@@ -1065,11 +1177,13 @@
 
     function patchGame() {
       if (!window.cc || !cc.GameGlobal || !cc.GameGlobal.UIManager) return;
+      fitCocosCanvasToViewport();
       patchUIMessage();
       patchNet();
       patchGameUI();
       patchGameOverUI();
       patchSkinUI();
+      hideMainMenuControls();
       if (lastBalance !== null) refreshSnakeGold(lastBalance);
     }
 
@@ -1115,6 +1229,11 @@
       getRoundState: function () { return Object.assign({}, roundState); }
     };
     startPatchLoop();
+    fitCocosCanvasToViewport();
+    window.addEventListener("resize", fitCocosCanvasToViewport);
+    window.addEventListener("orientationchange", function () {
+      setTimeout(fitCocosCanvasToViewport, 120);
+    });
   })();
 </script>
 

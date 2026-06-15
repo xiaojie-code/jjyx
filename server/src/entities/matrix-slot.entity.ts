@@ -33,6 +33,18 @@ export class MatrixSlot {
   @Column({ name: 'income_amount', type: 'decimal', precision: 16, scale: 8, default: 0 })
   incomeAmount: number;
 
+  @Column({ name: 'base_fund', type: 'decimal', precision: 16, scale: 8, default: 0 })
+  baseFund: number;
+
+  @Column({ name: 'reward_rate', type: 'decimal', precision: 10, scale: 6, default: 0.35 })
+  rewardRate: number;
+
+  @Column({ name: 'owner_activation_amount', type: 'decimal', precision: 10, scale: 2, nullable: true })
+  ownerActivationAmount: number | null;
+
+  @Column({ name: 'source_activation_amount', type: 'decimal', precision: 10, scale: 2, nullable: true })
+  sourceActivationAmount: number | null;
+
   /** 收益类型：claimable=可领取, next_fund=下轮资金, none=无收益 */
   @Column({ name: 'income_type', type: 'varchar', length: 20, default: 'none' })
   incomeType: string;

@@ -35,6 +35,7 @@ body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;m
 .gc{background:#fff;border-radius:12px;padding:24px 12px;text-align:center;cursor:pointer}
 .gc:active{opacity:.8}
 .gc .box{width:48px;height:48px;border-radius:12px;margin:0 auto 8px}
+.gc .box img{width:100%;height:100%;object-fit:cover;border-radius:12px;display:block}
 .gc .nm{font-size:15px;font-weight:600}
 .gc .ds{font-size:12px;color:#999;margin-top:4px}
 .li{display:flex;align-items:center;padding:12px 16px;background:#fff;border-bottom:1px solid #f0f0f0;cursor:pointer}
@@ -141,7 +142,7 @@ body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;m
 <div class="gc"><div class="box" style="background:#e3f2fd"></div><div class="nm">大逃杀</div><div class="ds">2D卡通竞技</div></div>
 <div class="gc"><div class="box" style="background:#e8f5e9"></div><div class="nm">实况钓鱼</div><div class="ds">休闲钓鱼 · 3场次</div></div>
 <div class="gc"><div class="box" style="background:#fff3e0"></div><div class="nm">赛马</div><div class="ds">联机投注竞猜</div></div>
-<div class="gc"><div class="box" style="background:#fce4ec"></div><div class="nm">蛇蛇大作战</div><div class="ds">匹配挑战</div></div>
+<div class="gc" onclick="alert('测试中，敬请期待')"><div class="box"><img src="../app/video/image.png" alt="象雀对弈"></div><div class="nm">象雀对弈</div><div class="ds">指尖落牌，体验四方桌的人间喜乐；横车跃马，感受楚河两岸的运筹帷幄。</div></div>
 <div class="gc" style="grid-column:span 2" onclick="go('p-lottery')"><div class="box" style="background:#f3e5f5"></div><div class="nm">转盘抽奖</div><div class="ds">消耗货币抽奖</div></div>
 </div>
 </div>
@@ -178,7 +179,8 @@ body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;m
 </div>
 <div style="margin-top:8px;background:#fff">
 <div class="row" onclick="go('p-currency')"><span class="txt">货币明细</span><span class="arr">›</span></div>
-<div class="row" onclick="go('p-activate')"><span class="txt">激活游戏</span><span class="arr">›</span></div>
+<div class="row" onclick="go('p-activate')"><span class="txt">激活</span><span class="arr">›</span></div>
+<div class="row"><span class="txt">资产包</span><span class="arr">›</span></div>
 <div class="row" onclick="go('p-invite')"><span class="txt">邀请奖励</span><span class="arr">›</span></div>
 <div class="row" onclick="go('p-promotion')"><span class="txt">推广奖励</span><span class="arr">›</span></div>
 <div class="row" onclick="go('p-backpack')"><span class="txt">我的背包</span><span class="arr">›</span></div>
@@ -211,9 +213,9 @@ body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;m
 <div class="ct"><div class="empty">暂无记录</div></div>
 </div>
 
-<!-- 激活游戏 -->
+<!-- 激活 -->
 <div class="p" id="p-activate">
-<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">激活游戏</span></div>
+<div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">激活</span></div>
 <div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 32px">
 <div style="font-size:16px;color:#666;margin-bottom:24px">输入CDK激活码开启游戏</div>
 <input class="inp" placeholder="CDK激活码">
