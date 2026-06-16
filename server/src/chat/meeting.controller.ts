@@ -32,11 +32,15 @@ export class MeetingController {
     @CurrentUser('id') userId: number,
     @Param('id', ParseIntPipe) groupId: number,
     @Body('title') title?: string,
+    @Body('confirmCost') confirmCost?: unknown,
   ) {
+    const costConfirmed =
+      confirmCost === true || confirmCost === 'true' || confirmCost === 1 || confirmCost === '1';
     const result = (await this.meetingService.startMeeting(
       userId,
       groupId,
       title,
+      costConfirmed,
     )) as Awaited<ReturnType<MeetingService['startMeeting']>> & {
       noticeMessage?: unknown;
     };

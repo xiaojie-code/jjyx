@@ -50,7 +50,12 @@ export class MeetingService {
     return this.withParticipants(meeting);
   }
 
-  async startMeeting(userId: number, groupId: number, title?: string) {
+  async startMeeting(
+    userId: number,
+    groupId: number,
+    title?: string,
+    confirmCost = false,
+  ) {
     const { conversation, member } = await this.ensureGroupMember(
       userId,
       groupId,
@@ -66,6 +71,9 @@ export class MeetingService {
       const costStr = await this.currencyService.getConfigValue('meeting_start_cost', '10000');
       const cost = Number(costStr);
       if (cost > 0) {
+        if (!confirmCost) {
+          throw new ForbiddenException(`发起群会议需要${cost}积分，请确认后再发起`);
+        }
         try {
           await this.currencyService.changeCurrency(
             userId, 'points', -cost, 'meeting_start', `发起群会议消耗${cost}积分`,

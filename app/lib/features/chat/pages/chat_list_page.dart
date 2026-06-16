@@ -527,7 +527,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
         meeting = await api.post<Map<String, dynamic>>(
           ApiEndpoints.groupMeetingStart(groupId),
-          data: {'title': '$groupName的会议'},
+          data: {'title': '$groupName的会议', 'confirmCost': !free},
         );
       }
 

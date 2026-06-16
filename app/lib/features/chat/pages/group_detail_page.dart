@@ -403,7 +403,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
         }
         meeting = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
           ApiEndpoints.groupMeetingStart(widget.conversationId),
-          data: {'title': '$_groupName的会议'},
+          data: {'title': '$_groupName的会议', 'confirmCost': !free},
         );
       }
       if (!mounted || meeting == null) return;

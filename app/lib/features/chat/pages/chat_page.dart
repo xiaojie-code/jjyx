@@ -961,7 +961,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
         meeting = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
           ApiEndpoints.groupMeetingStart(widget.conversationId),
-          data: {'title': '${widget.title}的会议'},
+          data: {'title': '${widget.title}的会议', 'confirmCost': needsCost},
         );
         if (meeting != null && mounted) _appendMeetingNoticeIfNeeded(meeting);
       }
