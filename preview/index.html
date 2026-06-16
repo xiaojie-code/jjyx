@@ -37,7 +37,7 @@ body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;m
 .gc .box{width:48px;height:48px;border-radius:12px;margin:0 auto 8px}
 .gc .box img{width:100%;height:100%;object-fit:cover;border-radius:12px;display:block}
 .gc .nm{font-size:15px;font-weight:600}
-.gc .ds{font-size:12px;color:#999;margin-top:4px}
+.gc .ds{font-size:12px;color:#999;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .li{display:flex;align-items:center;padding:12px 16px;background:#fff;border-bottom:1px solid #f0f0f0;cursor:pointer}
 .li:active{background:#fafafa}
 .av{width:44px;height:44px;border-radius:50%;background:#e0e0e0;flex-shrink:0}
@@ -139,11 +139,11 @@ body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;m
 <div class="bar"><span class="t">游戏</span></div>
 <div class="ct">
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px">
-<div class="gc"><div class="box" style="background:#e3f2fd"></div><div class="nm">大逃杀</div><div class="ds">轻松卡通大逃杀，单局极速开战！画风可爱操作简单，正面乱斗随心玩，碎片时间随时解压对战。</div></div>
-<div class="gc"><div class="box" style="background:#e8f5e9"></div><div class="nm">实况钓鱼</div><div class="ds">高写实垂钓模拟手游！还原全球实景水域，自由搭配全套渔具，足不出户体验沉浸式野钓乐趣。</div></div>
-<div class="gc"><div class="box" style="background:#fff3e0"></div><div class="nm">赛马</div><div class="ds">联机投注竞猜，解压欢乐的休闲赛马游戏，单局 2 分钟极速开局，零门槛轻松上手！</div></div>
-<div class="gc" onclick="alert('测试中，敬请期待')"><div class="box"><img src="../app/video/image.png" alt="象雀对弈"></div><div class="nm">象雀对弈</div><div class="ds">雀棋双玩，麻将象棋一站式棋牌乐园，搓麻对弈两不误</div></div>
-<div class="gc" style="grid-column:span 2" onclick="go('p-lottery')"><div class="box" style="background:#f3e5f5"></div><div class="nm">转盘抽奖</div><div class="ds">消耗货币抽奖</div></div>
+<div class="gc"><div class="box" style="background:#e3f2fd"></div><div class="nm">大逃杀</div><div class="ds">卡通乱斗，极速开战</div></div>
+<div class="gc"><div class="box" style="background:#e8f5e9"></div><div class="nm">实况钓鱼</div><div class="ds">沉浸垂钓，轻松上鱼</div></div>
+<div class="gc"><div class="box" style="background:#fff3e0"></div><div class="nm">赛马</div><div class="ds">投注竞猜，极速开赛</div></div>
+<div class="gc" onclick="alert('测试中，敬请期待')"><div class="box"><img src="../app/video/image.png" alt="象雀对弈"></div><div class="nm">象雀对弈</div><div class="ds">象雀双玩，搓麻对弈两不误</div></div>
+<div class="gc" style="grid-column:span 2" onclick="go('p-lottery')"><div class="box" style="background:#f3e5f5"></div><div class="nm">转盘抽奖</div><div class="ds">幸运抽奖，好礼转出</div></div>
 </div>
 </div>
 <div class="bnav"><div onclick="go('p-chat-list')"><i></i>消息</div><div onclick="go('p-contacts')"><i></i>联系人</div><div class="on" onclick="go('p-game')"><i></i>游戏</div><div onclick="go('p-profile')"><i></i>我的</div></div>
@@ -217,7 +217,7 @@ body{background:#1a1a2e;display:flex;justify-content:center;align-items:center;m
 <div class="p" id="p-activate">
 <div class="bar"><button class="back" onclick="go('p-profile')">‹</button><span class="t">激活</span></div>
 <div class="ct" style="background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 32px">
-<div style="font-size:16px;color:#666;margin-bottom:24px">输入CDK激活码开启游戏</div>
+<div style="font-size:16px;color:#666;margin-bottom:24px">输入CDK开启矩阵</div>
 <input class="inp" placeholder="CDK激活码">
 <button class="btn">激活</button>
 </div>

@@ -11,6 +11,7 @@ const LOW_ACTIVATION_AMOUNT = 500;
 const HIGH_ACTIVATION_AMOUNT = 2000;
 const LOW_SLOT_INCOME_RATE = 0.25;
 const HIGH_SLOT_INCOME_RATE = 0.35;
+const MATRIX_REWARD_DISABLED_ROOT_ACCOUNTS = ['3131'];
 /** 指定账号深层推广树激活奖励 */
 const SPECIAL_TREE_REWARD_ACCOUNTS = ['333333', '666666'];
 const SPECIAL_TREE_REWARD_AMOUNT = 200;
@@ -66,6 +67,8 @@ export class MatrixService implements OnModuleInit {
     const alters = [
       `ALTER TABLE users ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '用户激活档位金额：500或2000' AFTER is_activated`,
       `ALTER TABLE users ADD COLUMN activated_cdk_id INT NULL COMMENT '用户激活使用的CDK ID' AFTER activation_amount`,
+      `ALTER TABLE users ADD COLUMN matrix_reward_disabled TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否禁用推广矩阵百分比收益：1禁用，0正常' AFTER activated_cdk_id`,
+      `ALTER TABLE users ADD INDEX idx_users_matrix_reward_disabled (matrix_reward_disabled)`,
       `ALTER TABLE users ADD INDEX idx_users_activation_amount (activation_amount)`,
       `ALTER TABLE cdk_types ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额：500或2000' AFTER description`,
       `ALTER TABLE cdks ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额快照：500或2000' AFTER items_json`,
@@ -93,6 +96,7 @@ export class MatrixService implements OnModuleInit {
       `UPDATE cdks SET activation_amount = ? WHERE activation_amount IS NULL`,
       [HIGH_ACTIVATION_AMOUNT],
     );
+    await this.markMatrixRewardDisabledTrees(this.dataSource.manager);
   }
 
   private async getActualFilledCount(matrixId: number, manager: any): Promise<number> {
@@ -173,6 +177,52 @@ export class MatrixService implements OnModuleInit {
       select: ['id', 'activationAmount'],
     });
     return this.normalizeActivationAmount(user?.activationAmount ?? DEFAULT_ACTIVATION_AMOUNT);
+  }
+
+  private async markMatrixRewardDisabledTrees(manager: any): Promise<void> {
+    for (const account of MATRIX_REWARD_DISABLED_ROOT_ACCOUNTS) {
+      try {
+        await manager.query(
+          `WITH RECURSIVE blocked_tree AS (
+             SELECT id FROM users WHERE account = ?
+             UNION ALL
+             SELECT u.id
+             FROM users u
+             INNER JOIN blocked_tree bt ON u.invited_by = bt.id
+           )
+           UPDATE users u
+           INNER JOIN blocked_tree bt ON u.id = bt.id
+           SET u.matrix_reward_disabled = 1`,
+          [account],
+        );
+      } catch (error) {
+        this.logger.warn(`标记账号${account}推广矩阵收益禁用树失败：${error}`);
+      }
+    }
+  }
+
+  private async isMatrixRewardDisabledUser(userId: number, manager: any): Promise<boolean> {
+    const id = Number(userId);
+    if (!id) return false;
+
+    const rootAccounts = MATRIX_REWARD_DISABLED_ROOT_ACCOUNTS;
+    const placeholders = rootAccounts.map(() => '?').join(',');
+    const rows = await manager.query(
+      `WITH RECURSIVE ancestor_tree AS (
+         SELECT id, account, invited_by, matrix_reward_disabled
+         FROM users
+         WHERE id = ?
+         UNION ALL
+         SELECT u.id, u.account, u.invited_by, u.matrix_reward_disabled
+         FROM users u
+         INNER JOIN ancestor_tree ancestor ON ancestor.invited_by = u.id
+       )
+       SELECT COUNT(*) AS total
+       FROM ancestor_tree
+       WHERE matrix_reward_disabled = 1 OR account IN (${placeholders})`,
+      [id, ...rootAccounts],
+    );
+    return Number(rows?.[0]?.total || 0) > 0;
   }
 
   private resolveSlotRewardRate(ownerActivationAmount: number, sourceActivationAmount: number): number {
@@ -667,6 +717,22 @@ export class MatrixService implements OnModuleInit {
         where: { ownerId: userId, status: 2 },
       });
       userRound = completedCount + 1;
+    }
+
+    const matrixRewardDisabled =
+      (await this.isMatrixRewardDisabledUser(matrixOwnerId, manager)) ||
+      (await this.isMatrixRewardDisabledUser(userId, manager));
+    if (matrixRewardDisabled) {
+      return {
+        incomeAmount: 0,
+        incomeType: 'none',
+        remainingFund: baseFund,
+        reentryCount: userRound - 1,
+        baseFund,
+        rewardRate: 0,
+        ownerActivationAmount,
+        sourceActivationAmount,
+      };
     }
 
     const rewardRate = this.resolveSlotRewardRate(ownerActivationAmount, sourceActivationAmount);

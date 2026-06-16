@@ -74,7 +74,7 @@ class _ActivatePageState extends ConsumerState<ActivatePage> {
                   children: [
                     const Icon(Icons.vpn_key, size: 64, color: Colors.orange),
                     const SizedBox(height: 16),
-                    const Text('输入CDK激活码开启游戏', style: TextStyle(fontSize: 16)),
+                    const Text('输入CDK开启矩阵', style: TextStyle(fontSize: 16)),
                     const SizedBox(height: 24),
                     TextField(
                       controller: _codeCtrl,

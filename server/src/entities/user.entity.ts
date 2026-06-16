@@ -53,6 +53,14 @@ export class User {
   @Column({ type: 'int', nullable: true, name: 'activated_cdk_id', comment: '用户激活使用的CDK ID' })
   activatedCdkId: number | null;
 
+  @Column({
+    type: 'tinyint',
+    default: 0,
+    name: 'matrix_reward_disabled',
+    comment: '是否禁用推广矩阵百分比收益：1禁用，0正常',
+  })
+  matrixRewardDisabled: number;
+
   @Column({ type: 'int', default: 0 })
   shares: number;
 

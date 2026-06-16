@@ -27,7 +27,7 @@ const HORSE_BET_OPTIONS = [10, 50, 100, 300, 500, 1000];
 const DEFAULT_GAME_ENTRIES = [
   {
     name: '象雀对弈',
-    description: '雀棋双玩，麻将象棋一站式棋牌乐园，搓麻对弈两不误',
+    description: '象雀双玩，搓麻对弈两不误',
     gameUrl: '/uploads/games/snake/index.html',
     sortOrder: 10,
     orientation: 'landscape',
@@ -35,7 +35,7 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '实况钓鱼',
-    description: '高写实垂钓模拟手游！还原全球实景水域，自由搭配全套渔具，足不出户体验沉浸式野钓乐趣。',
+    description: '沉浸垂钓，轻松上鱼',
     gameUrl: '/uploads/games/fishing/index.html',
     sortOrder: 20,
     orientation: 'landscape',
@@ -43,7 +43,7 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '大逃杀',
-    description: '轻松卡通大逃杀，单局极速开战！画风可爱操作简单，正面乱斗随心玩，碎片时间随时解压对战。',
+    description: '卡通乱斗，极速开战',
     gameUrl: '/uploads/games/killer/index.html',
     sortOrder: 30,
     orientation: 'portrait',
@@ -51,7 +51,7 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '赛马',
-    description: '联机投注竞猜，解压欢乐的休闲赛马游戏，单局 2 分钟极速开局，零门槛轻松上手！',
+    description: '投注竞猜，极速开赛',
     gameUrl: '/uploads/games/saima/index.html',
     sortOrder: 40,
     orientation: 'landscape',
@@ -59,7 +59,7 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '幸运转盘',
-    description: '幸运转盘抽奖',
+    description: '幸运抽奖，好礼转出',
     gameUrl: 'lottery://native',
     sortOrder: 50,
     orientation: 'portrait',
@@ -201,7 +201,7 @@ export class GameService {
     await this.gameRepo.save(this.gameRepo.create({
       name: '转盘游戏',
       icon: null,
-      description: '幸运转盘抽奖',
+      description: '幸运抽奖，好礼转出',
       gameUrl: 'lottery://native',
       entryCost: 0,
       status: 1,
