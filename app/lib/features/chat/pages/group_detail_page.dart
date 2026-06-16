@@ -8,6 +8,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/utils/toast.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../utils/meeting_utils.dart';
 import 'meeting_page.dart';
 import 'select_contacts_page.dart';
 
@@ -362,6 +363,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
                 ApiEndpoints.groupMeetingActive(widget.conversationId),
               );
+      meeting = normalizeActiveMeeting(meeting);
       if (meeting == null) {
         final free = _canManageMeeting();
         var currentPoints = 0;

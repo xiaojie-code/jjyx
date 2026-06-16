@@ -18,6 +18,7 @@ import '../../main/providers/badge_provider.dart';
 import '../../../core/storage/token_storage.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
+import '../utils/meeting_utils.dart';
 import 'group_detail_page.dart';
 import 'meeting_page.dart';
 import 'service_notification_page.dart';
@@ -890,10 +891,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _openMeetingFromNotice(_MeetingNotice notice) async {
     try {
-      final meeting =
+      var meeting =
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
                 ApiEndpoints.groupMeetingActive(notice.groupId),
               );
+      meeting = normalizeActiveMeeting(meeting);
       if (!mounted) return;
       final activeMeetingId =
           int.tryParse(meeting?['id']?.toString() ?? '') ?? 0;
@@ -901,11 +903,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         Toast.warning(context, '该会议已结束');
         return;
       }
+      final meetingData = meeting;
       Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
         builder: (_) => MeetingPage(
           groupId: notice.groupId,
           groupName: widget.title,
-          meeting: meeting,
+          meeting: meetingData,
         ),
       ));
     } catch (e) {
@@ -919,6 +922,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
                 ApiEndpoints.groupMeetingActive(widget.conversationId),
               );
+      meeting = normalizeActiveMeeting(meeting);
       if (meeting == null) {
         if (!mounted) return;
         // 所有成员都可以发起会议，普通成员需要消耗积分

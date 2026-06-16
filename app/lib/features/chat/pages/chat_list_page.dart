@@ -8,6 +8,7 @@ import '../../../core/utils/toast.dart';
 import '../providers/chat_provider.dart';
 import '../../main/providers/badge_provider.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../utils/meeting_utils.dart';
 import 'chat_page.dart';
 import 'ai_chat_page.dart';
 import 'meeting_page.dart';
@@ -478,6 +479,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           await api.get<Map<String, dynamic>>(
         ApiEndpoints.groupMeetingActive(groupId),
       );
+      meeting = normalizeActiveMeeting(meeting);
 
       if (meeting == null) {
         final membersResult = await api.get<List<dynamic>>(

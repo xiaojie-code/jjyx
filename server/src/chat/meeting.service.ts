@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull, LessThan, In } from 'typeorm';
@@ -20,7 +21,7 @@ import { Message } from '../entities/message.entity';
 import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
-export class MeetingService {
+export class MeetingService implements OnModuleInit {
   private readonly logger = new Logger(MeetingService.name);
 
   constructor(
@@ -40,12 +41,13 @@ export class MeetingService {
     private readonly currencyService: CurrencyService,
   ) {}
 
+  async onModuleInit() {
+    await this.closeLingeringActiveMeetings('service_start');
+  }
+
   async getActiveMeeting(userId: number, groupId: number) {
     await this.ensureGroupMember(userId, groupId);
-    const meeting = await this.meetingRepo.findOne({
-      where: { groupId, status: 1 },
-      order: { startedAt: 'DESC' },
-    });
+    const meeting = await this.findUsableActiveMeeting(groupId);
     if (!meeting) return null;
     return this.withParticipants(meeting);
   }
@@ -60,9 +62,7 @@ export class MeetingService {
       userId,
       groupId,
     );
-    const active = await this.meetingRepo.findOne({
-      where: { groupId, status: 1 },
-    });
+    const active = await this.findUsableActiveMeeting(groupId);
     if (active) return this.withParticipants(active);
 
     const isManager = this.isGroupManager(conversation, member, userId);
@@ -132,6 +132,7 @@ export class MeetingService {
     if (participant) {
       participant.leftAt = new Date();
       await this.participantRepo.save(participant);
+      await this.closeMeetingIfEmpty(meetingId);
     }
     return { message: '已离开会议' };
   }
@@ -532,6 +533,53 @@ export class MeetingService {
       })
       .execute();
     return msg;
+  }
+
+  private async closeLingeringActiveMeetings(reason: string) {
+    const meetings = await this.meetingRepo.find({ where: { status: 1 } });
+    if (meetings.length === 0) return;
+    const endedAt = new Date();
+    const ids = meetings.map((meeting) => meeting.id);
+    await this.participantRepo
+      .createQueryBuilder()
+      .update()
+      .set({ leftAt: endedAt })
+      .where('meeting_id IN (:...ids)', { ids })
+      .andWhere('left_at IS NULL')
+      .execute();
+    await this.meetingRepo.update({ id: In(ids) }, { status: 2, endedAt });
+    this.logger.warn(
+      `Closed ${meetings.length} lingering active meetings, reason=${reason}`,
+    );
+  }
+
+  private async closeMeetingIfEmpty(meetingId: number) {
+    const activeCount = await this.participantRepo.count({
+      where: { meetingId, leftAt: IsNull(), isKicked: false },
+    });
+    if (activeCount > 0) return;
+    const meeting = await this.meetingRepo.findOne({
+      where: { id: meetingId, status: 1 },
+    });
+    if (!meeting) return;
+    meeting.status = 2;
+    meeting.endedAt = new Date();
+    await this.meetingRepo.save(meeting);
+  }
+
+  private async findUsableActiveMeeting(groupId: number) {
+    const meetings = await this.meetingRepo.find({
+      where: { groupId, status: 1 },
+      order: { startedAt: 'DESC' },
+    });
+    for (const meeting of meetings) {
+      const activeCount = await this.participantRepo.count({
+        where: { meetingId: meeting.id, leftAt: IsNull(), isKicked: false },
+      });
+      if (activeCount > 0) return meeting;
+      await this.closeMeetingIfEmpty(meeting.id);
+    }
+    return null;
   }
 
   private async withParticipants(meeting: Meeting) {
