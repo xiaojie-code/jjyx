@@ -363,26 +363,43 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                 ApiEndpoints.groupMeetingActive(widget.conversationId),
               );
       if (meeting == null) {
-        // 娌℃湁杩涜涓殑浼氳锛岄渶瑕佸彂璧?
-        if (!_canManageMeeting()) {
-          // 鏅€氭垚鍛橀渶瑕佺‘璁ゆ秷鑰楃Н鍒嗭紝鏄剧ず褰撳墠浣欓
-          int currentPoints = 0;
+        final free = _canManageMeeting();
+        var currentPoints = 0;
+        if (!free) {
           try {
-            final balance = await ref.read(apiClientProvider).get<Map<String, dynamic>>('/api/currency/balance');
-            currentPoints = (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0).toInt();
+            final balance = await ref
+                .read(apiClientProvider)
+                .get<Map<String, dynamic>>('/api/currency/balance');
+            currentPoints =
+                (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0)
+                    .toInt();
           } catch (_) {}
-          final confirm = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('发起群会议'),
-              content: Text('发起会议将消耗10000积分\n当前积分余额：$currentPoints'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-                ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确认发起')),
-              ],
+        }
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('发起群会议'),
+            content: Text(
+              free
+                  ? '当前没有进行中的会议，是否立即发起？'
+                  : '发起会议将消耗10000积分\n当前积分余额：$currentPoints',
             ),
-          );
-          if (confirm != true) return;
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确认发起'),
+              ),
+            ],
+          ),
+        );
+        if (confirm != true) return;
+        if (!free && currentPoints < 10000) {
+          Toast.warning(context, '积分不足，无法发起会议');
+          return;
         }
         meeting = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
           ApiEndpoints.groupMeetingStart(widget.conversationId),

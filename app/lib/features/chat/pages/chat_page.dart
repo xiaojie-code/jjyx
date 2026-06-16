@@ -923,9 +923,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         if (!mounted) return;
         // 所有成员都可以发起会议，普通成员需要消耗积分
         String confirmText = '当前没有进行中的会议，是否立即发起？';
+        var needsCost = false;
+        var currentPoints = 0;
         if (!_canManageMeeting) {
+          needsCost = true;
           // 获取当前积分余额
-          int currentPoints = 0;
           try {
             final balance = await ref
                 .read(apiClientProvider)
@@ -953,6 +955,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
         );
         if (start != true) return;
+        if (needsCost && currentPoints < 10000) {
+          Toast.warning(context, '积分不足，无法发起会议');
+          return;
+        }
         meeting = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
           ApiEndpoints.groupMeetingStart(widget.conversationId),
           data: {'title': '${widget.title}的会议'},
