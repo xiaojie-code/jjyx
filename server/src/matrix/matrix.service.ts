@@ -11,10 +11,11 @@ const LOW_ACTIVATION_AMOUNT = 500;
 const HIGH_ACTIVATION_AMOUNT = 2000;
 const LOW_SLOT_INCOME_RATE = 0.25;
 const HIGH_SLOT_INCOME_RATE = 0.35;
-const MATRIX_REWARD_DISABLED_ROOT_ACCOUNTS = ['3131'];
+const SPECIAL_REWARD_BLOCKED_ROOT_ACCOUNTS = ['3131'];
+const SPECIAL_REWARD_BLOCKED_OWNER_ACCOUNTS = ['333333'];
 /** 指定账号深层推广树激活奖励 */
 const SPECIAL_TREE_REWARD_ACCOUNTS = ['333333', '666666'];
-const SPECIAL_TREE_REWARD_AMOUNT = 200;
+const SPECIAL_TREE_REWARD_RATE = 0.1;
 
 type ReferralBrief = {
   id: number;
@@ -96,7 +97,6 @@ export class MatrixService implements OnModuleInit {
       `UPDATE cdks SET activation_amount = ? WHERE activation_amount IS NULL`,
       [HIGH_ACTIVATION_AMOUNT],
     );
-    await this.markMatrixRewardDisabledTrees(this.dataSource.manager);
   }
 
   private async getActualFilledCount(matrixId: number, manager: any): Promise<number> {
@@ -179,33 +179,11 @@ export class MatrixService implements OnModuleInit {
     return this.normalizeActivationAmount(user?.activationAmount ?? DEFAULT_ACTIVATION_AMOUNT);
   }
 
-  private async markMatrixRewardDisabledTrees(manager: any): Promise<void> {
-    for (const account of MATRIX_REWARD_DISABLED_ROOT_ACCOUNTS) {
-      try {
-        await manager.query(
-          `WITH RECURSIVE blocked_tree AS (
-             SELECT id FROM users WHERE account = ?
-             UNION ALL
-             SELECT u.id
-             FROM users u
-             INNER JOIN blocked_tree bt ON u.invited_by = bt.id
-           )
-           UPDATE users u
-           INNER JOIN blocked_tree bt ON u.id = bt.id
-           SET u.matrix_reward_disabled = 1`,
-          [account],
-        );
-      } catch (error) {
-        this.logger.warn(`标记账号${account}推广矩阵收益禁用树失败：${error}`);
-      }
-    }
-  }
-
-  private async isMatrixRewardDisabledUser(userId: number, manager: any): Promise<boolean> {
+  private async isUserInSpecialRewardBlockedTree(userId: number, manager: any): Promise<boolean> {
     const id = Number(userId);
     if (!id) return false;
 
-    const rootAccounts = MATRIX_REWARD_DISABLED_ROOT_ACCOUNTS;
+    const rootAccounts = SPECIAL_REWARD_BLOCKED_ROOT_ACCOUNTS;
     const placeholders = rootAccounts.map(() => '?').join(',');
     const rows = await manager.query(
       `WITH RECURSIVE ancestor_tree AS (
@@ -219,7 +197,7 @@ export class MatrixService implements OnModuleInit {
        )
        SELECT COUNT(*) AS total
        FROM ancestor_tree
-       WHERE matrix_reward_disabled = 1 OR account IN (${placeholders})`,
+       WHERE account IN (${placeholders})`,
       [id, ...rootAccounts],
     );
     return Number(rows?.[0]?.total || 0) > 0;
@@ -385,6 +363,19 @@ export class MatrixService implements OnModuleInit {
       );
       if (!rewardOwner) return;
 
+      if (
+        SPECIAL_REWARD_BLOCKED_OWNER_ACCOUNTS.includes(rewardOwner.account) &&
+        await this.isUserInSpecialRewardBlockedTree(activatedUser.id, manager)
+      ) {
+        this.logger.log(
+          `Skip special tree reward: owner=${rewardOwner.account}, activated=${activatedUser.account}`,
+        );
+        return;
+      }
+
+      const activationAmount = await this.getUserActivationAmount(activatedUser.id, manager);
+      const specialRewardAmount = Number((activationAmount * SPECIAL_TREE_REWARD_RATE).toFixed(8));
+
       let matrix = await manager.findOne(Matrix, {
         where: { ownerId: rewardOwner.id, status: 1 },
         order: { round: 'DESC' },
@@ -405,14 +396,18 @@ export class MatrixService implements OnModuleInit {
         matrixId: matrix.id,
         slotNumber: 0,
         fromUserId: activatedUser.id,
-        amount: SPECIAL_TREE_REWARD_AMOUNT,
+        amount: specialRewardAmount,
+        baseFund: activationAmount,
+        rewardRate: SPECIAL_TREE_REWARD_RATE,
+        ownerActivationAmount: await this.getUserActivationAmount(rewardOwner.id, manager),
+        sourceActivationAmount: activationAmount,
         incomeType: 'claimable',
-        description: `指定账号深层推广树奖励：下级用户${activatedUser.account}激活`,
+        description: `指定账号深层推广树10%奖励：下级用户${activatedUser.account}激活`,
       });
       await manager.save(MatrixIncome, income);
 
       matrix.claimableIncome =
-        Number(matrix.claimableIncome) + SPECIAL_TREE_REWARD_AMOUNT;
+        Number(matrix.claimableIncome) + specialRewardAmount;
       await manager.save(Matrix, matrix);
     });
   }
@@ -717,22 +712,6 @@ export class MatrixService implements OnModuleInit {
         where: { ownerId: userId, status: 2 },
       });
       userRound = completedCount + 1;
-    }
-
-    const matrixRewardDisabled =
-      (await this.isMatrixRewardDisabledUser(matrixOwnerId, manager)) ||
-      (await this.isMatrixRewardDisabledUser(userId, manager));
-    if (matrixRewardDisabled) {
-      return {
-        incomeAmount: 0,
-        incomeType: 'none',
-        remainingFund: baseFund,
-        reentryCount: userRound - 1,
-        baseFund,
-        rewardRate: 0,
-        ownerActivationAmount,
-        sourceActivationAmount,
-      };
     }
 
     const rewardRate = this.resolveSlotRewardRate(ownerActivationAmount, sourceActivationAmount);

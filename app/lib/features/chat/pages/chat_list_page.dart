@@ -10,6 +10,7 @@ import '../../main/providers/badge_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 import 'chat_page.dart';
 import 'ai_chat_page.dart';
+import 'meeting_page.dart';
 import 'service_notification_page.dart';
 
 class ChatListPage extends ConsumerStatefulWidget {
@@ -399,6 +400,152 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     showSearch(context: context, delegate: _MessageSearchDelegate(ref));
   }
 
+  String _conversationDisplayName(ConversationItem conv) {
+    final remark = (conv.peerUser?['remark'] as String?)?.trim();
+    if (remark != null && remark.isNotEmpty) return remark;
+    return conv.peerUser?['nickname'] ??
+        conv.peerUser?['account'] ??
+        conv.name ??
+        '聊天';
+  }
+
+  List<ConversationItem> get _groupConversations =>
+      _conversations.where((conv) => conv.type == 2).toList();
+
+  bool _canStartGroupMeetingForFree(List<Map<String, dynamic>> members) {
+    final authState = ref.read(authProvider);
+    final myId = authState.user?.id ?? authState.profile?.user.id ?? 0;
+    for (final member in members) {
+      if (int.tryParse(member['userId']?.toString() ?? '') == myId) {
+        final role = int.tryParse(member['role']?.toString() ?? '') ?? 1;
+        return member['isOwner'] == true || role >= 2;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _openGroupMeetingEntry() async {
+    final groups = _groupConversations;
+    if (groups.isEmpty) {
+      Toast.info(context, '暂无可发起会议的群聊');
+      return;
+    }
+
+    final selected = await showModalBottomSheet<ConversationItem>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView.separated(
+          shrinkWrap: true,
+          itemCount: groups.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (_, index) {
+            final conv = groups[index];
+            final name = _conversationDisplayName(conv);
+            return ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.blue.shade50,
+                backgroundImage: conv.avatar != null &&
+                        conv.avatar!.isNotEmpty &&
+                        !conv.avatar!.contains('default')
+                    ? NetworkImage(conv.avatar!.startsWith('http')
+                        ? conv.avatar!
+                        : '${AppConstants.apiBaseUrl}${conv.avatar}')
+                    : null,
+                child: conv.avatar == null ||
+                        conv.avatar!.isEmpty ||
+                        conv.avatar!.contains('default')
+                    ? const Icon(Icons.group, color: Colors.blue)
+                    : null,
+              ),
+              title: Text(name),
+              subtitle: const Text('点击选择群聊'),
+              onTap: () => Navigator.pop(ctx, conv),
+            );
+          },
+        ),
+      ),
+    );
+    if (selected == null) return;
+    await _startGroupMeetingFromEntry(selected);
+  }
+
+  Future<void> _startGroupMeetingFromEntry(ConversationItem conv) async {
+    final api = ref.read(apiClientProvider);
+    final groupId = conv.conversationId;
+    final groupName = _conversationDisplayName(conv);
+    try {
+      Map<String, dynamic>? meeting =
+          await api.get<Map<String, dynamic>>(
+        ApiEndpoints.groupMeetingActive(groupId),
+      );
+
+      if (meeting == null) {
+        final membersResult = await api.get<List<dynamic>>(
+          ApiEndpoints.groupMembers(groupId),
+        );
+        final members = (membersResult ?? [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        final free = _canStartGroupMeetingForFree(members);
+        int currentPoints = 0;
+        if (!free) {
+          try {
+            final balance =
+                await api.get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
+            currentPoints =
+                (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0)
+                    .toInt();
+          } catch (_) {}
+        }
+
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('发起群会议'),
+            content: Text(
+              free
+                  ? '是否在「$groupName」发起群会议？'
+                  : '发起群会议需要10000积分\n当前积分余额：$currentPoints',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确认'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        if (!free && currentPoints < 10000) {
+          Toast.warning(context, '积分不足，无法发起会议');
+          return;
+        }
+
+        meeting = await api.post<Map<String, dynamic>>(
+          ApiEndpoints.groupMeetingStart(groupId),
+          data: {'title': '$groupName的会议'},
+        );
+      }
+
+      if (!mounted || meeting == null) return;
+      Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+        builder: (_) => MeetingPage(
+          groupId: groupId,
+          groupName: groupName,
+          meeting: meeting!,
+        ),
+      ));
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context, apiErrorMessage(e, fallback: '发起群会议失败'));
+      }
+    }
+  }
+
   /// 鏍煎紡鍖栨秷鎭椂闂达紙浠垮井淇￠鏍硷級
   /// 浠婂ぉ锛氭樉绀?HH:mm
   /// 昨天锛氭樉绀?"昨天"
@@ -476,7 +623,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
         if (mounted) _loadServiceUnread();
       });
     }
-    final headerCount = showServiceNotifications ? 3 : 2;
+    final headerCount = showServiceNotifications ? 4 : 3;
     return Scaffold(
       appBar: AppBar(
         title: const Text('消息'),
@@ -529,8 +676,22 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                     );
                   }
 
+                  if (index == 2) {
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.green.shade100,
+                        child: const Icon(Icons.video_call,
+                            color: Colors.green),
+                      ),
+                      title: const Text('群会议',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: const Text('选择群聊发起会议'),
+                      onTap: _openGroupMeetingEntry,
+                    );
+                  }
+
                   // 服务通知入口（仅管理员）
-                  if (showServiceNotifications && index == 2) {
+                  if (showServiceNotifications && index == 3) {
                     return ListTile(
                       leading: Stack(
                         clipBehavior: Clip.none,
@@ -578,15 +739,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                   }
 
                   final conv = _conversations[index - headerCount];
-                  final peerName = (conv.peerUser?['remark'] as String?)
-                              ?.trim()
-                              .isNotEmpty ==
-                          true
-                      ? conv.peerUser!['remark']
-                      : conv.peerUser?['nickname'] ??
-                          conv.peerUser?['account'] ??
-                          conv.name ??
-                          '聊天';
+                  final peerName = _conversationDisplayName(conv);
                   // 确定头像：群聊用群头像，单聊用对方头像
                   final String? displayAvatar;
                   if (conv.type == 2) {

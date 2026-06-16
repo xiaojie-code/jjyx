@@ -45,6 +45,13 @@ class ApiEndpoints {
   static const String rechargeSubmit = '/api/recharge/submit';
   static const String rechargeOrders = '/api/recharge/orders';
 
+  // ==================== 资产包 ====================
+  static const String assetOverview = '/api/asset/overview';
+  static const String assetRecharge = '/api/asset/recharge';
+  static const String assetRecharges = '/api/asset/recharges';
+  static const String assetWithdraw = '/api/asset/withdraw';
+  static const String assetWithdrawals = '/api/asset/withdrawals';
+
   // ==================== 游戏服务 ====================
   static const String gameList = '/api/game/list';
   static const String lotteryConfig = '/api/game/lottery/config';

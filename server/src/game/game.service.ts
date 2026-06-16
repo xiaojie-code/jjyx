@@ -597,7 +597,27 @@ export class GameService {
     } else if (normalized.fishingDailyRewardDate !== today) {
       normalized.isGetGold = false;
     }
+    this.normalizeFishingSaveFishPrices(normalized);
     return normalized;
+  }
+
+  private scaleFishingRewardValue(value: any) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return 0;
+    const maxReward = 500;
+    if (num < 1000) return Math.min(maxReward, Math.floor(num));
+    if (num >= 10000) return Math.min(maxReward, Math.max(100, Math.floor(num / 100)));
+    return Math.min(maxReward, Math.max(10, Math.floor(num / 10)));
+  }
+
+  private normalizeFishingSaveFishPrices(saveData: Record<string, any>) {
+    const items = saveData?.fishBoxInfo?.items;
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      if (item && typeof item === 'object' && item.price !== undefined) {
+        item.price = this.scaleFishingRewardValue(item.price);
+      }
+    }
   }
 
   private async touchFishingDailyReward(userId: number, gameId: number, manager?: any) {

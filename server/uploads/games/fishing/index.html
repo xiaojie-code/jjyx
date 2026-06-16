@@ -88,7 +88,7 @@
     var suppressSaveUpload = false;
     var saveUploadTimer = null;
     var economyPatchInstalled = false;
-    var ECONOMY_VERSION = 3;
+    var ECONOMY_VERSION = 5;
 
     function fitCocosCanvasToViewport() {
       var width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth || 0;
@@ -159,6 +159,27 @@
       if (num <= 0) return 0;
       if (num < 100) return Math.max(1, Math.floor(num));
       return Math.max(10, Math.floor(num / 100) * 10);
+    }
+
+    var FISH_REWARD_MAX_POINTS = 500;
+
+    function capFishRewardValue(value) {
+      return Math.min(FISH_REWARD_MAX_POINTS, value);
+    }
+
+    function scaleFishRewardValue(value) {
+      var num = toNumber(value);
+      if (num <= 0) return 0;
+      if (num < 100) return capFishRewardValue(Math.max(1, Math.floor(num)));
+      if (num >= 10000) return capFishRewardValue(Math.max(100, Math.floor(num / 100)));
+      return capFishRewardValue(Math.max(10, Math.floor(num / 10)));
+    }
+
+    function normalizeStoredFishRewardValue(value) {
+      var num = toNumber(value);
+      if (num <= 0) return 0;
+      if (num < 1000) return capFishRewardValue(Math.floor(num));
+      return scaleFishRewardValue(num);
     }
 
     function hasRealAccountData() {
@@ -277,7 +298,7 @@
       if (save.fishBoxInfo && Array.isArray(save.fishBoxInfo.items)) {
         save.fishBoxInfo.items.forEach(function (item) {
           if (item && typeof item.price !== "undefined") {
-            item.price = scaleEconomyValue(item.price);
+            item.price = normalizeStoredFishRewardValue(item.price);
           }
         });
       }
@@ -477,6 +498,7 @@
       if (suppressSaveUpload) return;
       var path = getApiPath("/save");
       if (!path || !getAuthToken()) return;
+      if (!remoteSaveLoaded || pendingGold === null) return;
       var saveData = null;
       try {
         saveData = typeof rawValue === "string" ? JSON.parse(rawValue) : rawValue;
@@ -862,7 +884,7 @@
         if (fish && typeof fish.getFishPrice === "function" && !fish.__jjyxEconomyPatched) {
           var originalGetFishPrice = fish.getFishPrice.bind(fish);
           fish.getFishPrice = function patchedGetFishPrice() {
-            return scaleEconomyValue(originalGetFishPrice());
+            return scaleFishRewardValue(originalGetFishPrice());
           };
           Object.defineProperty(fish, "__jjyxEconomyPatched", { value: true });
         }
@@ -1063,7 +1085,7 @@
         if (loadedSave) {
           applySaveToGame(loadedSave);
         }
-        refreshFishingGold(balanceFromData(data, 0));
+        refreshFishingGold(pendingGold !== null ? pendingGold : balanceFromData(data, 0));
       } else if (action === "balanceUpdate" || action === "pointsChangeResult") {
         if (data.success === false || typeof data.points !== "undefined" || typeof data.balance !== "undefined") {
           refreshFishingGold(balanceFromData(data, pendingGold || 0));
@@ -1080,7 +1102,7 @@
       setTimeout(fitCocosCanvasToViewport, 120);
     });
     if (hasRealAccountData()) {
-      refreshFishingGold(balanceFromData(appInitData, 0));
+      refreshFishingGold(pendingGold !== null ? pendingGold : balanceFromData(appInitData, 0));
     }
     setInterval(function () {
       fitCocosCanvasToViewport();

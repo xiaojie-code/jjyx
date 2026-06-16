@@ -7,8 +7,10 @@ import '../../../core/network/api_endpoints.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/update/app_update_service.dart';
 import '../../../core/update/update_state.dart';
+import '../../../core/utils/activation_guard.dart';
 import '../../auth/providers/auth_provider.dart';
 import 'activate_page.dart';
+import 'asset_package_page.dart';
 import 'edit_avatar_page.dart';
 import 'edit_nickname_page.dart';
 import 'promotion_reward_page.dart';
@@ -132,7 +134,10 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     _buildMenuItem(
                       Icons.inventory_2,
                       '资产包',
-                      () {},
+                      () {
+                        if (!checkActivation(context, user.isActivated)) return;
+                        _push(const AssetPackagePage());
+                      },
                     ),
                     _buildMenuItem(
                       Icons.payment,

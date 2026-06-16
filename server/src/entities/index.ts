@@ -33,6 +33,10 @@ export { LotteryDrawRecord } from './lottery-draw-record.entity';
 
 // Economy entities
 export { Withdrawal } from './withdrawal.entity';
+export { AssetAccount } from './asset-account.entity';
+export { AssetRechargeOrder } from './asset-recharge-order.entity';
+export { AssetWithdrawal } from './asset-withdrawal.entity';
+export { AssetInterestRecord } from './asset-interest-record.entity';
 export { PointReturn } from './point-return.entity';
 export { PointSynthesis } from './point-synthesis.entity';
 

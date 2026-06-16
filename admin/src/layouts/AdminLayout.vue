@@ -44,6 +44,10 @@
           <el-icon><CreditCard /></el-icon>
           <span>充值管理</span>
         </el-menu-item>
+        <el-menu-item index="/assets">
+          <el-icon><Wallet /></el-icon>
+          <span>资产包管理</span>
+        </el-menu-item>
         <el-menu-item index="/agents">
           <el-icon><Share /></el-icon>
           <span>分销管理</span>
@@ -122,6 +126,8 @@ const menuItems = [
   { path: '/lottery', title: '转盘管理' },
   { path: '/cdk', title: 'CDK管理' },
   { path: '/withdrawals', title: '提现管理' },
+  { path: '/recharge', title: '充值管理' },
+  { path: '/assets', title: '资产包管理' },
   { path: '/agents', title: '分销管理' },
   { path: '/matrix', title: '推广管理' },
   { path: '/reward-backfill', title: '奖励补账' },

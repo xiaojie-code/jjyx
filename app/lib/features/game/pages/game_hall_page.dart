@@ -19,7 +19,7 @@ class GameHallPage extends ConsumerStatefulWidget {
 }
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
-  static const String _gameShellVersion = '20260615-killer-fullscreen-stretch2';
+  static const String _gameShellVersion = '20260617-fishing-reward-cap';
 
   List<Map<String, dynamic>> _games = [];
   bool _loading = true;
