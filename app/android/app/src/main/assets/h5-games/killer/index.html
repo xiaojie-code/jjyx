@@ -371,6 +371,7 @@
       var killerRoundWaitTimer = 0;
       var killerAppLoginSent = false;
       var killerAppLoggedIn = false;
+      var killerAiAutoEnterSent = false;
       var killerRoundReady = false;
       var killerRoundRunning = false;
       var killerCurrentExpect = "";
@@ -743,6 +744,19 @@
         }));
       }
 
+      function enterKillerAiRoomNow() {
+        if (getKillerMode() !== "ai") return false;
+        if (!killerSocket || killerSocket.readyState !== WebSocket.OPEN) return false;
+        if (!killerSession.uid || !killerSession.token) return false;
+
+        killerAiAutoEnterSent = true;
+        hideWaiting();
+        hideRoundPanel();
+        sendKillerAction("enterroom", { roomid: normalizeKillerRoomId(killerSession.roomid) });
+        setTimeout(startKillerRound, 180);
+        return true;
+      }
+
       function startKillerRound() {
         if (!killerSession.uid || !killerSession.token || !killerSession.roomid) {
           showRoundPanel("正在进入房间", "房间信息还没同步完成，请稍等。", "开始本局", true);
@@ -963,6 +977,7 @@
               killerAppLoginSent = true;
               hideAuthMask();
               setTimeout(requestKillerBalance, 150);
+              setTimeout(enterKillerAiRoomNow, 220);
               return;
             }
 
@@ -974,6 +989,11 @@
           }
 
           if (action === "match_waiting") {
+            if (getKillerMode() === "ai") {
+              hideWaiting();
+              enterKillerAiRoomNow();
+              return;
+            }
             showWaiting(info);
             return;
           }
