@@ -1224,6 +1224,61 @@ class Common
         return $affected ? 1 : 0;
     }
 
+    static function robotUsers($minCount = 8)
+    {
+        $minCount = max(1, (int)$minCount);
+        $robots = Db::table('wa_users')->where(['isrobot' => 1, 'roomid' => 0])->get()->toArray();
+        $listRobots = self::object_array($robots);
+        if (count($listRobots) >= $minCount) {
+            return $listRobots;
+        }
+
+        $existing = [];
+        foreach ($listRobots as $robot) {
+            $existing[(string)($robot['username'] ?? '')] = true;
+        }
+
+        $now = date("Y/m/d H:i:s", time());
+        for ($i = 1; $i <= $minCount; $i++) {
+            $username = 'killer_robot_' . str_pad((string)$i, 2, '0', STR_PAD_LEFT);
+            if (isset($existing[$username]) || Db::table('wa_users')->where('username', $username)->first()) {
+                continue;
+            }
+
+            $token = sha1(md5(uniqid('', true)) . $username);
+            try {
+                Db::table('wa_users')->insert([
+                    'username' => $username,
+                    'nickname' => 'AI玩家' . $i,
+                    'password' => md5($token),
+                    'sex' => '1',
+                    'avatar' => '',
+                    'email' => '',
+                    'mobile' => '',
+                    'level' => 0,
+                    'birthday' => $now,
+                    'money' => '0.00',
+                    'score' => 1000000,
+                    'last_time' => $now,
+                    'last_ip' => '',
+                    'join_time' => $now,
+                    'join_ip' => '',
+                    'token' => $token,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                    'role' => 1,
+                    'status' => 0,
+                    'roomid' => 0,
+                    'isrobot' => 1
+                ]);
+            } catch (\Throwable $e) {
+            }
+        }
+
+        $robots = Db::table('wa_users')->where(['isrobot' => 1, 'roomid' => 0])->get()->toArray();
+        return self::object_array($robots);
+    }
+
     static function upposition($uid, $smallroomid)
     {
         $expect = self::getnowexpect();
@@ -1240,8 +1295,7 @@ class Common
 
         self::ensureKillerSchema();
 
-        $robots = Db::table('wa_users')->where(['isrobot' => 1, 'roomid' => 0])->get()->toArray();
-        $listRobots = self::object_array($robots);
+        $listRobots = self::robotUsers(8);
         if (!$listRobots) {
             return [];
         }
@@ -1368,15 +1422,19 @@ class Common
             return [];
         }
 
-        $robots = Db::table('wa_users')->where(['isrobot' => 1, 'roomid' => 0])->get()->toArray();
-        $listRobots = self::object_array($robots);
+        $listRobots = self::robotUsers(8);
         $new = [];
 
         foreach ($listRobots as $v) {
+            $position = self::getrobotposition($v['id'], $roomid, $mode);
+            if ((int)$position <= 0) {
+                $position = rand(1, 8);
+                Redis::set(self::robotPositionKey(self::getnowexpect(), $roomid, $mode, $v['id']), $position);
+            }
             $v['client_id'] = 'robot_' . $v['id'];
             $v['uid'] = (string)$v['id'];
             $v['userinfo'] = self::getuserinfo($v['id']);
-            $v['position'] = self::getrobotposition($v['id'], $roomid, $mode);
+            $v['position'] = $position;
             $v['mode'] = self::MODE_AI;
             $new[] = $v;
         }
