@@ -113,6 +113,41 @@ class Common
         return $mode === self::MODE_REAL ? 'roomnums_real_' . $roomid : 'roomnums_' . $roomid;
     }
 
+    static function activeRoom($roomid = 0)
+    {
+        $roomid = (int)$roomid;
+        if ($roomid > 0) {
+            $room = Db::table('wa_rooms')->where(['status' => 1, 'id' => $roomid])->first();
+            if ($room) {
+                return $room;
+            }
+        }
+
+        return self::defaultActiveRoom();
+    }
+
+    static function defaultActiveRoom()
+    {
+        $room = Db::table('wa_rooms')->where('status', 1)->orderBy('id')->first();
+        if ($room) {
+            return $room;
+        }
+
+        try {
+            Db::table('wa_rooms')->insert([
+                'roomname' => 'AI Room',
+                'minprice' => 0,
+                'status' => 1,
+                'maxuser' => 200,
+                'robotuser' => 8
+            ]);
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        return Db::table('wa_rooms')->where('status', 1)->orderBy('id')->first();
+    }
+
     static function setUserRoomMode($uid, $mode)
     {
         Redis::set('killer_mode_' . $uid, self::normalizeMode($mode));

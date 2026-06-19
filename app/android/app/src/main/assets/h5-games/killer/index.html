@@ -381,7 +381,7 @@
         uid: "",
         token: "",
         account: "",
-        roomid: "",
+        roomid: "1",
         mode: "ai"
       };
       var killerBetAmounts = [100, 500, 1000, 3000, 5000, 10000];
@@ -457,6 +457,11 @@
 
       function getKillerMode() {
         return normalizeKillerMode(window.__KILLER_MODE__ || localStorage.getItem("killer_match_mode") || "ai");
+      }
+
+      function normalizeKillerRoomId(roomid) {
+        var value = parseInt(roomid, 10);
+        return value > 0 ? value : 1;
       }
 
       function normalizeKillerBetAmount(coin) {
@@ -676,6 +681,7 @@
         }
 
         var payload = Object.assign({}, killerSession, data || {});
+        payload.roomid = normalizeKillerRoomId(payload.roomid);
         payload.mode = getKillerMode();
         updateKillerSession(payload);
         killerSocket.send(JSON.stringify({ action: action, data: payload }));
@@ -917,6 +923,9 @@
           if (actions.indexOf(action) === -1) return payload;
           if (!message.data || typeof message.data !== "object") {
             message.data = {};
+          }
+          if (["enterroom", "start_round", "touzhu", "changesmallroom", "leaveroom", "getrecord"].indexOf(action) !== -1) {
+            message.data.roomid = normalizeKillerRoomId(message.data.roomid || killerSession.roomid);
           }
           updateKillerSession(message.data);
           if (action === "touzhu") {

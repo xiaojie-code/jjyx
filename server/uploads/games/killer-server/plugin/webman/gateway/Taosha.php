@@ -74,10 +74,10 @@ class Taosha
         }
 
         $uid = (int)$data['uid'];
-        $roomid = (int)$data['roomid'];
+        $roomid = (int)($data['roomid'] ?? 0);
         $mode = Common::getDataMode($data, $uid, $client_id);
 
-        $roominfo = Db::table('wa_rooms')->where(['status' => 1, 'id' => $roomid])->first();
+        $roominfo = Common::activeRoom($roomid);
         if (!$roominfo) {
             return [
                 'code' => 1051,
@@ -85,9 +85,14 @@ class Taosha
                 'info' => []
             ];
         }
+        $roomid = (int)$roominfo->id;
 
         $userinfo = Common::getuserinfo($uid);
         if ((int)$userinfo['roomid'] !== $roomid) {
+            if ((int)($userinfo['roomid'] ?? 0) <= 0) {
+                Common::enterroom($client_id, $roomid, $userinfo, $mode);
+                $userinfo['roomid'] = $roomid;
+            } else {
             return [
                 'code' => 1054,
                 'msg' => 'not in this room',
@@ -96,6 +101,7 @@ class Taosha
                     'mode' => $mode
                 ]
             ];
+            }
         }
 
         if ((int)($userinfo['coin'] ?? 0) < 100) {
@@ -250,7 +256,16 @@ class Taosha
         }
 
         $mode = Common::getDataMode($data, $data['uid'], $client_id);
-        $roomid = (int)$data['roomid'];
+        $roomid = (int)($data['roomid'] ?? 0);
+        $roominfo = Common::activeRoom($roomid);
+        if (!$roominfo) {
+            return [
+                'code' => 1051,
+                'msg' => 'room not found',
+                'info' => []
+            ];
+        }
+        $roomid = (int)$roominfo->id;
         $tosmallroomid = (int)($data['tosmallroomid'] ?? ($data['smallroomid'] ?? 0));
         $expect = self::activeExpectForUser($data['uid'], $roomid, $mode);
         if ((string)$expect !== (string)Common::getnowexpect()) {
@@ -359,9 +374,9 @@ class Taosha
         }
 
         $mode = Common::getDataMode($data, $data['uid'], $client_id);
-        $roomid = (int)$data['roomid'];
+        $roomid = (int)($data['roomid'] ?? 0);
 
-        $roominfo = Db::table('wa_rooms')->where(['status' => 1, 'id' => $roomid])->first();
+        $roominfo = Common::activeRoom($roomid);
         if (!$roominfo) {
             return [
                 'code' => 1051,
@@ -369,6 +384,7 @@ class Taosha
                 'info' => []
             ];
         }
+        $roomid = (int)$roominfo->id;
 
         $userinfo = Common::getuserinfo($data['uid']);
         if ($userinfo['coin'] < $roominfo->minprice) {
@@ -476,9 +492,9 @@ class Taosha
             return null;
         }
 
-        $roomid = (int)$data['roomid'];
+        $roomid = (int)($data['roomid'] ?? 0);
         $mode = Common::getDataMode($data, $data['uid'], $client_id);
-        $roominfo = Db::table('wa_rooms')->where(['status' => 1, 'id' => $roomid])->first();
+        $roominfo = Common::activeRoom($roomid);
 
         if (!$roominfo) {
             return [
@@ -487,6 +503,7 @@ class Taosha
                 'info' => []
             ];
         }
+        $roomid = (int)$roominfo->id;
 
         $userinfo = Common::getuserinfo($data['uid']);
         Common::leaveroom($client_id, $roomid, $userinfo, $mode);
@@ -533,7 +550,7 @@ class Taosha
             return null;
         }
 
-        $roomid = (int)$data['roomid'];
+        $roomid = (int)($data['roomid'] ?? 0);
         $smallroomid = (int)$data['smallroomid'];
         $coin = (int)$data['coin'];
         $rawCoin = (int)($data['raw_coin'] ?? $coin);
@@ -555,7 +572,7 @@ class Taosha
             ];
         }
 
-        $roominfo = Db::table('wa_rooms')->where(['status' => 1, 'id' => $roomid])->first();
+        $roominfo = Common::activeRoom($roomid);
         if (!$roominfo) {
             return [
                 'code' => 1051,
@@ -563,6 +580,7 @@ class Taosha
                 'info' => []
             ];
         }
+        $roomid = (int)$roominfo->id;
 
         $userinfo = Common::getuserinfo($data['uid']);
         if ((int)$userinfo['roomid'] !== $roomid) {

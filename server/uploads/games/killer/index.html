@@ -367,6 +367,7 @@
       var killerSocket = null;
       var killerTipTimer = 0;
       var killerAuthFallbackTimer = 0;
+      var killerSocketConnectTimer = 0;
       var killerRoundWaitTimer = 0;
       var killerAppLoginSent = false;
       var killerAppLoggedIn = false;
@@ -380,7 +381,7 @@
         uid: "",
         token: "",
         account: "",
-        roomid: "",
+        roomid: "1",
         mode: "ai"
       };
       var killerBetAmounts = [100, 500, 1000, 3000, 5000, 10000];
@@ -394,7 +395,7 @@
         2000: 3000
       };
       window.__KILLER_BET_AMOUNTS__ = killerBetAmounts;
-      var killerAssetVersion = "20260615-killer-fullscreen-stretch2";
+      var killerAssetVersion = "20260618-killer-raw-unity-assets-ws2";
       var killerUnityUiPatchTimer = 0;
       var killerUnityUiPatchStopTimer = 0;
 
@@ -456,6 +457,11 @@
 
       function getKillerMode() {
         return normalizeKillerMode(window.__KILLER_MODE__ || localStorage.getItem("killer_match_mode") || "ai");
+      }
+
+      function normalizeKillerRoomId(roomid) {
+        var value = parseInt(roomid, 10);
+        return value > 0 ? value : 1;
       }
 
       function normalizeKillerBetAmount(coin) {
@@ -675,6 +681,7 @@
         }
 
         var payload = Object.assign({}, killerSession, data || {});
+        payload.roomid = normalizeKillerRoomId(payload.roomid);
         payload.mode = getKillerMode();
         updateKillerSession(payload);
         killerSocket.send(JSON.stringify({ action: action, data: payload }));
@@ -693,6 +700,13 @@
           action: "app_login",
           data: buildAppLoginData()
         }));
+        clearTimeout(killerAuthFallbackTimer);
+        killerAuthFallbackTimer = setTimeout(function () {
+          if (!killerAppLoggedIn) {
+            killerAppLoginSent = false;
+            showAuthMask("大逃杀账号同步超时，请退出后重新进入。");
+          }
+        }, 10000);
       }
 
       function tryAutoLogin() {
@@ -909,6 +923,9 @@
           if (actions.indexOf(action) === -1) return payload;
           if (!message.data || typeof message.data !== "object") {
             message.data = {};
+          }
+          if (["enterroom", "start_round", "touzhu", "changesmallroom", "leaveroom", "getrecord"].indexOf(action) !== -1) {
+            message.data.roomid = normalizeKillerRoomId(message.data.roomid || killerSession.roomid);
           }
           updateKillerSession(message.data);
           if (action === "touzhu") {
@@ -1141,6 +1158,9 @@
 
       function rewriteKillerWebSocketUrl(url) {
         var text = String(url || "");
+        if (!text || !/^wss?:\/\//i.test(text)) {
+          return resolveWebSocketUrl();
+        }
         if (!/gamesocket\.wanyouyinqing\.com/i.test(text)) {
           return appendKillerModeToWebSocketUrl(url);
         }
@@ -1148,6 +1168,31 @@
         var rewritten = resolveWebSocketUrl();
         console.log("[killer] rewrite websocket:", text, "=>", rewritten);
         return rewritten;
+      }
+
+      function clearKillerSocketConnectTimer() {
+        clearTimeout(killerSocketConnectTimer);
+        killerSocketConnectTimer = 0;
+      }
+
+      function showKillerConnectionError(reason) {
+        if (killerAppLoggedIn) return;
+        var url = "";
+        try {
+          url = resolveWebSocketUrl();
+        } catch (error) {}
+        console.error("[killer] websocket unavailable:", reason || "", url);
+        showAuthMask("大逃杀连接失败，请确认游戏服务已启动，并且手机和电脑在同一网络。");
+      }
+
+      function scheduleKillerSocketConnectTimeout(socket, url) {
+        clearKillerSocketConnectTimer();
+        showAuthMask("正在连接大逃杀服务...");
+        killerSocketConnectTimer = setTimeout(function () {
+          if (socket === killerSocket && !killerAppLoggedIn && socket.readyState !== WebSocket.OPEN) {
+            showKillerConnectionError("timeout " + url);
+          }
+        }, 12000);
       }
 
       (function installKillerWebSocketPatch() {
@@ -1163,6 +1208,8 @@
               : new NativeWebSocket(rewrittenUrl, protocols);
           killerSocket = socket;
           window.__KILLER_SOCKET__ = socket;
+          console.log("[killer] websocket url:", rewrittenUrl);
+          scheduleKillerSocketConnectTimeout(socket, rewrittenUrl);
           var nativeSend = socket.send;
           socket.send = function patchedSend(payload) {
             var nextPayload = injectKillerMode(payload);
@@ -1174,7 +1221,16 @@
             return nativeSend.call(socket, nextPayload);
           };
           socket.addEventListener("open", function () {
+            clearKillerSocketConnectTimer();
             tryAutoLogin();
+          });
+          socket.addEventListener("error", function () {
+            clearKillerSocketConnectTimer();
+            showKillerConnectionError("error " + rewrittenUrl);
+          });
+          socket.addEventListener("close", function () {
+            clearKillerSocketConnectTimer();
+            if (!killerAppLoggedIn) showKillerConnectionError("close " + rewrittenUrl);
           });
           socket.addEventListener("message", handleKillerSocketMessage);
           return socket;
@@ -1205,13 +1261,16 @@
         var assetQuery = "?v=" + encodeURIComponent(killerAssetVersion);
         var loaderUrl = buildUrl + "/WebGLBuild.loader.js" + assetQuery;
         var config = {
-          dataUrl: buildUrl + "/WebGLBuild.data.unityweb" + assetQuery,
-          frameworkUrl: buildUrl + "/WebGLBuild.framework.js.unityweb" + assetQuery,
-          codeUrl: buildUrl + "/WebGLBuild.wasm.unityweb" + assetQuery,
+          dataUrl: buildUrl + "/WebGLBuild.data" + assetQuery,
+          frameworkUrl: buildUrl + "/WebGLBuild.framework.js" + assetQuery,
+          codeUrl: buildUrl + "/WebGLBuild.wasm" + assetQuery,
           streamingAssetsUrl: "StreamingAssets",
           companyName: "wanyouyinqing",
           productName: "dataosha",
           productVersion: "0.1",
+          cacheControl: function () {
+            return "no-store";
+          },
           websocket: {
             url: resolveWebSocketUrl(),
           },
