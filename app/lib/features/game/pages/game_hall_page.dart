@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/app_constants.dart';
@@ -19,7 +20,9 @@ class GameHallPage extends ConsumerStatefulWidget {
 }
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
-  static const String _gameShellVersion = '20260617-fishing-reward-cap';
+  static const String _gameShellVersion = '20260619-saima2-replace-legacy';
+  static const String _h5AssetBaseUrl =
+      'http://appassets.androidplatform.net/assets/h5-games';
 
   List<Map<String, dynamic>> _games = [];
   bool _loading = true;
@@ -38,8 +41,10 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
           .read(apiClientProvider)
           .get<List<dynamic>>(ApiEndpoints.gameList);
       setState(() {
-        _games =
-            (result ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+        _games = (result ?? [])
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((game) => !_isLegacyHorseGame(game))
+            .toList();
         _loading = false;
       });
     } catch (e) {
@@ -102,10 +107,31 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
 
   bool _isHorseGame(Map<String, dynamic> game) {
     final text = _gameSearchText(game);
+    if (_isHorse2Game(game)) return false;
     return text.contains('赛马') ||
         text.contains('saima') ||
         text.contains('horse') ||
         text.contains('smyx');
+  }
+
+  bool _isLegacyHorseGame(Map<String, dynamic> game) {
+    final text = _gameSearchText(game);
+    if (text.contains('/uploads/games/saima2/') ||
+        text.contains('\\uploads\\games\\saima2\\')) {
+      return false;
+    }
+    return text.contains('/uploads/games/saima/') ||
+        text.contains('\\uploads\\games\\saima\\');
+  }
+
+  bool _isHorse2Game(Map<String, dynamic> game) {
+    final text = _gameSearchText(game);
+    return text.contains('赛马游戏2') ||
+        text.contains('赛马2') ||
+        text.contains('saima2') ||
+        text.contains('horse2') ||
+        text.contains('/uploads/games/saima2/') ||
+        text.contains('\\uploads\\games\\saima2\\');
   }
 
   String _displayGameName(Map<String, dynamic> game) {
@@ -113,6 +139,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     if (_isFishingGame(game)) return '实况钓鱼';
     if (_isSnakeGame(game)) return '象雀对弈';
     if (_isKillerGame(game)) return '大逃杀';
+    if (_isHorse2Game(game)) return '赛马';
     if (_isHorseGame(game)) return '赛马';
     return (game['name'] ?? '').toString();
   }
@@ -126,6 +153,9 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     }
     if (_isKillerGame(game)) {
       return '卡通乱斗，极速开战';
+    }
+    if (_isHorse2Game(game)) {
+      return '多人在线赛马竞技';
     }
     if (_isHorseGame(game)) {
       return '投注竞猜，极速开赛';
@@ -154,6 +184,9 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     }
     if (_isKillerGame(game)) {
       return 'assets/game-icons/dts.jpg';
+    }
+    if (_isHorse2Game(game)) {
+      return 'assets/game-icons/smyx.png';
     }
     if (_isHorseGame(game)) {
       return 'assets/game-icons/smyx.png';
@@ -832,49 +865,141 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     );
   }
 
-  Future<void> _startGame(Map<String, dynamic> game) async {
-    if (_gamesInTesting) {
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('测试中'),
-          content: const Text('敬请期待'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('确定'),
+  Future<void> _showTestingDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('测试中'),
+        content: const Text('敬请期待'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildXiangQueOption({
+    required String iconAsset,
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: Material(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Container(
+            height: 132,
+            padding: const EdgeInsets.fromLTRB(10, 14, 10, 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE4E7EC)),
             ),
-          ],
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset(
+                    iconAsset,
+                    width: 64,
+                    height: 64,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      width: 64,
+                      height: 64,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF8FF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFB2DDFF)),
+                      ),
+                      child: const Icon(
+                        Icons.sports_esports,
+                        color: Color(0xFF175CD3),
+                        size: 30,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 24,
+                  child: Center(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        height: 1.1,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF101828),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      );
+      ),
+    );
+  }
+
+  Future<void> _showXiangQueChoiceDialog(Map<String, dynamic> game) async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('选择游戏'),
+        content: SizedBox(
+          width: math.min(MediaQuery.of(context).size.width - 48, 360),
+          child: Row(
+            children: [
+              _buildXiangQueOption(
+                iconAsset: 'assets/game-icons/mjtb.png',
+                title: '麻将游戏',
+                onTap: () => Navigator.of(dialogContext).pop('mahjong'),
+              ),
+              const SizedBox(width: 12),
+              _buildXiangQueOption(
+                iconAsset: 'assets/game-icons/xqtb.png',
+                title: '象棋游戏',
+                onTap: () => Navigator.of(dialogContext).pop('xiangqi'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || selected == null) return;
+    if (selected == 'mahjong') {
+      await _showTestingDialog();
       return;
     }
-
-    if (_isSnakeGame(game) || _isHorseGame(game)) {
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('测试中'),
-          content: const Text('敬请期待'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('确定'),
-            ),
-          ],
-        ),
+    if (selected == 'xiangqi') {
+      await _openGameWebView(
+        game,
+        overrideRawUrl: '/uploads/games/xiangqi/index.html',
+        overrideOrientation: 'portrait',
       );
-      return;
     }
+  }
 
+  Future<void> _openGameWebView(
+    Map<String, dynamic> game, {
+    String? overrideRawUrl,
+    String? overrideOrientation,
+  }) async {
     final user = ref.read(authProvider).user;
     if (user == null) return;
     if (!checkActivation(context, user.isActivated)) return;
-
-    if (_isLotteryGame(game)) {
-      await _showLotteryDialog();
-      return;
-    }
 
     final gameId = (game['id'] as num?)?.toInt();
     if (gameId == null || _starting) return;
@@ -885,10 +1010,13 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       final startResult = await api.post<Map<String, dynamic>>(
         ApiEndpoints.gameStart(gameId),
       );
-      final rawUrl =
-          (startResult?['gameUrl'] ?? game['gameUrl'] ?? game['game_url'] ?? '')
-              .toString();
-      final safeRawUrl = _normalizeKnownGameUrl(game, rawUrl);
+      final rawUrl = (overrideRawUrl ??
+              startResult?['gameUrl'] ??
+              game['gameUrl'] ??
+              game['game_url'] ??
+              '')
+          .toString();
+      final safeRawUrl = overrideRawUrl ?? _normalizeKnownGameUrl(game, rawUrl);
       if (safeRawUrl.isEmpty) {
         throw Exception('game url is empty');
       }
@@ -901,9 +1029,11 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       } catch (_) {}
 
       final gameUrl = _resolveGameUrl(safeRawUrl, gameId);
-      final orientation =
-          (startResult?['orientation'] ?? game['orientation'] ?? 'landscape')
-              .toString();
+      final orientation = (overrideOrientation ??
+              startResult?['orientation'] ??
+              game['orientation'] ??
+              'landscape')
+          .toString();
       final token = TokenStorage.getToken() ?? '';
       if (!mounted) return;
 
@@ -951,13 +1081,152 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     }
   }
 
-  String _resolveGameUrl(String rawUrl, int gameId) {
+  Future<void> _startGame(Map<String, dynamic> game) async {
+    if (_gamesInTesting) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('测试中'),
+          content: const Text('敬请期待'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    if (_isSnakeGame(game)) {
+      await _showXiangQueChoiceDialog(game);
+      return;
+    }
+
+    final user = ref.read(authProvider).user;
+    if (user == null) return;
+    if (!checkActivation(context, user.isActivated)) return;
+
+    if (_isLotteryGame(game)) {
+      await _showLotteryDialog();
+      return;
+    }
+
+    final gameId = (game['id'] as num?)?.toInt();
+    if (gameId == null || _starting) return;
+
+    setState(() => _starting = true);
+    try {
+      final api = ref.read(apiClientProvider);
+      final startResult = await api.post<Map<String, dynamic>>(
+        ApiEndpoints.gameStart(gameId),
+      );
+      final rawUrl =
+          (startResult?['gameUrl'] ?? game['gameUrl'] ?? game['game_url'] ?? '')
+              .toString();
+      final safeRawUrl = _normalizeKnownGameUrl(game, rawUrl);
+      if (safeRawUrl.isEmpty) {
+        throw Exception('game url is empty');
+      }
+
+      double points = 0;
+      try {
+        final balance =
+            await api.get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
+        points = (balance?['points'] as num?)?.toDouble() ?? 0;
+      } catch (_) {}
+
+      final token = TokenStorage.getToken() ?? '';
+      final isHorse2 =
+          _isHorse2Game(game) || _bundledH5GameKey(safeRawUrl) == 'saima2';
+      final gameUrl = _resolveGameUrl(
+        safeRawUrl,
+        gameId,
+        extraParams: isHorse2
+            ? {
+                'token': token,
+                'appUserId': user.id.toString(),
+                'account': user.account,
+                'nickname':
+                    user.nickname.isNotEmpty ? user.nickname : user.account,
+              }
+            : const {},
+      );
+      final orientation =
+          (startResult?['orientation'] ?? game['orientation'] ?? 'landscape')
+              .toString();
+      if (!mounted) return;
+
+      final rootNavigator = Navigator.of(context, rootNavigator: true);
+      void closeGameRoute() {
+        if (mounted && rootNavigator.canPop()) {
+          rootNavigator.pop();
+        }
+      }
+
+      final jsBridge = JSBridge(
+        apiClient: api,
+        gameId: gameId,
+        onExit: closeGameRoute,
+      );
+
+      await rootNavigator.push(
+        MaterialPageRoute(
+          builder: (_) => GameWebView(
+            gameUrl: gameUrl,
+            gameId: gameId,
+            userInfo: GameUserInfo(
+              token: token,
+              userId: user.id,
+              account: user.account,
+              nickname: user.nickname.isNotEmpty ? user.nickname : user.account,
+              avatar: user.avatar,
+              points: points,
+              gameId: gameId,
+            ),
+            jsBridge: jsBridge,
+            onExit: closeGameRoute,
+            orientation: orientation,
+            showExitButton: false,
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('游戏启动失败，请稍后重试')),
+      );
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  String _resolveGameUrl(
+    String rawUrl,
+    int gameId, {
+    Map<String, String> extraParams = const {},
+  }) {
+    final bundledUrl = _resolveBundledH5GameUrl(
+      rawUrl,
+      gameId,
+      extraParams: extraParams,
+    );
+    if (bundledUrl != null) return bundledUrl;
+
     final uri = Uri.parse(rawUrl);
-    if (uri.hasScheme) return _appendGameShellVersion(uri, gameId).toString();
+    if (uri.hasScheme) {
+      return _appendGameShellVersion(
+        uri,
+        gameId,
+        extraParams: extraParams,
+      ).toString();
+    }
     final path = rawUrl.startsWith('/') ? rawUrl : '/$rawUrl';
     return _appendGameShellVersion(
       Uri.parse(AppConstants.apiBaseUrl).resolve(path),
       gameId,
+      extraParams: extraParams,
     ).toString();
   }
 
@@ -970,18 +1239,78 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
 
   String _normalizeKnownGameUrl(Map<String, dynamic> game, String rawUrl) {
     if (!_isInvalidGameUrl(rawUrl)) return rawUrl;
-    if (_isSnakeGame(game)) return '/uploads/games/snake/index.html';
+    if (_isSnakeGame(game)) return '/uploads/games/xiangqi/index.html';
     if (_isFishingGame(game)) return '/uploads/games/fishing/index.html';
     if (_isKillerGame(game)) return '/uploads/games/killer/index.html';
-    if (_isHorseGame(game)) return '/uploads/games/saima/index.html';
+    if (_isHorse2Game(game)) return '/uploads/games/saima2/index.html';
+    if (_isHorseGame(game)) return '/uploads/games/saima2/index.html';
     if (_isLotteryGame(game)) return 'lottery://native';
     return '';
   }
 
-  Uri _appendGameShellVersion(Uri uri, int gameId) {
+  bool get _canUseBundledH5Games =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  String? _bundledH5GameKey(String rawUrl) {
+    final text = rawUrl.toLowerCase();
+    if (text.contains('/uploads/games/fishing/') ||
+        text.contains('\\uploads\\games\\fishing\\')) {
+      return 'fishing';
+    }
+    if (text.contains('/uploads/games/killer/') ||
+        text.contains('\\uploads\\games\\killer\\')) {
+      return 'killer';
+    }
+    if (text.contains('/uploads/games/xiangqi/') ||
+        text.contains('\\uploads\\games\\xiangqi\\')) {
+      return 'xiangqi';
+    }
+    if (text.contains('/uploads/games/saima2/') ||
+        text.contains('\\uploads\\games\\saima2\\')) {
+      return 'saima2';
+    }
+    if (text.contains('/uploads/games/saima/') ||
+        text.contains('\\uploads\\games\\saima\\')) {
+      return 'saima2';
+    }
+    return null;
+  }
+
+  String? _resolveBundledH5GameUrl(
+    String rawUrl,
+    int gameId, {
+    Map<String, String> extraParams = const {},
+  }) {
+    if (!_canUseBundledH5Games) return null;
+
+    final gameKey = _bundledH5GameKey(rawUrl);
+    if (gameKey == null) return null;
+
+    return _appendGameShellVersion(
+      Uri.parse('$_h5AssetBaseUrl/$gameKey/index.html'),
+      gameId,
+      extraParams: extraParams,
+    ).toString();
+  }
+
+  Uri _appendGameShellVersion(
+    Uri uri,
+    int gameId, {
+    Map<String, String> extraParams = const {},
+  }) {
     final params = Map<String, String>.from(uri.queryParameters);
     params['game_shell_v'] = _gameShellVersion;
     params['gameId'] = gameId.toString();
+    params['apiBaseUrl'] = AppConstants.apiBaseUrl;
+    params['saimaWsUrl'] = AppConstants.saimaWsUrl;
+    params.addAll(extraParams);
+    final wsBaseUri = Uri.tryParse(AppConstants.apiBaseUrl);
+    if (wsBaseUri != null && wsBaseUri.host.isNotEmpty) {
+      params['wsProtocol'] =
+          wsBaseUri.scheme == 'https' ? 'wss:' : 'ws:';
+      params['wsHost'] = wsBaseUri.host;
+      params['wsPort'] = '7272';
+    }
     return uri.replace(queryParameters: params);
   }
 

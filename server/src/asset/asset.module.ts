@@ -5,6 +5,7 @@ import { AssetAccount } from '../entities/asset-account.entity';
 import { AssetRechargeOrder } from '../entities/asset-recharge-order.entity';
 import { AssetWithdrawal } from '../entities/asset-withdrawal.entity';
 import { AssetInterestRecord } from '../entities/asset-interest-record.entity';
+import { AssetReferralRewardRecord } from '../entities/asset-referral-reward-record.entity';
 import { NotificationModule } from '../notification/notification.module';
 import { AssetController } from './asset.controller';
 import { AdminAssetController } from './admin-asset.controller';
@@ -18,6 +19,7 @@ import { AssetService } from './asset.service';
       AssetRechargeOrder,
       AssetWithdrawal,
       AssetInterestRecord,
+      AssetReferralRewardRecord,
     ]),
     NotificationModule,
   ],

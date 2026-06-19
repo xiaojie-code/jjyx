@@ -51,6 +51,7 @@ class ApiEndpoints {
   static const String assetRecharges = '/api/asset/recharges';
   static const String assetWithdraw = '/api/asset/withdraw';
   static const String assetWithdrawals = '/api/asset/withdrawals';
+  static const String assetReferralRewards = '/api/asset/referral-rewards';
 
   // ==================== 游戏服务 ====================
   static const String gameList = '/api/game/list';

@@ -37,6 +37,7 @@ export { AssetAccount } from './asset-account.entity';
 export { AssetRechargeOrder } from './asset-recharge-order.entity';
 export { AssetWithdrawal } from './asset-withdrawal.entity';
 export { AssetInterestRecord } from './asset-interest-record.entity';
+export { AssetReferralRewardRecord } from './asset-referral-reward-record.entity';
 export { PointReturn } from './point-return.entity';
 export { PointSynthesis } from './point-synthesis.entity';
 

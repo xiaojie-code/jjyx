@@ -1633,6 +1633,9 @@ export class CurrencyService {
     if (this.isLotteryGameForBackfill(gameName, gameUrl, resultValue)) return null;
 
     const result = String(resultValue || '').toLowerCase();
+    const xiangqiSource = this.inferXiangqiTurnoverSourceForBackfill(result, amount, gameName, gameUrl);
+    if (xiangqiSource) return xiangqiSource;
+
     const excludedKeywords = [
       'lottery',
       'wheel',
@@ -1701,6 +1704,72 @@ export class CurrencyService {
     return amount > 0 ? 'game_settle' : 'game_spend';
   }
 
+  private inferXiangqiTurnoverSourceForBackfill(
+    normalizedResult: string,
+    amount: number,
+    gameName?: any,
+    gameUrl?: any,
+  ) {
+    const text = `${gameName || ''} ${gameUrl || ''} ${normalizedResult || ''}`.toLowerCase();
+    const isXiangqi =
+      text.includes('xiangqi') ||
+      text.includes('象棋') ||
+      text.includes('象雀') ||
+      text.includes('对弈');
+    if (!isXiangqi) return null;
+
+    if (amount < 0) {
+      if (
+        normalizedResult.includes('retract') ||
+        normalizedResult.includes('undo') ||
+        normalizedResult.includes('悔棋')
+      ) {
+        return 'xiangqi_retract';
+      }
+      if (
+        normalizedResult.includes('hint') ||
+        normalizedResult.includes('tips') ||
+        normalizedResult.includes('提示')
+      ) {
+        return 'xiangqi_hint';
+      }
+      if (normalizedResult.includes('entry') || normalizedResult.includes('入场')) {
+        return 'xiangqi_entry';
+      }
+      if (
+        normalizedResult.includes('bet') ||
+        normalizedResult.includes('stake') ||
+        normalizedResult.includes('wager') ||
+        normalizedResult.includes('下注') ||
+        normalizedResult.includes('投注')
+      ) {
+        return 'xiangqi_bet';
+      }
+      return 'xiangqi_spend';
+    }
+
+    if (amount > 0) {
+      if (normalizedResult.includes('study') || normalizedResult.includes('canju')) {
+        return 'xiangqi_study_level';
+      }
+      if (
+        normalizedResult.includes('settle') ||
+        normalizedResult.includes('win') ||
+        normalizedResult.includes('reward') ||
+        normalizedResult.includes('earn') ||
+        normalizedResult.includes('结算') ||
+        normalizedResult.includes('获胜') ||
+        normalizedResult.includes('奖励') ||
+        normalizedResult.includes('收益')
+      ) {
+        return 'xiangqi_settle';
+      }
+      return 'xiangqi_earn';
+    }
+
+    return null;
+  }
+
   private async withUserDisplayInfo<T extends { userId: number }>(items: T[]) {
     const ids = Array.from(
       new Set(items.map((item) => Number(item.userId)).filter((id) => id > 0)),
@@ -1744,6 +1813,8 @@ export class CurrencyService {
       `NOT EXISTS (
         SELECT 1 FROM game_turnover_records t
         WHERE t.biz_id IN (
+          CONCAT('game_record:', gr.id, ':earned'),
+          CONCAT('game_record:', gr.id, ':spent'),
           CONCAT('legacy_game_record:', gr.id, ':earned'),
           CONCAT('legacy_game_record:', gr.id, ':spent')
         )

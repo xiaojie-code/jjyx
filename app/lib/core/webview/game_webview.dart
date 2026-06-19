@@ -68,6 +68,16 @@ class GameWebViewState extends State<GameWebView> {
   String _errorMessage = '';
   final List<String> _debugLogs = [];
   bool _debugPanelExpanded = false;
+
+  bool get _forceNoCacheForBundledGame {
+    final url = widget.gameUrl.toLowerCase();
+    return url.contains('/uploads/games/xiangqi/') ||
+        url.contains('/assets/h5-games/xiangqi/') ||
+        url.contains('/h5-games/xiangqi/') ||
+        url.contains('/uploads/games/saima2/') ||
+        url.contains('/assets/h5-games/saima2/') ||
+        url.contains('/h5-games/saima2/');
+  }
   int _loadProgress = 0;
   int _lastLoggedProgress = -10;
 
@@ -233,9 +243,24 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
                     javaScriptEnabled: true,
                     domStorageEnabled: true,
                     databaseEnabled: true,
-                    clearCache: false,
-                    cacheEnabled: true,
-                    cacheMode: CacheMode.LOAD_DEFAULT,
+                    allowFileAccess: true,
+                    allowContentAccess: true,
+                    allowFileAccessFromFileURLs: true,
+                    allowUniversalAccessFromFileURLs: true,
+                    clearCache: _forceNoCacheForBundledGame,
+                    cacheEnabled: !_forceNoCacheForBundledGame,
+                    cacheMode: _forceNoCacheForBundledGame
+                        ? CacheMode.LOAD_NO_CACHE
+                        : CacheMode.LOAD_DEFAULT,
+                    mixedContentMode:
+                        MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+                    webViewAssetLoader: WebViewAssetLoader(
+                      domain: 'appassets.androidplatform.net',
+                      httpAllowed: true,
+                      pathHandlers: [
+                        AssetsPathHandler(path: '/assets/'),
+                      ],
+                    ),
                     mediaPlaybackRequiresUserGesture: false,
                     allowsInlineMediaPlayback: true,
                     userAgent:

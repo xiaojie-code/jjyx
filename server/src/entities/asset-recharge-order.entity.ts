@@ -28,6 +28,20 @@ export class AssetRechargeOrder {
   @Column({ type: 'decimal', precision: 18, scale: 2, nullable: true, name: 'confirmed_amount', comment: '管理员确认到账金额' })
   confirmedAmount: number | null;
 
+  @Column({ type: 'varchar', length: 20, nullable: true, name: 'referral_code', comment: '充值时填写的推荐码' })
+  @Index()
+  referralCode: string | null;
+
+  @Column({ type: 'int', nullable: true, name: 'referrer_user_id', comment: '推荐码所属用户ID' })
+  @Index()
+  referrerUserId: number | null;
+
+  @Column({ type: 'decimal', precision: 18, scale: 6, default: 0, name: 'referral_reward_amount', comment: '推荐收益金额' })
+  referralRewardAmount: number;
+
+  @Column({ type: 'int', nullable: true, name: 'referral_reward_record_id', comment: '推荐收益流水ID' })
+  referralRewardRecordId: number | null;
+
   @Column({ type: 'tinyint', default: 0, comment: '0待审核 1已确认 2已驳回' })
   @Index()
   status: number;

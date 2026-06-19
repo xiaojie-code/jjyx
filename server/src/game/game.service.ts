@@ -24,13 +24,15 @@ type LotteryPrize = {
 const LOTTERY_TEAM_UNIT_SIZE = 10;
 const LOTTERY_MAJOR_INTERVAL = 200;
 const HORSE_BET_OPTIONS = [10, 50, 100, 300, 500, 1000];
+const XIANQI_STUDY_MAX_LEVEL = 240;
+const XIANQI_STUDY_REWARD_STEP = 10;
 const DEFAULT_GAME_ENTRIES = [
   {
     name: '象雀对弈',
     description: '象雀双玩，搓麻对弈两不误',
-    gameUrl: '/uploads/games/snake/index.html',
+    gameUrl: '/uploads/games/xiangqi/index.html',
     sortOrder: 10,
-    orientation: 'landscape',
+    orientation: 'portrait',
     keywords: ['蛇', '贪吃蛇', '麻象', '象雀', '对弈', 'snake', 'ssdzz'],
   },
   {
@@ -51,11 +53,11 @@ const DEFAULT_GAME_ENTRIES = [
   },
   {
     name: '赛马',
-    description: '投注竞猜，极速开赛',
-    gameUrl: '/uploads/games/saima/index.html',
+    description: '多人在线赛马竞技',
+    gameUrl: '/uploads/games/saima2/index.html',
     sortOrder: 40,
     orientation: 'landscape',
-    keywords: ['赛马', 'saima', 'horse', 'smyx'],
+    keywords: ['赛马游戏2', '赛马2', 'saima2', 'horse2'],
   },
   {
     name: '幸运转盘',
@@ -96,6 +98,16 @@ export class GameService {
     return `${game?.name || ''} ${game?.description || ''} ${game?.gameUrl || ''}`.toLowerCase();
   }
 
+  private isXiangqiGame(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
+    const text = this.gameSearchText(game);
+    return (
+      text.includes('xiangqi') ||
+      text.includes('象棋') ||
+      text.includes('象雀') ||
+      text.includes('对弈')
+    );
+  }
+
   private isPlaceholderGameUrl(value?: string | null) {
     const text = String(value || '').trim().toLowerCase();
     return !text || text === '__placeholder__' || text.includes('/__placeholder__');
@@ -134,6 +146,14 @@ export class GameService {
       Number(game.sortOrder) !== entry.sortOrder ||
       game.orientation !== entry.orientation
     );
+  }
+
+  private isLegacyHorseGame(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
+    const gameUrl = String(game?.gameUrl || '').toLowerCase();
+    if (gameUrl.includes('/uploads/games/saima2/') || gameUrl.includes('\\uploads\\games\\saima2\\')) {
+      return false;
+    }
+    return gameUrl.includes('/uploads/games/saima/') || gameUrl.includes('\\uploads\\games\\saima\\');
   }
 
   private async ensureDefaultGameEntries() {
@@ -178,6 +198,17 @@ export class GameService {
         this.isPlaceholderGameUrl(game.gameUrl),
     );
     for (const game of danglingPlaceholders) {
+      game.status = 2;
+      await this.gameRepo.save(game);
+    }
+
+    const legacyHorseGames = games.filter(
+      (game) =>
+        !repairedIds.has(game.id) &&
+        game.status === 1 &&
+        this.isLegacyHorseGame(game),
+    );
+    for (const game of legacyHorseGames) {
       game.status = 2;
       await this.gameRepo.save(game);
     }
@@ -842,16 +873,23 @@ export class GameService {
     const pointsEarned = Number(data.pointsEarned || 0);
     const game = await this.gameRepo.findOne({ where: { id: gameId } });
     await this.dataSource.transaction(async (mgr) => {
+      const gameRecord = await mgr.save(GameRecord, mgr.create(GameRecord, {
+        userId, gameId, result: `rank_${data.rank || 0}`,
+        pointsEarned: Number.isFinite(pointsEarned) && pointsEarned > 0 ? pointsEarned : 0, pointsSpent: 0,
+      }));
+
       // 发放积分
       if (Number.isFinite(pointsEarned) && pointsEarned > 0) {
         const changed = await this.currencyService.changeCurrency(userId, 'points', pointsEarned, 'game_earn', '游戏奖励', mgr);
         if (!this.isLotteryGame(game)) {
+          const sourceType = this.isXiangqiGame(game) ? 'xiangqi_settle' : 'game_settle';
           await this.currencyService.recordGameTurnover({
             userId,
             gameId,
-            sourceType: 'game_settle',
+            sourceType,
             amount: pointsEarned,
             currencyLogId: changed.logId,
+            bizId: `game_record:${gameRecord.id}:earned`,
             description: '游戏奖励',
             manager: mgr,
           });
@@ -871,11 +909,6 @@ export class GameService {
           }
         }
       }
-      // 记录游戏记录
-      await mgr.save(GameRecord, mgr.create(GameRecord, {
-        userId, gameId, result: `rank_${data.rank || 0}`,
-        pointsEarned: Number.isFinite(pointsEarned) && pointsEarned > 0 ? pointsEarned : 0, pointsSpent: 0,
-      }));
     });
 
     return { message: '结算成功' };
@@ -890,6 +923,9 @@ export class GameService {
     if (this.isLotteryGame(game)) return null;
 
     const result = String(recordResult || '').toLowerCase();
+    const xiangqiSource = this.resolveXiangqiTurnoverSource(result, amount, game);
+    if (xiangqiSource) return xiangqiSource;
+
     const excludedKeywords = [
       'lottery',
       'wheel',
@@ -958,6 +994,286 @@ export class GameService {
     return amount > 0 ? 'game_settle' : 'game_spend';
   }
 
+  private resolveXiangqiTurnoverSource(
+    normalizedResult: string,
+    amount: number,
+    game?: Pick<Game, 'name' | 'gameUrl'> | null,
+  ): string | null {
+    const isXiangqi =
+      this.isXiangqiGame(game) ||
+      normalizedResult.includes('xiangqi') ||
+      normalizedResult.includes('象棋') ||
+      normalizedResult.includes('象雀');
+    if (!isXiangqi) return null;
+
+    if (amount < 0) {
+      if (
+        normalizedResult.includes('retract') ||
+        normalizedResult.includes('undo') ||
+        normalizedResult.includes('悔棋')
+      ) {
+        return 'xiangqi_retract';
+      }
+      if (
+        normalizedResult.includes('hint') ||
+        normalizedResult.includes('tips') ||
+        normalizedResult.includes('提示')
+      ) {
+        return 'xiangqi_hint';
+      }
+      if (normalizedResult.includes('entry') || normalizedResult.includes('入场')) {
+        return 'xiangqi_entry';
+      }
+      if (
+        normalizedResult.includes('bet') ||
+        normalizedResult.includes('stake') ||
+        normalizedResult.includes('wager') ||
+        normalizedResult.includes('下注') ||
+        normalizedResult.includes('投注')
+      ) {
+        return 'xiangqi_bet';
+      }
+      return 'xiangqi_spend';
+    }
+
+    if (amount > 0) {
+      if (normalizedResult.includes('study') || normalizedResult.includes('canju')) {
+        return 'xiangqi_study_level';
+      }
+      if (
+        normalizedResult.includes('settle') ||
+        normalizedResult.includes('win') ||
+        normalizedResult.includes('reward') ||
+        normalizedResult.includes('earn') ||
+        normalizedResult.includes('结算') ||
+        normalizedResult.includes('获胜') ||
+        normalizedResult.includes('奖励') ||
+        normalizedResult.includes('收益')
+      ) {
+        return 'xiangqi_settle';
+      }
+      return 'xiangqi_earn';
+    }
+
+    return null;
+  }
+
+  private describeGamePointsChange(
+    game: Pick<Game, 'name' | 'gameUrl'> | null,
+    amount: number,
+    reason: string,
+  ) {
+    const normalizedReason = reason.toLowerCase();
+    const gameName = game?.name || (this.isXiangqiGame(game) ? '象棋' : '游戏');
+    if (normalizedReason.includes('saima2') || normalizedReason.includes('horse2')) {
+      if (normalizedReason.includes('bet') || normalizedReason.includes('stake') || normalizedReason.includes('wager')) {
+        return '赛马下注';
+      }
+      if (
+        normalizedReason.includes('settle') ||
+        normalizedReason.includes('win') ||
+        normalizedReason.includes('reward') ||
+        normalizedReason.includes('earn')
+      ) {
+        return '赛马获胜派奖';
+      }
+      return amount < 0 ? '赛马积分消费' : '赛马积分奖励';
+    }
+    if (this.isXiangqiGame(game) || normalizedReason.includes('xiangqi')) {
+      if (normalizedReason.includes('study') || normalizedReason.includes('canju')) return '象棋名局研习奖励';
+      if (normalizedReason.includes('retract') || normalizedReason.includes('undo')) return '象棋悔棋';
+      if (normalizedReason.includes('hint') || normalizedReason.includes('tips')) return '象棋提示';
+      if (normalizedReason.includes('settle') || normalizedReason.includes('win')) return '象棋结算奖励';
+      if (normalizedReason.includes('reward') || normalizedReason.includes('earn')) return '象棋奖励';
+      return amount < 0 ? '象棋积分消费' : '象棋积分奖励';
+    }
+    return reason || `${gameName}${amount < 0 ? '消费' : '获得'}积分`;
+  }
+
+  private async ensureXiangqiStudyRewardsTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS xiangqi_study_rewards (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL COMMENT '用户ID',
+        game_id INT NOT NULL COMMENT '游戏ID',
+        level_no INT NOT NULL COMMENT '象棋名局研习关卡，1-240',
+        reward_amount DECIMAL(18, 6) NOT NULL COMMENT '首次通关奖励积分',
+        currency_log_id BIGINT NULL COMMENT '对应currency_logs.id',
+        game_record_id BIGINT NULL COMMENT '对应game_records.id',
+        turnover_id BIGINT NULL COMMENT '对应game_turnover_records.id',
+        request_id VARCHAR(100) NULL COMMENT '客户端请求ID',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_xiangqi_study_reward_user_game_level (user_id, game_id, level_no),
+        INDEX idx_xiangqi_study_reward_user (user_id, game_id),
+        INDEX idx_xiangqi_study_reward_currency_log (currency_log_id),
+        INDEX idx_xiangqi_study_reward_game_record (game_record_id),
+        INDEX idx_xiangqi_study_reward_turnover (turnover_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='象棋名局研习首次通关奖励';
+    `);
+  }
+
+  private async ensureGamePointsChangeRequestsTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS game_points_change_requests (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL COMMENT '用户ID',
+        game_id INT NOT NULL COMMENT '游戏ID',
+        request_id VARCHAR(128) NOT NULL COMMENT '客户端请求ID',
+        amount DECIMAL(18, 6) NOT NULL COMMENT '请求积分变动',
+        reason VARCHAR(100) NULL COMMENT '请求原因',
+        currency_log_id BIGINT NULL COMMENT '对应currency_logs.id',
+        game_record_id BIGINT NULL COMMENT '对应game_records.id',
+        turnover_id BIGINT NULL COMMENT '对应game_turnover_records.id',
+        balance DECIMAL(18, 6) NULL COMMENT '处理后余额',
+        response_amount DECIMAL(18, 6) NULL COMMENT '实际返回变动',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_game_points_change_request (user_id, game_id, request_id),
+        INDEX idx_game_points_change_request_user (user_id, game_id),
+        INDEX idx_game_points_change_request_currency_log (currency_log_id),
+        INDEX idx_game_points_change_request_game_record (game_record_id),
+        INDEX idx_game_points_change_request_turnover (turnover_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='H5游戏积分变动幂等请求';
+    `);
+  }
+
+  private resolveXiangqiStudyLevel(
+    data: { amount?: number; reason?: string; [key: string]: any },
+    game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null,
+  ) {
+    const reason = String(data.reason || '').trim();
+    const normalizedReason = reason.toLowerCase();
+    const normalizedModule = String(data.module || data.mode || '').trim().toLowerCase();
+    const explicitLevel = Number(data.levelNo ?? data.studyLevel ?? data.level);
+    const reasonMatch =
+      normalizedReason.match(/xiangqi_(?:study|canju)_level[_:-]?(\d+)/) ||
+      normalizedReason.match(/xiangqi_(?:study|canju)[_:-]?(\d+)/) ||
+      normalizedReason.match(/(?:study|canju)_level[_:-]?(\d+)/);
+    const isStudyReward =
+      normalizedReason.includes('xiangqi_study') ||
+      normalizedReason.includes('xiangqi_canju') ||
+      (normalizedReason.includes('xiangqi') && normalizedReason.includes('study')) ||
+      normalizedModule === 'study' ||
+      normalizedModule === 'canju' ||
+      !!reasonMatch;
+
+    if (!isStudyReward) return null;
+    if (!this.isXiangqiGame(game) && !normalizedReason.includes('xiangqi')) return null;
+
+    const rawLevel = Number.isFinite(explicitLevel) && explicitLevel > 0
+      ? explicitLevel
+      : reasonMatch
+        ? Number(reasonMatch[1])
+        : NaN;
+    const level = Math.floor(rawLevel);
+    if (!Number.isFinite(level) || level < 1 || level > XIANQI_STUDY_MAX_LEVEL) {
+      throw new BadRequestException('名局研习关卡不正确');
+    }
+    return level;
+  }
+
+  private async awardXiangqiStudyLevel(
+    userId: number,
+    gameId: number,
+    level: number,
+    data: { amount?: number; reason?: string; [key: string]: any },
+  ) {
+    await this.ensureXiangqiStudyRewardsTable();
+
+    const amount = level * XIANQI_STUDY_REWARD_STEP;
+    const recordResult = `xiangqi_study_level_${level}`;
+    const description = `象棋名局研习第${level}关首次通关奖励`;
+    const requestId = data.requestId || data.roundId || recordResult;
+    let balance = 0;
+    let duplicate = false;
+
+    await this.dataSource.transaction(async (mgr) => {
+      await mgr.query(
+        `INSERT IGNORE INTO xiangqi_study_rewards
+           (user_id, game_id, level_no, reward_amount, request_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [userId, gameId, level, amount, String(requestId || '').slice(0, 100)],
+      );
+
+      const rows = await mgr.query(
+        `SELECT id, currency_log_id AS currencyLogId
+         FROM xiangqi_study_rewards
+         WHERE user_id = ? AND game_id = ? AND level_no = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [userId, gameId, level],
+      );
+      const rewardRow = rows?.[0];
+      if (!rewardRow) {
+        throw new BadRequestException('名局研习奖励记录不可用');
+      }
+
+      if (rewardRow.currencyLogId) {
+        duplicate = true;
+        return;
+      }
+
+      const changed = await this.currencyService.changeCurrency(
+        userId,
+        'points',
+        amount,
+        'game_earn',
+        description,
+        mgr,
+      );
+      balance = changed.after;
+
+      const gameRecord = await mgr.save(GameRecord, mgr.create(GameRecord, {
+        userId,
+        gameId,
+        result: recordResult,
+        pointsEarned: amount,
+        pointsSpent: 0,
+      }));
+
+      const turnover = await this.currencyService.recordGameTurnover({
+        userId,
+        gameId,
+        sourceType: 'xiangqi_study_level',
+        amount,
+        currencyLogId: changed.logId,
+        bizId: `xiangqi_study:${userId}:${gameId}:${level}`,
+        description,
+        manager: mgr,
+      });
+
+      await mgr.query(
+        `UPDATE xiangqi_study_rewards
+         SET currency_log_id = ?, game_record_id = ?, turnover_id = ?, reward_amount = ?, request_id = ?
+         WHERE id = ?`,
+        [
+          changed.logId,
+          gameRecord.id,
+          turnover?.turnoverId || null,
+          amount,
+          String(requestId || '').slice(0, 100),
+          rewardRow.id,
+        ],
+      );
+    });
+
+    if (duplicate) {
+      const current = await this.currencyService.getBalance(userId);
+      balance = current.points;
+    }
+
+    return {
+      message: duplicate ? '名局研习该关奖励已领取' : '积分变动成功',
+      points: balance,
+      balance,
+      amount: duplicate ? 0 : amount,
+      duplicate,
+      studyLevel: level,
+      rewardAmount: amount,
+    };
+  }
+
   private mergeSnakeSkinList(rawSkinList: any, skinId: number) {
     const owned = new Set<number>([1]);
     if (typeof rawSkinList === 'string' && rawSkinList.trim()) {
@@ -1024,10 +1340,16 @@ export class GameService {
     if (!game) throw new NotFoundException('游戏不存在');
     if (game.status !== 1) throw new BadRequestException('游戏维护中');
 
+    const xiangqiStudyLevel = amount > 0 ? this.resolveXiangqiStudyLevel(data, game) : null;
+    if (xiangqiStudyLevel) {
+      return this.awardXiangqiStudyLevel(userId, gameId, xiangqiStudyLevel, data);
+    }
+
     const logType = amount < 0 ? 'game_spend' : 'game_earn';
     const reason = String(data.reason || '').trim();
     const recordResult = (reason || logType).slice(0, 50);
-    const description = reason || `${game.name}${amount < 0 ? '消费' : '获得'}积分`;
+    const description = this.describeGamePointsChange(game, amount, reason);
+    const requestId = String(data.requestId || '').trim().slice(0, 128);
 
     const snakeSkinId = this.parseSnakeSkinId(data.skinId);
     const shouldPersistSnakeSkin =
@@ -1037,6 +1359,10 @@ export class GameService {
 
     if (shouldPersistSnakeSkin) {
       await this.ensureSnakeSavesTable();
+    }
+
+    if (requestId) {
+      await this.ensureGamePointsChangeRequestsTable();
     }
 
     if (amount > 0 && recordResult === 'fishing_daily_login') {
@@ -1050,12 +1376,57 @@ export class GameService {
           balance: current.points,
           amount: 0,
           duplicate: true,
+          requestId: requestId || undefined,
         };
       }
     }
 
     let balance = 0;
+    let duplicate = false;
+    let responseAmount = amount;
     await this.dataSource.transaction(async (mgr) => {
+      let requestRow: any = null;
+      if (requestId) {
+        await mgr.query(
+          `INSERT IGNORE INTO game_points_change_requests
+             (user_id, game_id, request_id, amount, reason)
+           VALUES (?, ?, ?, ?, ?)`,
+          [userId, gameId, requestId, amount, recordResult],
+        );
+
+        const rows = await mgr.query(
+          `SELECT id,
+                  amount,
+                  currency_log_id AS currencyLogId,
+                  balance,
+                  response_amount AS responseAmount
+           FROM game_points_change_requests
+           WHERE user_id = ? AND game_id = ? AND request_id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [userId, gameId, requestId],
+        );
+        requestRow = rows?.[0];
+        if (!requestRow) {
+          throw new BadRequestException('积分请求记录不可用');
+        }
+
+        const existingAmount = Number(requestRow.amount);
+        if (Number.isFinite(existingAmount) && Math.abs(existingAmount - amount) > 0.000001) {
+          throw new BadRequestException('重复请求的积分金额不一致');
+        }
+
+        if (requestRow.currencyLogId) {
+          duplicate = true;
+          responseAmount = Number(requestRow.responseAmount ?? requestRow.amount ?? amount);
+          const storedBalance = Number(requestRow.balance);
+          if (Number.isFinite(storedBalance)) {
+            balance = storedBalance;
+          }
+          return;
+        }
+      }
+
       const changed = await this.currencyService.changeCurrency(
         userId,
         'points',
@@ -1066,7 +1437,7 @@ export class GameService {
       );
       balance = changed.after;
 
-      await mgr.save(GameRecord, mgr.create(GameRecord, {
+      const gameRecord = await mgr.save(GameRecord, mgr.create(GameRecord, {
         userId,
         gameId,
         result: recordResult,
@@ -1083,25 +1454,52 @@ export class GameService {
       }
 
       const turnoverSource = this.resolveTurnoverSource(recordResult, amount, game);
+      let turnoverId: number | null = null;
       if (turnoverSource) {
-        await this.currencyService.recordGameTurnover({
+        const actionSide = amount > 0 ? 'earned' : 'spent';
+        const providedBizId = data.requestId || data.roundId || data.roomId;
+        const turnover = await this.currencyService.recordGameTurnover({
           userId,
           gameId,
           sourceType: turnoverSource,
           amount: Math.abs(amount),
           currencyLogId: changed.logId,
-          bizId: data.requestId || data.roundId || data.roomId || null,
+          bizId: providedBizId
+            ? `${turnoverSource}:${providedBizId}:${actionSide}`
+            : `game_record:${gameRecord.id}:${actionSide}`,
           description,
           manager: mgr,
         });
+        turnoverId = turnover?.turnoverId ? Number(turnover.turnoverId) : null;
+      }
+
+      if (requestId && requestRow) {
+        await mgr.query(
+          `UPDATE game_points_change_requests
+           SET currency_log_id = ?,
+               game_record_id = ?,
+               turnover_id = ?,
+               balance = ?,
+               response_amount = ?,
+               updated_at = NOW()
+           WHERE id = ?`,
+          [changed.logId, gameRecord.id, turnoverId, balance, responseAmount, requestRow.id],
+        );
       }
     });
 
+    if (duplicate && !Number.isFinite(balance)) {
+      const current = await this.currencyService.getBalance(userId);
+      balance = current.points;
+    }
+
     return {
-      message: '积分变动成功',
+      message: duplicate ? '积分变动已处理' : '积分变动成功',
       points: balance,
       balance,
-      amount,
+      amount: responseAmount,
+      duplicate,
+      requestId: requestId || undefined,
     };
   }
 

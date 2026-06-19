@@ -1,3 +1,8 @@
 server/uploads/games/**/Build/*.data.gz filter=lfs diff=lfs merge=lfs -text
 server/uploads/games/**/Build/*.wasm.gz filter=lfs diff=lfs merge=lfs -text
 server/uploads/games/**/*.unityweb filter=lfs diff=lfs merge=lfs -text
+server/uploads/games/**/Build/*.data filter=lfs diff=lfs merge=lfs -text
+server/uploads/games/**/Build/*.wasm filter=lfs diff=lfs merge=lfs -text
+app/android/app/src/main/assets/h5-games/**/Build/*.data filter=lfs diff=lfs merge=lfs -text
+app/android/app/src/main/assets/h5-games/**/Build/*.wasm filter=lfs diff=lfs merge=lfs -text
+app/android/app/src/main/assets/h5-games/**/*.unityweb filter=lfs diff=lfs merge=lfs -text

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../constants/app_constants.dart';
 import '../network/api_client.dart';
 import '../network/api_endpoints.dart';
 
@@ -36,6 +37,9 @@ class GameUserInfo {
         'balance': points,
         'coin': points,
         'gameId': gameId,
+        'apiBaseUrl': AppConstants.apiBaseUrl,
+        'wsUrl': AppConstants.wsUrl,
+        'saimaWsUrl': AppConstants.saimaWsUrl,
       };
 }
 
@@ -103,6 +107,9 @@ class JSBridge {
     required bool success,
     required double balance,
     required double amount,
+    double? requestedAmount,
+    bool duplicate = false,
+    String? message,
     String? requestId,
   }) async {
     final data = {
@@ -111,7 +118,14 @@ class JSBridge {
       'points': balance,
       'coin': balance,
       'amount': amount,
+      'duplicate': duplicate,
     };
+    if (requestedAmount != null) {
+      data['requestedAmount'] = requestedAmount;
+    }
+    if (message != null && message.isNotEmpty) {
+      data['message'] = message;
+    }
     if (requestId != null && requestId.isNotEmpty) {
       data['requestId'] = requestId;
     }
@@ -245,11 +259,16 @@ class JSBridge {
       final balance = (result?['balance'] as num?)?.toDouble() ??
           (result?['points'] as num?)?.toDouble() ??
           0;
+      final actualAmount = (result?['amount'] as num?)?.toDouble() ?? amount;
+      final duplicate = result?['duplicate'] == true;
       _latestPoints = balance;
       await sendPointsChangeResult(
         success: true,
         balance: balance,
-        amount: amount,
+        amount: actualAmount,
+        requestedAmount: amount,
+        duplicate: duplicate,
+        message: result?['message']?.toString(),
         requestId: requestId,
       );
     } catch (e) {

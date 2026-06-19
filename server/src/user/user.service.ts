@@ -506,12 +506,20 @@ export class UserService implements OnModuleInit {
         activationAmount,
       });
 
+      let inviteCode = user.inviteCode;
+      if (!inviteCode) {
+        do {
+          inviteCode = this.generateInviteCode();
+        } while (await manager.findOne(User, { where: { inviteCode } }));
+      }
+
       // 激活用户 + 发放持股数
       await manager.update(User, userId, {
         isActivated: true,
         shares: activationReward.shares,
         activationAmount,
         activatedCdkId: cdk.id,
+        inviteCode,
       });
 
       // 激活送10000积分

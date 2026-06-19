@@ -21,7 +21,7 @@ export class AssetInterestRecord {
   @Column({ type: 'decimal', precision: 18, scale: 2, name: 'base_principal', comment: '当日计息本金' })
   basePrincipal: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 6, name: 'annual_rate', comment: '年化利率，默认0.65' })
+  @Column({ type: 'decimal', precision: 10, scale: 6, name: 'annual_rate', comment: '月利率，默认0.054' })
   annualRate: number;
 
   @Column({ type: 'decimal', precision: 18, scale: 6, name: 'interest_amount', comment: '当日生成利息' })

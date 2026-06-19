@@ -24,6 +24,21 @@ class AppConstants {
     defaultValue: apiBaseUrl,
   );
 
+  static const String saimaWsUrlOverride = String.fromEnvironment(
+    'SAIMA_WS_URL',
+    defaultValue: '',
+  );
+
+  static String get saimaWsUrl {
+    if (saimaWsUrlOverride.isNotEmpty) return saimaWsUrlOverride;
+    final apiUri = Uri.tryParse(apiBaseUrl);
+    if (apiUri != null && apiUri.host.isNotEmpty) {
+      final protocol = apiUri.scheme == 'https' ? 'wss' : 'ws';
+      return '$protocol://${apiUri.host}:8080';
+    }
+    return 'ws://localhost:8080';
+  }
+
   /// Token 存储 key
   static const String tokenKey = 'auth_token';
   static const String refreshTokenKey = 'refresh_token';

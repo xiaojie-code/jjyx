@@ -32,6 +32,15 @@
           <el-table-column label="确认金额" width="120">
             <template #default="{ row }">{{ row.confirmedAmount ? `¥${money(row.confirmedAmount)}` : '-' }}</template>
           </el-table-column>
+          <el-table-column label="推荐码" width="120">
+            <template #default="{ row }">{{ row.referralCode || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="推荐人" min-width="140">
+            <template #default="{ row }">{{ row.referrerNickname || row.referrerAccount || row.referrerUserId || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="推荐收益" width="120">
+            <template #default="{ row }">{{ Number(row.referralRewardAmount || 0) > 0 ? `¥${money(row.referralRewardAmount, 6)}` : '-' }}</template>
+          </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ statusText(row.status) }}</el-tag></template>
           </el-table-column>
@@ -46,6 +55,47 @@
               </template>
               <span v-else>-</span>
             </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+      <el-tab-pane label="推荐收益" name="referralRewards">
+        <div class="toolbar">
+          <el-input
+            v-model="referralKeyword"
+            placeholder="推荐人/充值用户/推荐码/订单ID"
+            clearable
+            style="width: 260px"
+            @keyup.enter="loadReferralRewards"
+          />
+          <el-button type="primary" @click="loadReferralRewards">查询</el-button>
+          <el-button @click="resetReferralRewards">重置</el-button>
+          <el-button @click="loadReferralRewards">刷新</el-button>
+        </div>
+        <el-table :data="referralRewards" v-loading="loading" stripe>
+          <el-table-column prop="id" label="ID" width="80" />
+          <el-table-column label="推荐人" min-width="150">
+            <template #default="{ row }">{{ row.referrerNickname || row.referrerAccount || row.referrerUserId }}</template>
+          </el-table-column>
+          <el-table-column label="充值用户" min-width="150">
+            <template #default="{ row }">{{ row.rechargeUserNickname || row.rechargeUserAccount || row.rechargeUserId }}</template>
+          </el-table-column>
+          <el-table-column prop="rechargeOrderId" label="充值订单" width="100" />
+          <el-table-column prop="referralCode" label="推荐码" width="120" />
+          <el-table-column label="充值金额" width="120">
+            <template #default="{ row }">¥{{ money(row.rechargeAmount) }}</template>
+          </el-table-column>
+          <el-table-column label="收益比例" width="100">
+            <template #default="{ row }">{{ money(Number(row.rewardRate || 0) * 100) }}%</template>
+          </el-table-column>
+          <el-table-column label="收益金额" width="130">
+            <template #default="{ row }">¥{{ money(row.rewardAmount, 6) }}</template>
+          </el-table-column>
+          <el-table-column label="充值信息" min-width="180">
+            <template #default="{ row }">{{ row.rechargeRealName || '-' }} / {{ row.rechargePhone || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="到账时间" width="170">
+            <template #default="{ row }">{{ time(row.createdAt) }}</template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
@@ -124,6 +174,9 @@
           <el-table-column label="利息" width="150">
             <template #default="{ row }">¥{{ money(row.interestBalance, 6) }}</template>
           </el-table-column>
+          <el-table-column label="累计推荐收益" width="150">
+            <template #default="{ row }">¥{{ money(row.totalReferralReward, 6) }}</template>
+          </el-table-column>
           <el-table-column label="总额" width="150">
             <template #default="{ row }">¥{{ money(Number(row.principalBalance || 0) + Number(row.interestBalance || 0), 6) }}</template>
           </el-table-column>
@@ -143,6 +196,13 @@
     <el-dialog v-model="rechargeDialogVisible" title="确认资产包充值" width="420px">
       <el-form label-width="100px">
         <el-form-item label="申请金额">¥{{ money(currentRecharge?.amount) }}</el-form-item>
+        <el-form-item label="推荐码" v-if="currentRecharge?.referralCode">{{ currentRecharge.referralCode }}</el-form-item>
+        <el-form-item label="推荐人" v-if="currentRecharge?.referrerUserId">
+          {{ currentRecharge.referrerNickname || currentRecharge.referrerAccount || currentRecharge.referrerUserId }}
+        </el-form-item>
+        <el-form-item label="预计收益" v-if="currentRecharge?.referrerUserId">
+          ¥{{ money(Number(confirmedAmount || 0) * 0.1, 6) }}
+        </el-form-item>
         <el-form-item label="确认金额">
           <el-input-number v-model="confirmedAmount" :min="500" :max="100000" :step="100" style="width: 180px" />
         </el-form-item>
@@ -168,9 +228,11 @@ const loading = ref(false)
 const recharges = ref<any[]>([])
 const withdrawals = ref<any[]>([])
 const accounts = ref<any[]>([])
+const referralRewards = ref<any[]>([])
 const rechargeKeyword = ref('')
 const withdrawKeyword = ref('')
 const accountKeyword = ref('')
+const referralKeyword = ref('')
 const rechargeStatus = ref<any>('')
 const withdrawStatus = ref<any>('')
 const rechargeDialogVisible = ref(false)
@@ -255,6 +317,18 @@ async function loadAccounts() {
   }
 }
 
+async function loadReferralRewards() {
+  loading.value = true
+  try {
+    const res: any = await request.get('/assets/referral-rewards', {
+      params: { keyword: referralKeyword.value || undefined },
+    })
+    referralRewards.value = res.list || []
+  } finally {
+    loading.value = false
+  }
+}
+
 function resetRecharges() {
   rechargeKeyword.value = ''
   rechargeStatus.value = ''
@@ -272,9 +346,15 @@ function resetAccounts() {
   loadAccounts()
 }
 
+function resetReferralRewards() {
+  referralKeyword.value = ''
+  loadReferralRewards()
+}
+
 function reload() {
   if (activeTab.value === 'recharges') loadRecharges()
   else if (activeTab.value === 'withdrawals') loadWithdrawals()
+  else if (activeTab.value === 'referralRewards') loadReferralRewards()
   else loadAccounts()
 }
 
@@ -298,6 +378,7 @@ async function confirmRecharge() {
   ElMessage.success('已确认到账')
   rechargeDialogVisible.value = false
   loadRecharges()
+  if (activeTab.value === 'referralRewards') loadReferralRewards()
 }
 
 async function reviewRecharge(row: any, action: 'reject') {
@@ -329,6 +410,7 @@ onMounted(loadRecharges)
 }
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 12px;
 }

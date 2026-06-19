@@ -9,6 +9,7 @@ app/.dart_tool/
 app/.packages
 app/.flutter-plugins-dependencies
 app/android/.gradle-user-home/
+app/assets/h5-games/
 
 # Server
 server/uploads/avatars/
@@ -32,6 +33,7 @@ Thumbs.db
 *.zip
 .codex/
 runtime-logs/
+.tmp/
 dump.rdb
 build-log.txt
 *.bak-*

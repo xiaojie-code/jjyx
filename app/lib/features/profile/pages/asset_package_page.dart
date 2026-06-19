@@ -18,6 +18,7 @@ class _AssetPackagePageState extends ConsumerState<AssetPackagePage> {
   Map<String, dynamic> _overview = {};
   List<Map<String, dynamic>> _recharges = [];
   List<Map<String, dynamic>> _withdrawals = [];
+  List<Map<String, dynamic>> _referralRewards = [];
 
   @override
   void initState() {
@@ -32,11 +33,13 @@ class _AssetPackagePageState extends ConsumerState<AssetPackagePage> {
       final overview = await api.get<Map<String, dynamic>>(ApiEndpoints.assetOverview);
       final recharges = await api.get<List<dynamic>>(ApiEndpoints.assetRecharges);
       final withdrawals = await api.get<List<dynamic>>(ApiEndpoints.assetWithdrawals);
+      final referralRewards = await api.get<List<dynamic>>(ApiEndpoints.assetReferralRewards);
       if (!mounted) return;
       setState(() {
         _overview = overview ?? {};
         _recharges = (recharges ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
         _withdrawals = (withdrawals ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
+        _referralRewards = (referralRewards ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
         _loading = false;
       });
     } catch (e) {
@@ -62,6 +65,11 @@ class _AssetPackagePageState extends ConsumerState<AssetPackagePage> {
     final floored = (n * 100).floor() / 100;
     if (floored % 1 == 0) return floored.toInt().toString();
     return floored.toStringAsFixed(2);
+  }
+
+  String _rateText(dynamic value) {
+    final rate = _num(value) * 100;
+    return '${rate.toStringAsFixed(rate % 1 == 0 ? 0 : 1)}%';
   }
 
   String _time(dynamic value) {
@@ -91,6 +99,11 @@ class _AssetPackagePageState extends ConsumerState<AssetPackagePage> {
       builder: (_) => _AssetWithdrawDialog(available: total),
     );
     if (ok == true) _loadAll();
+  }
+
+  Future<void> _copyInviteCode(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (mounted) Toast.success(context, '推荐码已复制');
   }
 
   @override
@@ -160,10 +173,33 @@ class _AssetPackagePageState extends ConsumerState<AssetPackagePage> {
           Row(
             children: [
               Expanded(child: _miniStat('本金', '¥ ${_amount(_overview['principalBalance'])}')),
-              Expanded(child: _miniStat('利息', '¥ ${_amountFloor2(_overview['interestBalance'])}')),
-              Expanded(child: _miniStat('年利率', '${(_num(_overview['annualRate']) * 100).toStringAsFixed(0)}%')),
+              Expanded(child: _miniStat('收益', '¥ ${_amountFloor2(_overview['interestBalance'])}')),
+              Expanded(child: _miniStat('月利率', _rateText(_overview['monthlyRate'] ?? _overview['annualRate']))),
             ],
           ),
+          if ((_overview['inviteCode']?.toString() ?? '').isNotEmpty) ...[
+            const SizedBox(height: 14),
+            InkWell(
+              onTap: () => _copyInviteCode(_overview['inviteCode'].toString()),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F8FF),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.confirmation_number_outlined, size: 18, color: Colors.blue),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text('我的推荐码：${_overview['inviteCode']}', style: const TextStyle(fontWeight: FontWeight.w600))),
+                    const Icon(Icons.copy, size: 16, color: Colors.grey),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -204,6 +240,7 @@ class _AssetPackagePageState extends ConsumerState<AssetPackagePage> {
     final records = <Map<String, dynamic>>[
       ..._recharges.map((e) => {...e, '_kind': 'recharge'}),
       ..._withdrawals.map((e) => {...e, '_kind': 'withdraw'}),
+      ..._referralRewards.map((e) => {...e, '_kind': 'referral'}),
     ]..sort((a, b) => _time(b['createdAt']).compareTo(_time(a['createdAt'])));
 
     return _section(
@@ -218,23 +255,33 @@ class _AssetPackagePageState extends ConsumerState<AssetPackagePage> {
   }
 
   Widget _recordTile(Map<String, dynamic> item) {
-    final isRecharge = item['_kind'] == 'recharge';
+    final kind = item['_kind']?.toString() ?? '';
+    final isRecharge = kind == 'recharge';
+    final isReferral = kind == 'referral';
     final status = int.tryParse(item['status']?.toString() ?? '0') ?? 0;
-    final color = status == 0 ? Colors.orange : status == 1 ? Colors.green : Colors.red;
-    final statusText = status == 0 ? '待处理' : status == 1 ? '已通过' : '已驳回';
-    final amount = isRecharge ? item['amount'] : item['amount'];
+    final color = isReferral ? Colors.green : status == 0 ? Colors.orange : status == 1 ? Colors.green : Colors.red;
+    final statusText = isReferral ? '已到账' : status == 0 ? '待处理' : status == 1 ? '已通过' : '已驳回';
+    final amount = isReferral ? item['rewardAmount'] : item['amount'];
+    final title = isReferral
+        ? '推荐收益 +¥ ${_amountFloor2(amount)}'
+        : isRecharge
+            ? '资产包充值 ¥ ${_amount(amount)}'
+            : '资产包提现 ¥ ${_amount(amount)}';
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
       decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade100))),
       child: Row(
         children: [
-          Icon(isRecharge ? Icons.add_circle_outline : Icons.remove_circle_outline, color: isRecharge ? Colors.green : Colors.blue),
+          Icon(
+            isReferral ? Icons.card_giftcard_outlined : isRecharge ? Icons.add_circle_outline : Icons.remove_circle_outline,
+            color: isReferral || isRecharge ? Colors.green : Colors.blue,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(isRecharge ? '资产包充值 ¥ ${_amount(amount)}' : '资产包提现 ¥ ${_amount(amount)}'),
+                Text(title),
                 const SizedBox(height: 2),
                 Text(_time(item['createdAt']), style: const TextStyle(fontSize: 12, color: Colors.grey)),
               ],
@@ -284,6 +331,7 @@ class _AssetRechargeDialogState extends ConsumerState<_AssetRechargeDialog> {
   final _amountCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
+  final _referralCodeCtrl = TextEditingController();
   bool _submitting = false;
   String _qrcode = '';
   String _payeeName = '';
@@ -299,6 +347,7 @@ class _AssetRechargeDialogState extends ConsumerState<_AssetRechargeDialog> {
     _amountCtrl.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _referralCodeCtrl.dispose();
     super.dispose();
   }
 
@@ -334,10 +383,12 @@ class _AssetRechargeDialogState extends ConsumerState<_AssetRechargeDialog> {
     }
     setState(() => _submitting = true);
     try {
+      final referralCode = _referralCodeCtrl.text.trim().toUpperCase();
       await ref.read(apiClientProvider).post(ApiEndpoints.assetRecharge, data: {
         'amount': amount,
         'realName': _nameCtrl.text.trim(),
         'phone': _phoneCtrl.text.trim(),
+        if (referralCode.isNotEmpty) 'referralCode': referralCode,
       });
       if (!mounted) return;
       Toast.success(context, '充值申请已提交');
@@ -387,6 +438,13 @@ class _AssetRechargeDialogState extends ConsumerState<_AssetRechargeDialog> {
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               maxLength: 11,
               decoration: const InputDecoration(labelText: '手机号', counterText: ''),
+            ),
+            TextField(
+              controller: _referralCodeCtrl,
+              textCapitalization: TextCapitalization.characters,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]'))],
+              maxLength: 20,
+              decoration: const InputDecoration(labelText: '推荐码（选填）', counterText: ''),
             ),
           ],
         ),

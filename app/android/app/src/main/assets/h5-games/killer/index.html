@@ -1,0 +1,1324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=yes"
+    />
+    <title>Killer</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="TemplateData/style.css" />
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #unity-container {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #unity-container.unity-desktop,
+      #unity-container.unity-mobile {
+        left: 0;
+        top: 0;
+        transform: none;
+      }
+
+      #unity-canvas {
+        display: block;
+        width: 100vw;
+        height: 100dvh;
+        min-height: 100vh;
+        background: #000;
+        object-fit: fill;
+        touch-action: none;
+      }
+
+      #unity-loading-bar {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        z-index: 4;
+        transform: translate(-50%, -50%);
+      }
+
+      #unity-footer {
+        display: none;
+      }
+
+      #unity-warning {
+        position: absolute;
+        left: 50%;
+        top: 16px;
+        z-index: 10;
+        max-width: calc(100% - 32px);
+        transform: translateX(-50%);
+      }
+
+      .killer-mode-panel,
+      .killer-wait-panel,
+      .killer-round-panel,
+      .killer-result-panel {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.78);
+        color: #fff;
+        font-family: Arial, "Microsoft YaHei", sans-serif;
+      }
+
+      .killer-mode-panel {
+        z-index: 20;
+      }
+
+      .killer-wait-panel {
+        z-index: 18;
+        text-align: center;
+      }
+
+      .killer-round-panel {
+        z-index: 17;
+        text-align: center;
+      }
+
+      .killer-result-panel {
+        z-index: 19;
+        text-align: center;
+      }
+
+      .killer-mode-panel[hidden],
+      .killer-wait-panel[hidden],
+      .killer-round-panel[hidden],
+      .killer-result-panel[hidden],
+      .killer-bet-tip[hidden],
+      .killer-mode-badge[hidden] {
+        display: none;
+      }
+
+      .killer-mode-dialog,
+      .killer-wait-box,
+      .killer-round-box,
+      .killer-result-box {
+        width: min(420px, 100%);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 8px;
+        padding: 22px;
+        background: rgba(18, 24, 38, 0.96);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+      }
+
+      .killer-wait-box {
+        width: min(360px, 100%);
+      }
+
+      .killer-round-box,
+      .killer-result-box {
+        width: min(390px, 100%);
+      }
+
+      .killer-mode-title,
+      .killer-wait-title,
+      .killer-round-title,
+      .killer-result-title {
+        margin: 0 0 8px;
+        font-size: 22px;
+        font-weight: 700;
+      }
+
+      .killer-wait-title {
+        font-size: 20px;
+      }
+
+      .killer-mode-subtitle,
+      .killer-wait-text,
+      .killer-round-text,
+      .killer-result-text,
+      .killer-result-list {
+        margin: 0 0 18px;
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .killer-wait-text {
+        margin-bottom: 0;
+      }
+
+      .killer-result-list {
+        max-height: 116px;
+        margin-bottom: 16px;
+        overflow: auto;
+        text-align: left;
+      }
+
+      .killer-round-button,
+      .killer-result-button {
+        min-width: 156px;
+        min-height: 46px;
+        border: 0;
+        border-radius: 8px;
+        background: #f5c84c;
+        color: #16130a;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .killer-result-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+      }
+
+      .killer-result-button.is-secondary {
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+      }
+
+      .killer-round-button:disabled {
+        opacity: 0.58;
+      }
+
+      .killer-bet-tip {
+        position: fixed;
+        left: 50%;
+        top: 74px;
+        z-index: 16;
+        width: min(360px, calc(100% - 32px));
+        transform: translateX(-50%);
+        border: 1px solid rgba(245, 200, 76, 0.45);
+        border-radius: 8px;
+        padding: 10px 14px;
+        background: rgba(15, 23, 42, 0.92);
+        color: #fff;
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+        font: 14px/1.45 Arial, "Microsoft YaHei", sans-serif;
+        text-align: center;
+      }
+
+      .killer-auth-mask {
+        position: fixed;
+        inset: 0;
+        z-index: 19;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #142b4d;
+        color: #fff;
+        font: 16px/1.5 Arial, "Microsoft YaHei", sans-serif;
+        text-align: center;
+      }
+
+      .killer-auth-mask[hidden] {
+        display: none;
+      }
+
+      .killer-auth-box {
+        width: min(320px, calc(100% - 48px));
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 8px;
+        padding: 18px;
+        background: rgba(15, 23, 42, 0.88);
+      }
+
+      .killer-mode-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .killer-mode-button {
+        min-height: 52px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .killer-mode-button.is-active,
+      .killer-mode-button:active {
+        border-color: #f5c84c;
+        background: #f5c84c;
+        color: #16130a;
+      }
+
+      .killer-mode-badge {
+        position: fixed;
+        right: 10px;
+        top: 10px;
+        z-index: 12;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 8px;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.5);
+        color: #fff;
+        font: 12px/1 Arial, "Microsoft YaHei", sans-serif;
+      }
+
+    </style>
+  </head>
+  <body>
+    <div id="unity-container" class="unity-mobile">
+      <canvas id="unity-canvas" width="750" height="1334" tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"></div>
+      <div id="unity-footer">
+        <div id="unity-webgl-logo"></div>
+        <div id="unity-fullscreen-button"></div>
+      </div>
+    </div>
+
+    <div id="killer-mode-panel" class="killer-mode-panel" hidden>
+      <div class="killer-mode-dialog">
+        <h1 class="killer-mode-title">选择对战模式</h1>
+        <p class="killer-mode-subtitle">AI 对战会加入机器人陪玩，多人对战会匹配 APP 内在线用户。</p>
+        <div class="killer-mode-actions">
+          <button class="killer-mode-button" type="button" data-killer-mode="ai">AI 对战</button>
+          <button class="killer-mode-button" type="button" data-killer-mode="real">多人对战</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="killer-mode-badge" class="killer-mode-badge" hidden></div>
+
+    <div id="killer-wait-panel" class="killer-wait-panel" hidden>
+      <div class="killer-wait-box">
+        <h2 class="killer-wait-title">等待玩家</h2>
+        <p id="killer-wait-text" class="killer-wait-text">当前只有 1 名玩家，至少 2 名玩家后开始对局。</p>
+      </div>
+    </div>
+
+    <div id="killer-round-panel" class="killer-round-panel" hidden>
+      <div class="killer-round-box">
+        <h2 id="killer-round-title" class="killer-round-title">准备开始</h2>
+        <p id="killer-round-text" class="killer-round-text">每局需要重新下注，未下注会默认 100 积分随机房间。</p>
+        <button id="killer-round-button" class="killer-round-button" type="button">开始本局</button>
+      </div>
+    </div>
+
+    <div id="killer-bet-tip" class="killer-bet-tip" hidden></div>
+
+    <div id="killer-result-panel" class="killer-result-panel" hidden>
+      <div class="killer-result-box">
+        <h2 id="killer-result-title" class="killer-result-title">本局结算</h2>
+        <p id="killer-result-text" class="killer-result-text"></p>
+        <div id="killer-result-list" class="killer-result-list"></div>
+        <div class="killer-result-actions">
+          <button id="killer-result-button" class="killer-result-button" type="button">再来一局</button>
+          <button id="killer-home-button" class="killer-result-button is-secondary" type="button">返回首页</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="killer-auth-mask" class="killer-auth-mask">
+      <div id="killer-auth-box" class="killer-auth-box">正在进入游戏...</div>
+    </div>
+    <script>
+      var container = document.querySelector("#unity-container");
+      var canvas = document.querySelector("#unity-canvas");
+      var loadingBar = document.querySelector("#unity-loading-bar");
+      var progressBarFull = document.querySelector("#unity-progress-bar-full");
+      var warningBanner = document.querySelector("#unity-warning");
+      var modePanel = document.querySelector("#killer-mode-panel");
+      var modeBadge = document.querySelector("#killer-mode-badge");
+      var waitPanel = document.querySelector("#killer-wait-panel");
+      var waitText = document.querySelector("#killer-wait-text");
+      var roundPanel = document.querySelector("#killer-round-panel");
+      var roundTitle = document.querySelector("#killer-round-title");
+      var roundText = document.querySelector("#killer-round-text");
+      var roundButton = document.querySelector("#killer-round-button");
+      var betTip = document.querySelector("#killer-bet-tip");
+      var resultPanel = document.querySelector("#killer-result-panel");
+      var resultTitle = document.querySelector("#killer-result-title");
+      var resultText = document.querySelector("#killer-result-text");
+      var resultList = document.querySelector("#killer-result-list");
+      var resultButton = document.querySelector("#killer-result-button");
+      var homeButton = document.querySelector("#killer-home-button");
+      var authMask = document.querySelector("#killer-auth-mask");
+      var authBox = document.querySelector("#killer-auth-box");
+      var appInitData = readInitialAppInitData();
+      var unityStarted = false;
+      var killerSocket = null;
+      var killerTipTimer = 0;
+      var killerAuthFallbackTimer = 0;
+      var killerSocketConnectTimer = 0;
+      var killerRoundWaitTimer = 0;
+      var killerAppLoginSent = false;
+      var killerAppLoggedIn = false;
+      var killerRoundReady = false;
+      var killerRoundRunning = false;
+      var killerCurrentExpect = "";
+      var killerHasBet = false;
+      var killerBetCoin = 0;
+      var killerBetSmallRoom = 0;
+      var killerSession = {
+        uid: "",
+        token: "",
+        account: "",
+        roomid: "",
+        mode: "ai"
+      };
+      var killerBetAmounts = [100, 500, 1000, 3000, 5000, 10000];
+      var killerSelectedBetAmount = 100;
+      var killerUnityBetDropdownReady = false;
+      var killerLegacyBetAmountMap = {
+        1: 100,
+        10: 100,
+        50: 500,
+        300: 3000,
+        2000: 3000
+      };
+      window.__KILLER_BET_AMOUNTS__ = killerBetAmounts;
+      var killerAssetVersion = "20260618-killer-raw-unity-assets-ws2";
+      var killerUnityUiPatchTimer = 0;
+      var killerUnityUiPatchStopTimer = 0;
+
+      function normalizeKillerMode(mode) {
+        var text = String(mode || "").toLowerCase();
+        return text === "real" || text === "pvp" || text === "online" ? "real" : "ai";
+      }
+
+      function safeObject(value) {
+        return value && typeof value === "object" ? value : {};
+      }
+
+      function readAppInitFromQuery() {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          var account = params.get("appAccount") || params.get("account") || params.get("username") || "";
+          var userId = params.get("appUserId") || params.get("userId") || params.get("uid") || "";
+          if (!account && !userId) return {};
+          return {
+            userId: userId ? parseInt(userId, 10) || 0 : 0,
+            account: account,
+            nickname: params.get("nickname") || params.get("appNickname") || account,
+            avatar: params.get("avatar") || params.get("appAvatar") || "",
+            points: parseFloat(params.get("points") || params.get("appPoints") || params.get("balance") || "0") || 0
+          };
+        } catch (error) {
+          return {};
+        }
+      }
+
+      function normalizeAppInitData(data) {
+        data = safeObject(data);
+        var normalized = Object.assign({}, data);
+        if (typeof normalized.userId === "undefined" && typeof normalized.user_id !== "undefined") {
+          normalized.userId = normalized.user_id;
+        }
+        if (typeof normalized.account === "undefined") {
+          normalized.account = normalized.username || normalized.phone || "";
+        }
+        return normalized;
+      }
+
+      function readInitialAppInitData() {
+        return normalizeAppInitData(
+          Object.assign(
+            {},
+            readAppInitFromQuery(),
+            safeObject(window.__GAME_APP_INIT__),
+            safeObject(window.__KILLER_APP_INIT__)
+          )
+        );
+      }
+
+      function getKillerModeFromQuery() {
+        var params = new URLSearchParams(window.location.search);
+        var mode = params.get("mode") || params.get("matchMode") || params.get("gameMode");
+        return mode ? normalizeKillerMode(mode) : "";
+      }
+
+      function getKillerMode() {
+        return normalizeKillerMode(window.__KILLER_MODE__ || localStorage.getItem("killer_match_mode") || "ai");
+      }
+
+      function normalizeKillerBetAmount(coin) {
+        var rawText = String(coin == null ? "" : coin).trim().toLowerCase();
+        if (rawText === "1w" || rawText === "1\u4e07") {
+          killerSelectedBetAmount = 10000;
+          return 10000;
+        }
+        var amount = parseInt(rawText, 10);
+        if (!isFinite(amount)) return 100;
+        if (killerBetAmounts.indexOf(amount) !== -1) {
+          killerSelectedBetAmount = amount;
+          return amount;
+        }
+        var mapped = killerLegacyBetAmountMap[amount];
+        if (mapped && killerBetAmounts.indexOf(mapped) !== -1) {
+          killerSelectedBetAmount = mapped;
+          return mapped;
+        }
+        killerSelectedBetAmount = amount;
+        return amount;
+      }
+
+      function formatKillerBetAmount(amount) {
+        return amount === 10000 ? "1w" : String(amount);
+      }
+
+      function fitKillerUnityCanvas() {
+        if (!canvas) return;
+
+        var viewportWidth = Math.max(
+          document.documentElement.clientWidth || 0,
+          window.innerWidth || 0
+        );
+        var viewportHeight = Math.max(
+          document.documentElement.clientHeight || 0,
+          window.innerHeight || 0
+        );
+        if (!viewportWidth || !viewportHeight) return;
+
+        canvas.width = 750;
+        canvas.height = 1334;
+        canvas.style.width = viewportWidth + "px";
+        canvas.style.height = viewportHeight + "px";
+        canvas.style.maxWidth = "100vw";
+        canvas.style.maxHeight = "100dvh";
+        canvas.style.minWidth = "100vw";
+        canvas.style.minHeight = "100vh";
+        canvas.style.objectFit = "fill";
+      }
+
+      window.addEventListener("resize", fitKillerUnityCanvas);
+      window.addEventListener("orientationchange", function () {
+        setTimeout(fitKillerUnityCanvas, 120);
+      });
+      fitKillerUnityCanvas();
+
+      function applyKillerModeToUrl(mode) {
+        try {
+          var url = new URL(window.location.href);
+          url.searchParams.set("mode", normalizeKillerMode(mode));
+          history.replaceState(null, "", url.toString());
+        } catch (error) {}
+      }
+
+      function setKillerMode(mode) {
+        window.__KILLER_MODE__ = normalizeKillerMode(mode);
+        localStorage.setItem("killer_match_mode", window.__KILLER_MODE__);
+        applyKillerModeToUrl(window.__KILLER_MODE__);
+        killerSession.mode = window.__KILLER_MODE__;
+        modeBadge.textContent = window.__KILLER_MODE__ === "real" ? "多人对战" : "AI 对战";
+        modeBadge.hidden = false;
+      }
+
+      function showWaiting(info) {
+        if (getKillerMode() !== "real") return;
+        var online = info && typeof info.online !== "undefined" ? info.online : 1;
+        var minPlayers = info && info.min_players ? info.min_players : 2;
+        waitText.textContent = "当前 " + online + " 名玩家，至少 " + minPlayers + " 名玩家后开始对局。";
+        waitPanel.hidden = false;
+      }
+
+      function hideWaiting() {
+        waitPanel.hidden = true;
+      }
+
+      function showAuthMask(text) {
+        authBox.textContent = text || "正在进入游戏...";
+        authMask.hidden = false;
+      }
+
+      function hideAuthMask() {
+        clearTimeout(killerAuthFallbackTimer);
+        authMask.hidden = true;
+      }
+
+      function appAccount() {
+        return String(appInitData.account || appInitData.username || appInitData.phone || "").trim();
+      }
+
+      function hasAppInitUser() {
+        return !!(appInitData && (appAccount() || appInitData.userId || appInitData.user_id));
+      }
+
+      function updateKillerSession(data, trustIdentity) {
+        if (!data || typeof data !== "object") return;
+        if (trustIdentity !== false) {
+          if (typeof data.uid !== "undefined") killerSession.uid = data.uid;
+          else if (typeof data.id !== "undefined") killerSession.uid = data.id;
+          if (typeof data.token !== "undefined") killerSession.token = data.token;
+          if (typeof data.account !== "undefined") killerSession.account = data.account;
+          if (typeof data.username !== "undefined") killerSession.account = data.username;
+        }
+        if (typeof data.roomid !== "undefined") killerSession.roomid = data.roomid;
+        if (typeof data.mode !== "undefined") killerSession.mode = normalizeKillerMode(data.mode);
+      }
+
+      function mergeLatestAppInitData() {
+        appInitData = normalizeAppInitData(
+          Object.assign(
+            {},
+            appInitData,
+            readAppInitFromQuery(),
+            safeObject(window.__GAME_APP_INIT__),
+            safeObject(window.__KILLER_APP_INIT__)
+          )
+        );
+        return appInitData;
+      }
+
+      function buildAppLoginData() {
+        mergeLatestAppInitData();
+        var account = appAccount();
+        return {
+          userId: appInitData.userId || appInitData.user_id || 0,
+          account: account,
+          nickname: appInitData.nickname || account,
+          avatar: appInitData.avatar || "",
+          appToken: appInitData.token || "",
+          points: appInitData.points || appInitData.balance || appInitData.coin || 0,
+          mode: getKillerMode()
+        };
+      }
+
+      function showBetTip(text, timeout) {
+        betTip.textContent = text;
+        betTip.hidden = false;
+        clearTimeout(killerTipTimer);
+        if (timeout !== 0) {
+          killerTipTimer = setTimeout(function () {
+            betTip.hidden = true;
+          }, timeout || 3200);
+        }
+      }
+
+      function hideBetTip() {
+        clearTimeout(killerTipTimer);
+        betTip.hidden = true;
+      }
+
+      function resetKillerBetState(expect) {
+        killerCurrentExpect = expect ? String(expect) : "";
+        killerHasBet = false;
+        killerBetCoin = 0;
+        killerBetSmallRoom = 0;
+      }
+
+      function syncKillerBetState(info) {
+        info = safeObject(info);
+        if (typeof info.expect !== "undefined" && String(info.expect) !== String(killerCurrentExpect || "")) {
+          resetKillerBetState(info.expect);
+        }
+        if (info.has_bet === true || info.default_bet === true || parseInt(info.coin, 10) > 0) {
+          killerHasBet = true;
+          if (parseInt(info.coin, 10) > 0) killerBetCoin = parseInt(info.coin, 10);
+          if (parseInt(info.smallroomid, 10) > 0) killerBetSmallRoom = parseInt(info.smallroomid, 10);
+        } else if (info.has_bet === false) {
+          killerHasBet = false;
+          killerBetCoin = 0;
+          killerBetSmallRoom = 0;
+        }
+      }
+
+      function showRoundPanel(title, text, buttonText, disabled) {
+        roundTitle.textContent = title || "准备开始";
+        roundText.textContent = text || "每局需要重新下注，未下注会默认 100 积分随机房间。";
+        roundButton.textContent = buttonText || "开始本局";
+        roundButton.disabled = !!disabled;
+        resultPanel.hidden = true;
+        roundPanel.hidden = false;
+      }
+
+      function hideRoundPanel() {
+        roundPanel.hidden = true;
+      }
+
+      function clearRoundWaitFallback() {
+        clearTimeout(killerRoundWaitTimer);
+        killerRoundWaitTimer = 0;
+      }
+
+      function scheduleRoundWaitFallback(seconds) {
+        clearRoundWaitFallback();
+        var waitMs = Math.max(8, parseInt(seconds, 10) || 60) * 1000 + 5000;
+        killerRoundWaitTimer = setTimeout(function () {
+          if (!killerRoundRunning && killerRoundReady) {
+            showRoundPanel("重新确认本局", "等待开始超时，正在重新确认本局状态。", "已准备", true);
+            sendKillerAction("start_round");
+          }
+        }, waitMs);
+      }
+
+      function sendKillerAction(action, data) {
+        if (!killerSocket || killerSocket.readyState !== WebSocket.OPEN) {
+          showRoundPanel("连接中", "游戏连接还没准备好，请稍等。", "开始本局", true);
+          return false;
+        }
+
+        var payload = Object.assign({}, killerSession, data || {});
+        payload.mode = getKillerMode();
+        updateKillerSession(payload);
+        killerSocket.send(JSON.stringify({ action: action, data: payload }));
+        return true;
+      }
+
+      function sendAppLogin() {
+        if (killerAppLoginSent || killerAppLoggedIn) return;
+        if (!killerSocket || killerSocket.readyState !== WebSocket.OPEN) return;
+        mergeLatestAppInitData();
+        if (!hasAppInitUser()) return;
+
+        killerAppLoginSent = true;
+        showAuthMask("正在同步APP账号...");
+        killerSocket.send(JSON.stringify({
+          action: "app_login",
+          data: buildAppLoginData()
+        }));
+        clearTimeout(killerAuthFallbackTimer);
+        killerAuthFallbackTimer = setTimeout(function () {
+          if (!killerAppLoggedIn) {
+            killerAppLoginSent = false;
+            showAuthMask("大逃杀账号同步超时，请退出后重新进入。");
+          }
+        }, 10000);
+      }
+
+      function tryAutoLogin() {
+        if (killerAppLoggedIn) return;
+        mergeLatestAppInitData();
+        if (hasAppInitUser()) {
+          sendAppLogin();
+          return;
+        }
+
+        clearTimeout(killerAuthFallbackTimer);
+        killerAuthFallbackTimer = setTimeout(function () {
+          mergeLatestAppInitData();
+          if (hasAppInitUser()) {
+            sendAppLogin();
+            return;
+          }
+          if (!killerAppLoggedIn && !hasAppInitUser()) {
+            showAuthMask("未获取到APP登录信息，请返回APP重新进入游戏。");
+          }
+        }, 8000);
+      }
+
+      function requestKillerBalance() {
+        if (!killerSocket || killerSocket.readyState !== WebSocket.OPEN) return;
+        if (!killerSession.uid || !killerSession.token) return;
+        killerSocket.send(JSON.stringify({
+          action: "getbalance",
+          data: {
+            uid: killerSession.uid,
+            token: killerSession.token,
+            mode: getKillerMode()
+          }
+        }));
+      }
+
+      function startKillerRound() {
+        if (!killerSession.uid || !killerSession.token || !killerSession.roomid) {
+          showRoundPanel("正在进入房间", "房间信息还没同步完成，请稍等。", "开始本局", true);
+          return;
+        }
+
+        clearRoundWaitFallback();
+        killerRoundReady = true;
+        resetKillerBetState("");
+        showRoundPanel("准备中", "正在确认本局状态。", "已准备", true);
+        sendKillerAction("start_round");
+      }
+
+      function exitKillerHome() {
+        var message = { action: "exitGame", data: { source: "killer_result" } };
+        try {
+          if (window.flutter_inappwebview && typeof window.flutter_inappwebview.callHandler === "function") {
+            window.flutter_inappwebview.callHandler("gameMessage", JSON.stringify(message));
+            return;
+          }
+        } catch (error) {}
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(message, "*");
+          }
+        } catch (error) {}
+        try {
+          history.back();
+        } catch (error) {}
+      }
+
+      function sendKillerUnityMessage(target, method, value) {
+        try {
+          if (!window.unityInstance || typeof window.unityInstance.SendMessage !== "function") return false;
+          if (typeof value === "undefined") {
+            window.unityInstance.SendMessage(target, method);
+          } else {
+            window.unityInstance.SendMessage(target, method, value);
+          }
+          return true;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function patchKillerUnityBetDropdown() {
+        if (!window.unityInstance) return false;
+        var ok = false;
+        if (!killerUnityBetDropdownReady) {
+          ok = sendKillerUnityMessage("Dropdown", "ClearDropDownOptionsData") || ok;
+          killerBetAmounts.forEach(function (amount) {
+            ok = sendKillerUnityMessage("Dropdown", "AddDropDownOptionsData", formatKillerBetAmount(amount)) || ok;
+          });
+          ok = sendKillerUnityMessage("Dropdown", "SetDropDownItemValue", "0") || ok;
+          ok = sendKillerUnityMessage("Dropdown", "SetDropDownCaptionText", "100") || ok;
+          ok = sendKillerUnityMessage("Dropdown", "SetDropDownLabelText", "100") || ok;
+          killerUnityBetDropdownReady = ok || killerUnityBetDropdownReady;
+        }
+        ok = sendKillerUnityMessage("Dropdown", "SetDropDownAddListener") || ok;
+        ok = sendKillerUnityMessage("Button", "SetButtonText", "投入积分") || ok;
+        ok = sendKillerUnityMessage("Button", "SetText", "投入积分") || ok;
+        ok = sendKillerUnityMessage("BtnAddCoin", "SetButtonText", "投入积分") || ok;
+        ok = sendKillerUnityMessage("BtnAddCoin", "SetText", "投入积分") || ok;
+        ok = sendKillerUnityMessage("TextAddCoin", "SetText", "投入积分") || ok;
+        return ok;
+      }
+
+      function scheduleKillerUnityUiPatch() {
+        startKillerUnityUiPatchLoop(45000);
+      }
+
+      function startKillerUnityUiPatchLoop(durationMs) {
+        clearInterval(killerUnityUiPatchTimer);
+        clearTimeout(killerUnityUiPatchStopTimer);
+        patchKillerUnityBetDropdown();
+        killerUnityUiPatchTimer = setInterval(patchKillerUnityBetDropdown, 500);
+        killerUnityUiPatchStopTimer = setTimeout(function () {
+          clearInterval(killerUnityUiPatchTimer);
+          killerUnityUiPatchTimer = 0;
+        }, durationMs || 30000);
+      }
+
+      function currentUserIdText() {
+        return String(killerSession.uid || "");
+      }
+
+      function findSelfSettlement(list) {
+        var uid = currentUserIdText();
+        if (!uid || !Array.isArray(list)) return null;
+        for (var i = 0; i < list.length; i += 1) {
+          if (String(list[i] && list[i].uid) === uid) {
+            return list[i];
+          }
+        }
+        return null;
+      }
+
+      function formatPlayerName(player) {
+        return (player && (player.nickname || player.username || ("玩家" + player.uid))) || "";
+      }
+
+      function formatKillerPercent(value) {
+        var percent = Math.max(0, Number(value) || 0) * 100;
+        return percent.toFixed(2).replace(/\.?0+$/, "") + "%";
+      }
+
+      function showResult(info) {
+        var settlement = (info && info.settlement) || {};
+        var winners = settlement.winners || [];
+        var losers = settlement.losers || [];
+        var selfSettlement = (info && info.self_settlement) || settlement.self_settlement || null;
+        var selfStatus = parseInt(selfSettlement && selfSettlement.status, 10) || 0;
+        var selfWin = selfStatus === 1 ? selfSettlement : findSelfSettlement(winners);
+        var selfLose = selfStatus === 2 ? selfSettlement : findSelfSettlement(losers);
+        var killedName = settlement.killer_room_name || info.killer_room_name || ("房间 " + (info.killer_to_smallroomid || ""));
+        var share = parseInt(settlement.winner_share, 10) || 0;
+        var killedPool = parseInt(settlement.killed_room_pool, 10) || 0;
+        var hadBet = killerHasBet || !!selfSettlement || !!(info && info.self_has_bet);
+        var betCoin = parseInt((selfSettlement && selfSettlement.coin) || killerBetCoin, 10) || 0;
+
+        killerRoundReady = false;
+        killerRoundRunning = false;
+        resetKillerBetState("");
+        clearRoundWaitFallback();
+        hideWaiting();
+        hideBetTip();
+        hideRoundPanel();
+
+        if (selfWin) {
+          resultTitle.textContent = "本局胜利";
+          var selfCoin = parseInt(selfWin.coin, 10) || 0;
+          var selfBonus = Math.max(0, parseInt(selfWin.bonus, 10) || ((parseInt(selfWin.reward, 10) || 0) - selfCoin));
+          var survivorCoinTotal = parseInt(selfWin.survivor_coin_total, 10) || parseInt(settlement.survivor_coin_total, 10) || 0;
+          var investmentRatio = Number(selfWin.investment_ratio) || (survivorCoinTotal > 0 ? selfCoin / survivorCoinTotal : 0);
+          resultText.textContent =
+            "杀手进入 " + killedName + "。未被抓玩家投入共 " + survivorCoinTotal + " 积分，你投入 " + selfCoin + " 积分，占比 " + formatKillerPercent(investmentRatio) + "；被抓房间共 " + killedPool + " 积分，按比例分得 " + selfBonus + " 积分，加上投入本金，结算返还 " + selfWin.reward + " 积分，当前积分 " + selfWin.balance + "。";
+        } else if (selfLose) {
+          resultTitle.textContent = "本局淘汰";
+          resultText.textContent =
+            "杀手进入 " + killedName + "，你下注 " + selfLose.coin + " 积分，本局扣除已完成，当前积分 " + selfLose.balance + "。";
+        } else {
+          resultTitle.textContent = "本局结算";
+          resultText.textContent = hadBet
+            ? "杀手进入 " + killedName + "，已确认你本局下注" + (betCoin > 0 ? " " + betCoin + " 积分" : "") + "，但个人结算明细暂未同步，请刷新记录确认。"
+            : "杀手进入 " + killedName + "，暂未获取到本局个人结算明细，请刷新记录确认。";
+        }
+
+        resultList.textContent = "";
+        resultList.hidden = true;
+        resultPanel.hidden = false;
+      }
+
+      function outgoingKillerAction(payload) {
+        if (typeof payload !== "string") return "";
+        try {
+          var message = JSON.parse(payload);
+          return String((message && message.action) || "");
+        } catch (error) {
+          return "";
+        }
+      }
+
+      function shouldBlockKillerAction(action) {
+        return ["getchargerules", "charge", "getdrawrule", "withdraw", "userreg"].indexOf(action) !== -1;
+      }
+
+      function injectKillerMode(payload) {
+        if (typeof payload !== "string") return payload;
+        try {
+          var message = JSON.parse(payload);
+          var action = message && message.action;
+          if (action === "login" && hasAppInitUser()) {
+            message.action = "app_login";
+            message.data = Object.assign({}, message.data || {}, buildAppLoginData());
+            return JSON.stringify(message);
+          }
+          var actions = ["app_login", "enterroom", "start_round", "touzhu", "changesmallroom", "leaveroom", "getrecord", "getbalance"];
+          if (actions.indexOf(action) === -1) return payload;
+          if (!message.data || typeof message.data !== "object") {
+            message.data = {};
+          }
+          updateKillerSession(message.data);
+          if (action === "touzhu") {
+            var rawCoin = message.data.coin;
+            var normalizedCoin = normalizeKillerBetAmount(rawCoin);
+            if (parseInt(rawCoin, 10) !== normalizedCoin) {
+              message.data.raw_coin = rawCoin;
+              message.data.legacy_bet_mapped = true;
+            }
+            message.data.coin = normalizedCoin;
+          }
+          message.data.mode = getKillerMode();
+          return JSON.stringify(message);
+        } catch (error) {
+          return payload;
+        }
+      }
+
+      function handleKillerSocketMessage(event) {
+        if (typeof event.data !== "string") return;
+        try {
+          var message = JSON.parse(event.data);
+          var action = message && message.action;
+          var data = (message && message.data) || {};
+          var info = data.info || {};
+
+          if (info && typeof info === "object") {
+            updateKillerSession(info, false);
+          }
+
+          if (action === "returnlogin") {
+            if (data.code === 1 && info.userinfo) {
+              updateKillerSession(info.userinfo);
+              killerAppLoggedIn = true;
+              killerAppLoginSent = true;
+              hideAuthMask();
+              setTimeout(requestKillerBalance, 150);
+              return;
+            }
+
+            if (killerAppLoginSent) {
+              killerAppLoginSent = false;
+              showAuthMask(data.msg || "APP账号同步失败，请退出后重试。");
+            }
+            return;
+          }
+
+          if (action === "match_waiting") {
+            showWaiting(info);
+            return;
+          }
+
+          if (action === "returnenterroom") {
+            if (data.code === 1) {
+              scheduleKillerUnityUiPatch();
+              syncKillerBetState(info);
+              killerRoundReady = !!info.ready;
+              killerRoundRunning = info.round_status === "playing";
+              if (!killerRoundReady && !killerRoundRunning) {
+                if (normalizeKillerMode(info.mode || getKillerMode()) === "ai") {
+                  setTimeout(startKillerRound, 120);
+                } else {
+                  showRoundPanel("准备开始", "每局需要重新下注，未下注会默认 100 积分随机房间。", "开始本局", false);
+                }
+              } else if (info.mode === "real" && info.match_status === "waiting") {
+                showWaiting(info);
+              }
+            }
+            return;
+          }
+
+          if (action === "returnstart_round") {
+            if (data.code !== 1) {
+              killerRoundReady = false;
+              showRoundPanel("无法开始", data.msg || "当前暂时不能开始本局。", "重新开始", false);
+              return;
+            }
+
+            killerRoundReady = true;
+            syncKillerBetState(info);
+            if (info.round_status === "waiting_next") {
+              hideWaiting();
+              scheduleRoundWaitFallback(info.wait_seconds || info.time_left || 60);
+              showRoundPanel("已准备", "本局即将开始，开始后请重新下注。", "等待开始", true);
+            } else if (info.status === "waiting") {
+              clearRoundWaitFallback();
+              showWaiting(info);
+              showRoundPanel("等待玩家", "多人对战至少需要 2 名玩家准备。", "已准备", true);
+            } else {
+              killerRoundRunning = true;
+              if (typeof info.expect !== "undefined" && String(info.expect) !== String(killerCurrentExpect || "")) {
+                resetKillerBetState(info.expect || "");
+              }
+              syncKillerBetState(info);
+              clearRoundWaitFallback();
+              hideWaiting();
+              hideRoundPanel();
+              if (killerHasBet) {
+                showBetTip("已下注 " + (killerBetCoin || "") + " 积分，等待杀手出现。", 2600);
+              } else {
+                showBetTip("本局已开始，请选择房间下注。未下注会默认 100 积分随机房间。", 4200);
+              }
+            }
+            return;
+          }
+
+          if (action === "returntouzhu" && data.code === 1) {
+            syncKillerBetState(info);
+            showBetTip("下注成功：" + ((info && info.coin) || "") + " 积分", 2200);
+            return;
+          }
+
+          if (action === "returnchangesmallroom" && data.code === 1) {
+            syncKillerBetState(info);
+            showBetTip(info.has_bet === false ? "已选择房间，请投入积分。" : "房间已切换。", 1800);
+            return;
+          }
+
+          if (action === "game_start") {
+            killerRoundRunning = true;
+            if (typeof info.expect !== "undefined" && String(info.expect) !== String(killerCurrentExpect || "")) {
+              resetKillerBetState(info.expect || "");
+            }
+            syncKillerBetState(info);
+            clearRoundWaitFallback();
+            resultPanel.hidden = true;
+            scheduleKillerUnityUiPatch();
+            hideRoundPanel();
+            hideWaiting();
+            if (killerHasBet) {
+              showBetTip("已下注 " + (killerBetCoin || "") + " 积分，等待杀手出现。", 2600);
+            } else {
+              showBetTip("本局开始，请下注。", 2600);
+            }
+            return;
+          }
+
+          if (action === "bet_reminder" || action === "game_killer_10") {
+            if (killerHasBet) {
+              showBetTip("已下注 " + (killerBetCoin || "") + " 积分，房间即将锁定。", 2400);
+            } else {
+              showBetTip("最后 10 秒，请尽快下注；未下注将默认 100 积分随机房间。", 0);
+            }
+            return;
+          }
+
+          if (action === "default_touzhu") {
+            syncKillerBetState(info);
+            showBetTip("已默认下注 100 积分。", 2600);
+            return;
+          }
+
+          if (action === "default_touzhu_failed") {
+            killerRoundReady = false;
+            showRoundPanel("积分不足", "默认 100 积分下注失败，请补足积分后再开始。", "重新开始", false);
+            return;
+          }
+
+          if (action === "killerappear") {
+            hideBetTip();
+            return;
+          }
+
+          if (action === "result") {
+            showResult(info);
+            return;
+          }
+
+          if (["game_start", "killerappear", "result"].indexOf(action) !== -1) {
+            hideWaiting();
+          }
+        } catch (error) {}
+      }
+
+      window.onAppMessage = function onAppMessage(message) {
+        if (!message || message.action !== "init") return;
+        appInitData = normalizeAppInitData(Object.assign({}, appInitData, message.data || {}));
+        window.__GAME_APP_INIT__ = appInitData;
+        window.__KILLER_APP_INIT__ = appInitData;
+        updateKillerSession({
+          account: appAccount(),
+          username: appAccount()
+        });
+        tryAutoLogin();
+      };
+
+      function unityShowBanner(msg, type) {
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? "block" : "none";
+        }
+
+        var div = document.createElement("div");
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type === "error") {
+          div.style = "background: #dc2626; color: white; padding: 10px;";
+        } else {
+          div.style = "background: #facc15; color: #111827; padding: 10px;";
+          setTimeout(function () {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      function appendKillerModeToWebSocketUrl(url) {
+        var mode = getKillerMode();
+        try {
+          var wsUrl = new URL(String(url), window.location.href);
+          wsUrl.searchParams.set("mode", mode);
+          return wsUrl.toString();
+        } catch (error) {
+          var text = String(url || "");
+          var glue = text.indexOf("?") === -1 ? "?" : "&";
+          return text + glue + "mode=" + encodeURIComponent(mode);
+        }
+      }
+
+      function resolveWebSocketUrl() {
+        var params = new URLSearchParams(window.location.search);
+        var explicitUrl = params.get("ws") || params.get("wsUrl");
+        if (explicitUrl) return appendKillerModeToWebSocketUrl(explicitUrl);
+
+        var protocol = params.get("wsProtocol") || (location.protocol === "https:" ? "wss:" : "ws:");
+        var host = params.get("wsHost") || location.hostname || "127.0.0.1";
+        var port = params.get("wsPort") || "7272";
+        return appendKillerModeToWebSocketUrl(protocol + "//" + host + (port ? ":" + port : ""));
+      }
+
+      function rewriteKillerWebSocketUrl(url) {
+        var text = String(url || "");
+        if (!text || !/^wss?:\/\//i.test(text)) {
+          return resolveWebSocketUrl();
+        }
+        if (!/gamesocket\.wanyouyinqing\.com/i.test(text)) {
+          return appendKillerModeToWebSocketUrl(url);
+        }
+
+        var rewritten = resolveWebSocketUrl();
+        console.log("[killer] rewrite websocket:", text, "=>", rewritten);
+        return rewritten;
+      }
+
+      function clearKillerSocketConnectTimer() {
+        clearTimeout(killerSocketConnectTimer);
+        killerSocketConnectTimer = 0;
+      }
+
+      function showKillerConnectionError(reason) {
+        if (killerAppLoggedIn) return;
+        var url = "";
+        try {
+          url = resolveWebSocketUrl();
+        } catch (error) {}
+        console.error("[killer] websocket unavailable:", reason || "", url);
+        showAuthMask("大逃杀连接失败，请确认游戏服务已启动，并且手机和电脑在同一网络。");
+      }
+
+      function scheduleKillerSocketConnectTimeout(socket, url) {
+        clearKillerSocketConnectTimer();
+        showAuthMask("正在连接大逃杀服务...");
+        killerSocketConnectTimer = setTimeout(function () {
+          if (socket === killerSocket && !killerAppLoggedIn && socket.readyState !== WebSocket.OPEN) {
+            showKillerConnectionError("timeout " + url);
+          }
+        }, 12000);
+      }
+
+      (function installKillerWebSocketPatch() {
+        if (!window.WebSocket || window.__KILLER_WEBSOCKET_PATCHED__) return;
+
+        var NativeWebSocket = window.WebSocket;
+
+        function PatchedWebSocket(url, protocols) {
+          var rewrittenUrl = rewriteKillerWebSocketUrl(url);
+          var socket =
+            protocols === undefined
+              ? new NativeWebSocket(rewrittenUrl)
+              : new NativeWebSocket(rewrittenUrl, protocols);
+          killerSocket = socket;
+          window.__KILLER_SOCKET__ = socket;
+          console.log("[killer] websocket url:", rewrittenUrl);
+          scheduleKillerSocketConnectTimeout(socket, rewrittenUrl);
+          var nativeSend = socket.send;
+          socket.send = function patchedSend(payload) {
+            var nextPayload = injectKillerMode(payload);
+            var action = outgoingKillerAction(nextPayload);
+            if (shouldBlockKillerAction(action)) {
+              showBetTip("充值和兑换请在APP内操作。", 2200);
+              return;
+            }
+            return nativeSend.call(socket, nextPayload);
+          };
+          socket.addEventListener("open", function () {
+            clearKillerSocketConnectTimer();
+            tryAutoLogin();
+          });
+          socket.addEventListener("error", function () {
+            clearKillerSocketConnectTimer();
+            showKillerConnectionError("error " + rewrittenUrl);
+          });
+          socket.addEventListener("close", function () {
+            clearKillerSocketConnectTimer();
+            if (!killerAppLoggedIn) showKillerConnectionError("close " + rewrittenUrl);
+          });
+          socket.addEventListener("message", handleKillerSocketMessage);
+          return socket;
+        }
+
+        PatchedWebSocket.prototype = NativeWebSocket.prototype;
+        ["CONNECTING", "OPEN", "CLOSING", "CLOSED"].forEach(function (key) {
+          Object.defineProperty(PatchedWebSocket, key, {
+            configurable: true,
+            enumerable: true,
+            value: NativeWebSocket[key],
+          });
+        });
+        try {
+          Object.setPrototypeOf(PatchedWebSocket, NativeWebSocket);
+        } catch (error) {}
+
+        window.WebSocket = PatchedWebSocket;
+        window.__KILLER_WEBSOCKET_PATCHED__ = true;
+      })();
+
+      function startUnity() {
+        if (unityStarted) return;
+        unityStarted = true;
+        modePanel.hidden = true;
+
+        var buildUrl = "Build";
+        var assetQuery = "?v=" + encodeURIComponent(killerAssetVersion);
+        var loaderUrl = buildUrl + "/WebGLBuild.loader.js" + assetQuery;
+        var config = {
+          dataUrl: buildUrl + "/WebGLBuild.data" + assetQuery,
+          frameworkUrl: buildUrl + "/WebGLBuild.framework.js" + assetQuery,
+          codeUrl: buildUrl + "/WebGLBuild.wasm" + assetQuery,
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "wanyouyinqing",
+          productName: "dataosha",
+          productVersion: "0.1",
+          cacheControl: function () {
+            return "no-store";
+          },
+          websocket: {
+            url: resolveWebSocketUrl(),
+          },
+          showBanner: unityShowBanner,
+        };
+
+        container.className = "unity-mobile";
+        canvas.className = "unity-mobile";
+        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+        config.matchWebGLToCanvasSize = false;
+        fitKillerUnityCanvas();
+        loadingBar.style.display = "block";
+
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onload = function () {
+          createUnityInstance(canvas, config, function (progress) {
+            progressBarFull.style.width = 100 * progress + "%";
+          })
+            .then(function (unityInstance) {
+              loadingBar.style.display = "none";
+              window.unityInstance = unityInstance;
+              fitKillerUnityCanvas();
+              scheduleKillerUnityUiPatch();
+            })
+            .catch(function (message) {
+              unityShowBanner(message, "error");
+            });
+        };
+        document.body.appendChild(script);
+      }
+
+      function showModeEntry() {
+        var queryMode = getKillerModeFromQuery();
+        if (queryMode) {
+          setKillerMode(queryMode);
+          startUnity();
+          return;
+        }
+
+        setKillerMode(localStorage.getItem("killer_match_mode") || "ai");
+        Array.prototype.forEach.call(modePanel.querySelectorAll("[data-killer-mode]"), function (button) {
+          var mode = normalizeKillerMode(button.getAttribute("data-killer-mode"));
+          button.classList.toggle("is-active", mode === getKillerMode());
+          button.addEventListener("click", function () {
+            setKillerMode(mode);
+            startUnity();
+          });
+        });
+        modePanel.hidden = false;
+      }
+
+      roundButton.addEventListener("click", startKillerRound);
+      resultButton.addEventListener("click", startKillerRound);
+      homeButton.addEventListener("click", exitKillerHome);
+
+      showModeEntry();
+    </script>
+  </body>
+</html>

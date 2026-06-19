@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>象棋游戏</title>
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1,minimum-scale=1,maximum-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="renderer" content="webkit">
+  <meta name="force-rendering" content="webkit">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+  <meta name="msapplication-tap-highlight" content="no">
+  <meta name="full-screen" content="yes">
+  <meta name="x5-fullscreen" content="true">
+  <meta name="360-fullscreen" content="true">
+  <meta name="screen-orientation" content="portrait">
+  <meta name="x5-orientation" content="portrait">
+  <meta name="x5-page-mode" content="app">
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #101828;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    #GameCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      outline: none;
+      background: #101828;
+    }
+
+    #splash {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #101828;
+      color: #fff;
+      font: 600 16px/1.4 Arial, "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    #xiangqiTitle {
+      position: fixed;
+      top: 84px;
+      left: 0;
+      right: 0;
+      z-index: 6;
+      display: none;
+      justify-content: center;
+      pointer-events: none;
+      font: 700 54px/1.1 "STXingkai", "KaiTi", "Microsoft YaHei", serif;
+      color: #8b3a12;
+      letter-spacing: 0;
+      text-shadow:
+        0 2px 0 #f8e3a4,
+        0 4px 8px rgba(72, 38, 8, 0.28);
+    }
+
+    #xiangqiTitle::before {
+      content: "";
+      position: absolute;
+      top: 15px;
+      width: 300px;
+      height: 44px;
+      z-index: -1;
+      background: linear-gradient(90deg, rgba(224, 166, 58, 0), rgba(224, 166, 58, 0.58), rgba(224, 166, 58, 0));
+      transform: skewX(-10deg);
+    }
+
+    #xiangqiHomeOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 4;
+      display: none;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(255, 242, 207, 0.08), rgba(88, 47, 16, 0.24)),
+        url("assets/main/native/1b/1bd37f71-2a17-4d2c-b956-56c23f0e6a83.9346f.png") center / cover no-repeat;
+      pointer-events: auto;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+    }
+
+    #xiangqiHomeOverlay.show {
+      display: block;
+    }
+
+    #xiangqiHomeOverlay::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 42%;
+      background: linear-gradient(180deg, rgba(255, 246, 225, 0), rgba(76, 39, 11, 0.36));
+      pointer-events: none;
+    }
+
+    .xiangqi-home-menu {
+      position: absolute;
+      left: 50%;
+      top: 42%;
+      z-index: 1;
+      width: min(320px, calc(100vw - 54px));
+      transform: translateX(-50%);
+      display: grid;
+      gap: 24px;
+    }
+
+    .xiangqi-home-button {
+      position: relative;
+      min-height: 72px;
+      border: 1px solid rgba(133, 82, 24, 0.58);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(255, 246, 213, 0.96), rgba(235, 178, 86, 0.9)),
+        linear-gradient(90deg, rgba(99, 58, 17, 0), rgba(99, 58, 17, 0.18), rgba(99, 58, 17, 0));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.78),
+        inset 0 -5px 10px rgba(145, 83, 22, 0.18),
+        0 10px 20px rgba(65, 34, 8, 0.22);
+      color: #5b3411;
+      font: 800 27px/1.05 "KaiTi", "STKaiti", "Microsoft YaHei", serif;
+      letter-spacing: 0;
+    }
+
+    .xiangqi-home-button::before,
+    .xiangqi-home-button::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      width: 34px;
+      height: 10px;
+      border-top: 2px solid rgba(149, 88, 20, 0.62);
+      border-bottom: 2px solid rgba(255, 248, 213, 0.66);
+      transform: translateY(-50%);
+    }
+
+    .xiangqi-home-button::before {
+      left: 18px;
+    }
+
+    .xiangqi-home-button::after {
+      right: 18px;
+    }
+
+    .xiangqi-home-button span {
+      display: block;
+      padding-top: 2px;
+      text-shadow: 0 1px 0 rgba(255, 247, 214, 0.9);
+    }
+
+    #xiangqiPointsBadge {
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 10px);
+      right: 10px;
+      z-index: 12;
+      min-width: 112px;
+      height: 34px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border-radius: 17px;
+      border: 1px solid rgba(255, 235, 183, 0.9);
+      background: rgba(85, 44, 15, 0.86);
+      box-shadow: 0 4px 12px rgba(38, 18, 5, 0.22);
+      color: #ffe7a3;
+      font: 700 13px/1 Arial, "Microsoft YaHei", sans-serif;
+      pointer-events: none;
+      transform: none;
+      visibility: hidden;
+      opacity: 0;
+      transition: top 0.18s ease, left 0.18s ease, right 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+    }
+
+    #xiangqiPointsBadge b {
+      color: #fff7d6;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    body[data-xq-screen="home"] #xiangqiPointsBadge {
+      top: 28%;
+      left: 50%;
+      right: auto;
+      transform: translateX(-50%);
+      visibility: visible;
+      opacity: 1;
+    }
+
+    body[data-xq-screen="room"] #xiangqiPointsBadge,
+    body[data-xq-screen="study"] #xiangqiPointsBadge {
+      top: calc(env(safe-area-inset-top, 0px) + 92px);
+      left: 50%;
+      right: auto;
+      transform: translateX(-50%);
+      visibility: visible;
+      opacity: 1;
+    }
+
+    body[data-xq-screen="game"] #xiangqiPointsBadge {
+      display: none;
+    }
+
+    .xiangqi-pay-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(15, 23, 42, 0.46);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+    }
+
+    .xiangqi-pay-modal.show {
+      display: flex;
+    }
+
+    .xiangqi-pay-panel {
+      width: min(320px, calc(100vw - 40px));
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff8e6;
+      border: 1px solid #d6a64d;
+      box-shadow: 0 16px 38px rgba(45, 22, 4, 0.32);
+      color: #3b230b;
+    }
+
+    .xiangqi-pay-title {
+      padding: 16px 16px 8px;
+      text-align: center;
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .xiangqi-pay-content {
+      padding: 4px 20px 16px;
+      text-align: center;
+      font-size: 14px;
+      line-height: 1.55;
+      color: #69421a;
+    }
+
+    .xiangqi-pay-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-top: 1px solid #ebd4a6;
+    }
+
+    .xiangqi-pay-actions button {
+      height: 46px;
+      border: 0;
+      background: transparent;
+      color: #6b4a1e;
+      font-size: 15px;
+      font-weight: 700;
+      font-family: inherit;
+    }
+
+    .xiangqi-pay-actions button + button {
+      border-left: 1px solid #ebd4a6;
+      color: #b45309;
+      background: #fff0c2;
+    }
+
+    #xiangqiToast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 32px);
+      z-index: 90;
+      display: none;
+      max-width: min(300px, calc(100vw - 48px));
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.88);
+      color: #fff;
+      font: 600 14px/1.35 Arial, "Microsoft YaHei", sans-serif;
+      text-align: center;
+      transform: translateX(-50%);
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.28);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="GameCanvas" oncontextmenu="event.preventDefault()" tabindex="0"></canvas>
+  <div id="xiangqiPointsBadge">积分 <b id="xiangqiPointsValue">--</b></div>
+  <div id="xiangqiPayModal" class="xiangqi-pay-modal" aria-hidden="true">
+    <div class="xiangqi-pay-panel">
+      <div id="xiangqiPayTitle" class="xiangqi-pay-title">确认消耗积分</div>
+      <div id="xiangqiPayContent" class="xiangqi-pay-content"></div>
+      <div class="xiangqi-pay-actions">
+        <button id="xiangqiPayCancel" type="button">取消</button>
+        <button id="xiangqiPayConfirm" type="button">确认</button>
+      </div>
+    </div>
+  </div>
+  <div id="xiangqiToast"></div>
+  <div id="xiangqiTitle">象棋对弈</div>
+  <div id="xiangqiHomeOverlay" aria-hidden="true">
+    <div class="xiangqi-home-menu">
+      <button class="xiangqi-home-button" type="button" data-xq-node="btn1"><span>对战</span></button>
+      <button class="xiangqi-home-button" type="button" data-xq-node="btn2"><span>名局研习</span></button>
+    </div>
+  </div>
+  <div id="splash">象棋加载中...</div>
+
+  <script>
+    (function () {
+      var storagePrefix = "xiangqi_h5_";
+      var noop = function () {};
+      var systemInfo = {
+        brand: "web",
+        model: "web",
+        pixelRatio: window.devicePixelRatio || 1,
+        screenWidth: window.innerWidth || 375,
+        screenHeight: window.innerHeight || 667,
+        windowWidth: window.innerWidth || 375,
+        windowHeight: window.innerHeight || 667,
+        platform: "web",
+        system: "web",
+        language: "zh_CN",
+        version: "h5",
+        SDKVersion: "h5"
+      };
+
+      function ok(options, data) {
+        options = options || {};
+        if (typeof options.success === "function") options.success(data || {});
+        if (typeof options.complete === "function") options.complete(data || {});
+      }
+
+      function fail(options, error) {
+        options = options || {};
+        if (typeof options.fail === "function") options.fail(error || {});
+        if (typeof options.complete === "function") options.complete(error || {});
+      }
+
+      function createNoopAd() {
+        var ad = {
+          show: function () {
+            return Promise.resolve().then(function () {
+              if (typeof ad._close === "function") {
+                setTimeout(function () { ad._close({ isEnded: true }); }, 0);
+              }
+            });
+          },
+          load: function () { return Promise.resolve(); },
+          hide: noop,
+          destroy: noop,
+          onLoad: function (cb) { if (typeof cb === "function") setTimeout(cb, 0); },
+          offLoad: noop,
+          onError: noop,
+          offError: noop,
+          onClose: function (cb) {
+            if (typeof cb === "function") ad._close = cb;
+          },
+          offClose: noop
+        };
+        return ad;
+      }
+
+      window.wx = window.wx || {};
+      var wx = window.wx;
+      wx.getSystemInfoSync = wx.getSystemInfoSync || function () { return systemInfo; };
+      wx.getSystemInfo = wx.getSystemInfo || function (options) { ok(options, systemInfo); };
+      wx.getMenuButtonBoundingClientRect = wx.getMenuButtonBoundingClientRect || function () {
+        return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      };
+      wx.createCanvas = wx.createCanvas || function () { return document.createElement("canvas"); };
+      wx.createImage = wx.createImage || function () { return new Image(); };
+      wx.createInnerAudioContext = wx.createInnerAudioContext || function () {
+        return {
+          src: "",
+          loop: false,
+          autoplay: false,
+          volume: 1,
+          play: noop,
+          pause: noop,
+          stop: noop,
+          destroy: noop,
+          onCanplay: noop,
+          onPlay: noop,
+          onPause: noop,
+          onStop: noop,
+          onEnded: noop,
+          onError: noop,
+          offCanplay: noop,
+          offPlay: noop,
+          offPause: noop,
+          offStop: noop,
+          offEnded: noop,
+          offError: noop
+        };
+      };
+      wx.getStorageSync = wx.getStorageSync || function (key) {
+        return localStorage.getItem(storagePrefix + key) || "";
+      };
+      wx.setStorageSync = wx.setStorageSync || function (key, value) {
+        localStorage.setItem(storagePrefix + key, typeof value === "string" ? value : JSON.stringify(value));
+      };
+      wx.removeStorageSync = wx.removeStorageSync || function (key) {
+        localStorage.removeItem(storagePrefix + key);
+      };
+      wx.clearStorageSync = wx.clearStorageSync || function () {
+        Object.keys(localStorage)
+          .filter(function (key) { return key.indexOf(storagePrefix) === 0; })
+          .forEach(function (key) { localStorage.removeItem(key); });
+      };
+      wx.showToast = wx.showToast || function (options) {
+        console.log("[xiangqi toast]", options && options.title ? options.title : "");
+        ok(options);
+      };
+      wx.showLoading = wx.showLoading || function (options) { ok(options); };
+      wx.hideLoading = wx.hideLoading || noop;
+      wx.showModal = wx.showModal || function (options) {
+        console.log("[xiangqi modal]", options && (options.title || options.content));
+        ok(options, { confirm: true, cancel: false });
+      };
+      wx.login = wx.login || function (options) { ok(options, { code: "h5" }); };
+      wx.getUserInfo = wx.getUserInfo || function (options) {
+        ok(options, { userInfo: { nickName: "玩家", avatarUrl: "" } });
+      };
+      wx.request = wx.request || function (options) {
+        options = options || {};
+        fetch(options.url, {
+          method: options.method || "GET",
+          headers: options.header || {},
+          body: options.data ? JSON.stringify(options.data) : undefined
+        }).then(function (response) {
+          return response.text().then(function (text) {
+            var data = text;
+            try { data = JSON.parse(text); } catch (_) {}
+            ok(options, { statusCode: response.status, data: data });
+          });
+        }).catch(function (error) {
+          fail(options, error);
+        });
+      };
+      wx.createRewardedVideoAd = wx.createRewardedVideoAd || createNoopAd;
+      wx.createBannerAd = wx.createBannerAd || createNoopAd;
+      wx.createInterstitialAd = wx.createInterstitialAd || createNoopAd;
+      wx.onShow = wx.onShow || noop;
+      wx.offShow = wx.offShow || noop;
+      wx.onHide = wx.onHide || noop;
+      wx.offHide = wx.offHide || noop;
+      wx.onError = wx.onError || noop;
+      wx.offError = wx.offError || noop;
+      wx.onShareAppMessage = wx.onShareAppMessage || noop;
+      wx.shareAppMessage = wx.shareAppMessage || noop;
+      wx.updateShareMenu = wx.updateShareMenu || function (options) { ok(options); };
+      wx.showShareMenu = wx.showShareMenu || function (options) { ok(options); };
+      wx.hideShareMenu = wx.hideShareMenu || function (options) { ok(options); };
+      wx.vibrateShort = wx.vibrateShort || function (options) { ok(options); };
+      wx.vibrateLong = wx.vibrateLong || function (options) { ok(options); };
+      wx.exitMiniProgram = wx.exitMiniProgram || noop;
+
+      window.__XQ_H5_READY__ = true;
+    })();
+  </script>
+
+  <script>
+    (function () {
+      var state = {
+        balance: null,
+        paidUseCounts: {
+          retract: 0,
+          hint: 0
+        },
+        pendingDeduct: null,
+        actionBusy: false,
+        toastTimer: null,
+        pendingStudyRewards: {}
+      };
+      var actionLabels = {
+        retract: "悔棋",
+        hint: "提示"
+      };
+      var STUDY_REWARD_STORAGE_KEY = "xiangqi.study.rewardedLevels.v1";
+      var STUDY_MAX_LEVEL = 240;
+
+      function toNumber(value) {
+        var number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      }
+
+      function balanceFromData(data) {
+        data = data || {};
+        return toNumber(
+          data.points !== undefined ? data.points :
+          data.balance !== undefined ? data.balance :
+          data.coin
+        );
+      }
+
+      function formatPoints(value) {
+        var number = toNumber(value);
+        if (number === null) return "--";
+        if (Math.abs(number - Math.round(number)) < 0.000001) {
+          return String(Math.round(number));
+        }
+        return number.toFixed(2).replace(/\.?0+$/, "");
+      }
+
+      function updateBalance(value) {
+        var number = toNumber(value);
+        if (number !== null) state.balance = number;
+        var node = document.getElementById("xiangqiPointsValue");
+        if (node) node.textContent = formatPoints(state.balance);
+      }
+
+      function showToast(message) {
+        var node = document.getElementById("xiangqiToast");
+        if (!node) return;
+        node.textContent = message;
+        node.style.display = "block";
+        window.clearTimeout(state.toastTimer);
+        state.toastTimer = window.setTimeout(function () {
+          node.style.display = "none";
+        }, 1800);
+      }
+
+      function hasAppBridge() {
+        return !!(
+          window.flutter_inappwebview &&
+          typeof window.flutter_inappwebview.callHandler === "function"
+        );
+      }
+
+      function postGameMessage(action, data) {
+        if (!hasAppBridge()) return false;
+        try {
+          window.flutter_inappwebview.callHandler(
+            "gameMessage",
+            JSON.stringify({ action: action, data: data || {} })
+          );
+          return true;
+        } catch (error) {
+          console.warn("[xiangqi] app bridge failed:", error);
+          return false;
+        }
+      }
+
+      function requestBalance() {
+        postGameMessage("getBalance", {});
+      }
+
+      function showConfirm(label, cost) {
+        return new Promise(function (resolve) {
+          var modal = document.getElementById("xiangqiPayModal");
+          var title = document.getElementById("xiangqiPayTitle");
+          var content = document.getElementById("xiangqiPayContent");
+          var cancel = document.getElementById("xiangqiPayCancel");
+          var confirm = document.getElementById("xiangqiPayConfirm");
+
+          if (!modal || !title || !content || !cancel || !confirm) {
+            resolve(window.confirm(label + "需要消耗 " + cost + " 积分，是否继续？"));
+            return;
+          }
+
+          var done = function (value) {
+            modal.classList.remove("show");
+            modal.setAttribute("aria-hidden", "true");
+            cancel.onclick = null;
+            confirm.onclick = null;
+            resolve(value);
+          };
+
+          title.textContent = "确认" + label;
+          content.innerHTML =
+            "本次" + label + "需要消耗 <b>" + cost + "</b> 积分。<br>" +
+            "当前积分：" + formatPoints(state.balance) + "。";
+          cancel.onclick = function () { done(false); };
+          confirm.onclick = function () { done(true); };
+          modal.classList.add("show");
+          modal.setAttribute("aria-hidden", "false");
+        });
+      }
+
+      function deductPoints(cost, reason) {
+        return new Promise(function (resolve) {
+          if (state.pendingDeduct) {
+            resolve({ success: false, busy: true, balance: state.balance });
+            return;
+          }
+          if (!hasAppBridge()) {
+            resolve({ success: false, bridgeMissing: true, balance: state.balance });
+            return;
+          }
+
+          var timer = window.setTimeout(function () {
+            if (!state.pendingDeduct) return;
+            state.pendingDeduct = null;
+            resolve({ success: false, timeout: true, balance: state.balance });
+          }, 10000);
+
+          state.pendingDeduct = {
+            resolve: resolve,
+            timer: timer,
+            cost: cost
+          };
+
+          if (!postGameMessage("deductPoints", { amount: cost, reason: reason })) {
+            window.clearTimeout(timer);
+            state.pendingDeduct = null;
+            resolve({ success: false, bridgeMissing: true, balance: state.balance });
+          }
+        });
+      }
+
+      function readRewardedStudyLevels() {
+        try {
+          var raw = window.localStorage && localStorage.getItem(STUDY_REWARD_STORAGE_KEY);
+          var parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+          return [];
+        }
+      }
+
+      function hasRewardedStudyLevel(level) {
+        return readRewardedStudyLevels().indexOf(level) >= 0;
+      }
+
+      function markRewardedStudyLevel(level) {
+        try {
+          if (!window.localStorage) return;
+          var list = readRewardedStudyLevels();
+          if (list.indexOf(level) < 0) list.push(level);
+          localStorage.setItem(STUDY_REWARD_STORAGE_KEY, JSON.stringify(list));
+        } catch (_) {}
+      }
+
+      function handleStudyRewardResult(data) {
+        var requestId = data && data.requestId ? String(data.requestId) : "";
+        var pending = requestId ? state.pendingStudyRewards[requestId] : null;
+        if (!pending) return;
+        delete state.pendingStudyRewards[requestId];
+        if (data.success === false) {
+          showToast("通关奖励发放失败，请稍后重试");
+          return;
+        }
+        markRewardedStudyLevel(pending.level);
+        var actualAmount = toNumber(data.amount);
+        if (data.duplicate === true || actualAmount === 0) return;
+        showToast("名局研习通关 +" + formatPoints(actualAmount === null ? pending.reward : actualAmount) + " 积分");
+      }
+
+      window.__xiangqiAwardStudyLevel = function (level) {
+        level = Math.floor(Number(level) || 0);
+        if (level < 1 || level > STUDY_MAX_LEVEL) return false;
+        if (hasRewardedStudyLevel(level)) return false;
+        var reward = level * 10;
+        var requestId = "xiangqi_study_level_" + level;
+        if (state.pendingStudyRewards[requestId]) return false;
+        state.pendingStudyRewards[requestId] = { level: level, reward: reward };
+        if (!postGameMessage("changePoints", {
+          amount: reward,
+          reason: requestId,
+          requestId: requestId,
+          level: level,
+          module: "study"
+        })) {
+          delete state.pendingStudyRewards[requestId];
+          return false;
+        }
+        return true;
+      };
+
+      window.onAppMessage = function onAppMessage(message) {
+        if (!message) return;
+        if (typeof message === "string") {
+          try {
+            message = JSON.parse(message);
+          } catch (_) {
+            return;
+          }
+        }
+
+        var action = message.action;
+        var data = message.data || {};
+        if (action === "init") {
+          updateBalance(balanceFromData(data));
+          window.setTimeout(requestBalance, 100);
+          return;
+        }
+        if (action === "balanceUpdate" || action === "pointsChangeResult") {
+          updateBalance(balanceFromData(data));
+          if (action === "pointsChangeResult") handleStudyRewardResult(data);
+          return;
+        }
+        if (action === "deductPointsResult") {
+          var pending = state.pendingDeduct;
+          if (pending) {
+            window.clearTimeout(pending.timer);
+            state.pendingDeduct = null;
+          }
+          var balance = balanceFromData(data);
+          if (balance !== null) updateBalance(balance);
+          if (pending) {
+            pending.resolve({
+              success: data.success !== false,
+              balance: balance !== null ? balance : state.balance,
+              data: data
+            });
+          }
+        }
+      };
+
+      window.__xiangqiResetPaidActionCounts = function () {
+        state.paidUseCounts.retract = 0;
+        state.paidUseCounts.hint = 0;
+      };
+
+      window.__xiangqiRequestPaidAction = function (type, context, runner) {
+        var label = actionLabels[type] || "操作";
+        var usedCount = state.paidUseCounts[type] || 0;
+        var cost = (usedCount + 1) * 100;
+        if (state.actionBusy) {
+          showToast("正在处理，请稍候");
+          return false;
+        }
+
+        showConfirm(label, cost).then(function (confirmed) {
+          if (!confirmed) return;
+          state.actionBusy = true;
+          deductPoints(cost, "xiangqi_" + type).then(function (result) {
+            state.actionBusy = false;
+            if (!result || result.success === false) {
+              if (result && result.bridgeMissing) {
+                showToast("请在App内使用积分功能");
+              } else if (result && result.timeout) {
+                showToast("扣除积分超时，请稍后再试");
+              } else {
+                showToast("积分不足或扣除失败");
+              }
+              return;
+            }
+            state.paidUseCounts[type] = usedCount + 1;
+            updateBalance(result.balance);
+            try {
+              if (typeof runner === "function") runner.call(context);
+            } catch (error) {
+              console.error("[xiangqi] paid action failed:", error);
+            }
+            window.setTimeout(requestBalance, 250);
+          });
+        });
+        return false;
+      };
+
+      updateBalance(balanceFromData(window.__GAME_APP_INIT__ || {}));
+      window.setTimeout(requestBalance, 600);
+    })();
+  </script>
+
+  <script src="ccRequire.js?v=xq632" charset="utf-8"></script>
+  <script src="src/settings.js?v=xq632" charset="utf-8"></script>
+  <script src="main.js?v=xq632" charset="utf-8"></script>
+  <script>
+    (function () {
+      var splash = document.getElementById("splash");
+
+      function loadScript(src, cb) {
+        var script = document.createElement("script");
+        script.async = true;
+        script.src = src;
+        script.onload = function () { cb && cb(); };
+        script.onerror = function () {
+          if (splash) splash.textContent = "象棋加载失败，请稍后重试";
+          console.error("[xiangqi] failed to load", src);
+        };
+        document.body.appendChild(script);
+      }
+
+      function showStartupError(message) {
+        if (!splash || window.__XQ_SCENE_READY__) return;
+        splash.style.display = "flex";
+        splash.textContent = message || "象棋加载失败，请稍后重试";
+      }
+
+      function hideSplash() {
+        if (splash) splash.style.display = "none";
+      }
+
+      function setHomeOverlayVisible(visible) {
+        var overlay = document.getElementById("xiangqiHomeOverlay");
+        if (!overlay) return;
+        overlay.classList.toggle("show", !!visible);
+        overlay.setAttribute("aria-hidden", visible ? "false" : "true");
+      }
+
+      function findSceneNodeByName(name) {
+        try {
+          if (!window.cc || !cc.director || !cc.director.getScene) return null;
+          var scene = cc.director.getScene();
+          var found = null;
+          var walk = function (node) {
+            if (!node || found) return;
+            if (node.name === name) {
+              found = node;
+              return;
+            }
+            var children = node.children || [];
+            for (var i = 0; i < children.length; i += 1) walk(children[i]);
+          };
+          walk(scene);
+          return found;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function emitCocosButton(nodeName) {
+        var node = findSceneNodeByName(nodeName);
+        if (!node || !window.cc || !cc.Button) return false;
+        var button = node.getComponent ? node.getComponent(cc.Button) : null;
+        if (!button) return false;
+        try {
+          if (cc.Component && cc.Component.EventHandler && button.clickEvents) {
+            cc.Component.EventHandler.emitEvents(button.clickEvents, { target: node });
+          }
+          if (node.emit) node.emit("click", button);
+          return true;
+        } catch (error) {
+          console.warn("[xiangqi] home button bridge failed:", error);
+          return false;
+        }
+      }
+
+      function tapCanvasFallback(nodeName) {
+        var canvas = document.getElementById("GameCanvas");
+        if (!canvas) return;
+        var rect = canvas.getBoundingClientRect();
+        var x = rect.left + rect.width * 0.5;
+        var y = rect.top + rect.height * (nodeName === "btn2" ? 0.64 : 0.49);
+        ["mousedown", "mouseup", "click"].forEach(function (type) {
+          canvas.dispatchEvent(new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y
+          }));
+        });
+      }
+
+      function bindHomeOverlay() {
+        var overlay = document.getElementById("xiangqiHomeOverlay");
+        if (!overlay || overlay.__xiangqiBound) return;
+        overlay.__xiangqiBound = true;
+        overlay.addEventListener("click", function (event) {
+          var button = event.target && event.target.closest ? event.target.closest("[data-xq-node]") : null;
+          if (!button) return;
+          var nodeName = button.getAttribute("data-xq-node");
+          setHomeOverlayVisible(false);
+          window.setTimeout(function () {
+            if (!emitCocosButton(nodeName)) tapCanvasFallback(nodeName);
+          }, 0);
+        });
+      }
+
+      function fitCanvas() {
+        var width = window.innerWidth || document.documentElement.clientWidth || 375;
+        var height = window.innerHeight || document.documentElement.clientHeight || 667;
+        var canvas = document.getElementById("GameCanvas");
+        var container = document.getElementById("Cocos2dGameContainer");
+        [document.documentElement, document.body, container, canvas].forEach(function (node) {
+          if (!node || !node.style) return;
+          node.style.width = width + "px";
+          node.style.height = height + "px";
+          node.style.margin = "0";
+          node.style.padding = "0";
+          if (node === container || node === canvas) {
+            node.style.left = "0";
+            node.style.top = "0";
+          }
+        });
+        try {
+          if (window.cc && cc.view) {
+            cc.view.setFrameSize(width, height);
+            cc.view.resizeWithBrowserSize(true);
+          }
+        } catch (_) {}
+      }
+
+      function setScreenMode(mode) {
+        if (!document.body) return;
+        if (mode) {
+          document.body.setAttribute("data-xq-screen", mode);
+        } else {
+          document.body.removeAttribute("data-xq-screen");
+        }
+      }
+
+      function installPaidActionGate() {
+        try {
+          if (!window.cc || !cc.Component || !cc.Component.EventHandler) return;
+          if (cc.Component.EventHandler.__xiangqiPaidGate) return;
+          var originalEmitEvents = cc.Component.EventHandler.emitEvents;
+          if (typeof originalEmitEvents !== "function") return;
+
+          var handlerName = function (handler) {
+            return String(
+              handler && (
+                handler.handler ||
+                handler._handler ||
+                handler.method ||
+                handler._method ||
+                handler._methodName ||
+                handler.functionName ||
+                ""
+              )
+            );
+          };
+          var eachHandler = function (events, visitor) {
+            if (!events || !events.length) return null;
+            for (var i = 0; i < events.length; i += 1) {
+              var result = visitor(handlerName(events[i]), events[i]);
+              if (result) return result;
+            }
+            return null;
+          };
+          var paidTypeFromEvents = function (events) {
+            return eachHandler(events, function (name) {
+              if (name === "advretract") return "retract";
+              if (name === "tishiadv") return "hint";
+              return null;
+            });
+          };
+          var hasRestart = function (events) {
+            return !!eachHandler(events, function (name) {
+              return name === "restartGame";
+            });
+          };
+
+          cc.Component.EventHandler.emitEvents = function (events) {
+            if (window.__XQ_PAID_ACTION_BYPASS__) {
+              return originalEmitEvents.apply(this, arguments);
+            }
+
+            if (hasRestart(events) && typeof window.__xiangqiResetPaidActionCounts === "function") {
+              window.__xiangqiResetPaidActionCounts();
+            }
+
+            var paidType = paidTypeFromEvents(events);
+            if (paidType && typeof window.__xiangqiRequestPaidAction === "function") {
+              var args = arguments;
+              return window.__xiangqiRequestPaidAction(paidType, this, function () {
+                window.__XQ_PAID_ACTION_BYPASS__ = true;
+                try {
+                  return originalEmitEvents.apply(cc.Component.EventHandler, args);
+                } finally {
+                  window.__XQ_PAID_ACTION_BYPASS__ = false;
+                }
+              });
+            }
+
+            return originalEmitEvents.apply(this, arguments);
+          };
+          cc.Component.EventHandler.__xiangqiPaidGate = true;
+        } catch (error) {
+          console.warn("[xiangqi] paid action gate failed:", error);
+        }
+      }
+
+      function getXiangqiModule(name) {
+        try {
+          if (typeof window.__require === "function") return window.__require(name);
+        } catch (_) {}
+        return null;
+      }
+
+      function getStudyLevelInfo() {
+        var canjuModule = getXiangqiModule("CanjuModel");
+        var chessModule = getXiangqiModule("ChessMng");
+        var canju = canjuModule && canjuModule.default && canjuModule.default.Instance;
+        var chess = chessModule && chessModule.default && chessModule.default.Instance;
+        var chessType = chessModule && chessModule.ChessType;
+        if (!canju || !chess || !chessType || chess.chesstype !== chessType.canju) return null;
+        var level = Math.floor(Number(canju.selectLv) || 0);
+        var maxLevel = Math.floor(Number(canju.MaxLv || 0) || 0);
+        if (!maxLevel && canju.canjuDataArr && canju.canjuDataArr.length) maxLevel = canju.canjuDataArr.length;
+        maxLevel = Math.min(240, maxLevel || 240);
+        if (level < 1 || level > maxLevel) return null;
+        return { level: level, maxLevel: maxLevel };
+      }
+
+      function installStudyRewardHook() {
+        try {
+          var endModule = getXiangqiModule("UIEndChess");
+          if (!endModule || !endModule.default || !endModule.default.prototype) return;
+          var proto = endModule.default.prototype;
+          if (proto.__xiangqiStudyRewardHooked || typeof proto.setData !== "function") return;
+          var originalSetData = proto.setData;
+          proto.setData = function (result) {
+            var returnValue = originalSetData.apply(this, arguments);
+            try {
+              if (Number(result) === 0 && typeof window.__xiangqiAwardStudyLevel === "function") {
+                var info = getStudyLevelInfo();
+                if (info) window.__xiangqiAwardStudyLevel(info.level);
+              }
+            } catch (error) {
+              console.warn("[xiangqi] study reward hook failed:", error);
+            }
+            return returnValue;
+          };
+          proto.__xiangqiStudyRewardHooked = true;
+        } catch (error) {
+          console.warn("[xiangqi] study reward install failed:", error);
+        }
+      }
+
+      function syncHomeTitle() {
+        var title = document.getElementById("xiangqiTitle");
+        if (!title) return;
+        var sceneName = "";
+        var isHomeScene = false;
+        var hasBattle = false;
+        var hasStudyTitle = false;
+        var hasRoomSelect = false;
+        var hasStudySelect = false;
+        var isGameScene = false;
+        var hasHomeButton1 = false;
+        var hasHomeButton2 = false;
+        try {
+          if (window.cc && cc.director && cc.director.getScene) {
+            var scene = cc.director.getScene();
+            sceneName = scene && scene.name ? scene.name : "";
+            if (scene && window.cc && cc.Label) {
+              var walk = function (node) {
+                if (!node || (node.active === false && node.name !== "Canvas")) return;
+                if (node.name === "btn1") hasHomeButton1 = true;
+                if (node.name === "btn2") hasHomeButton2 = true;
+                if (node.name === "btnhuiqi" || node.name === "btntishi") isGameScene = true;
+                var label = node.getComponent ? node.getComponent(cc.Label) : null;
+                if (label && label.string === "对战") hasBattle = true;
+                if (label && label.string === "名局研习") hasStudyTitle = true;
+                if (label && (label.string === "入门房间" || label.string === "高手房间" || label.string === "国手房间")) {
+                  hasRoomSelect = true;
+                }
+                if (label && label.string === "后谱") hasStudySelect = true;
+                if (label && (label.string === "悔棋" || label.string === "提示")) isGameScene = true;
+                var children = node.children || [];
+                for (var i = 0; i < children.length; i += 1) walk(children[i]);
+              };
+              walk(scene);
+              isHomeScene = (hasBattle && hasStudyTitle) ||
+                (hasHomeButton1 && hasHomeButton2 && !hasRoomSelect && !isGameScene);
+            }
+          }
+        } catch (_) {}
+        var showHome = sceneName === "GameLaunch" || isHomeScene;
+        var screenMode = showHome ? "home" : (isGameScene ? "game" : (hasRoomSelect ? "room" : (hasStudySelect || hasStudyTitle ? "study" : "")));
+        if (screenMode === "game" && syncHomeTitle.lastScreenMode !== "game" && typeof window.__xiangqiResetPaidActionCounts === "function") {
+          window.__xiangqiResetPaidActionCounts();
+        }
+        syncHomeTitle.lastScreenMode = screenMode;
+        title.style.display = showHome ? "flex" : "none";
+        setHomeOverlayVisible(showHome);
+        setScreenMode(screenMode);
+      }
+
+      function markSceneReadyIfPlayable() {
+        if (window.__XQ_SCENE_READY__) return;
+        var sceneName = "";
+        var hasPlayableScene = false;
+        try {
+          if (window.cc && cc.director && cc.director.getScene) {
+            var scene = cc.director.getScene();
+            sceneName = scene && scene.name ? scene.name : "";
+            if (scene) {
+              var hasPlayableNode = false;
+              var walk = function (node) {
+                if (!node || hasPlayableNode || node.active === false) return;
+                if (
+                  node.name === "btn1" ||
+                  node.name === "btn2" ||
+                  node.name === "btnhuiqi" ||
+                  node.name === "btntishi"
+                ) {
+                  hasPlayableNode = true;
+                  return;
+                }
+                var label = window.cc && cc.Label && node.getComponent ? node.getComponent(cc.Label) : null;
+                var text = label && label.string ? label.string : "";
+                if (
+                  text === "对战" ||
+                  text === "名局研习" ||
+                  text === "入门房间" ||
+                  text === "高手房间" ||
+                  text === "国手房间" ||
+                  text === "后谱" ||
+                  text === "悔棋" ||
+                  text === "提示"
+                ) {
+                  hasPlayableNode = true;
+                  return;
+                }
+                var children = node.children || [];
+                for (var i = 0; i < children.length; i += 1) walk(children[i]);
+              };
+              walk(scene);
+              hasPlayableScene = hasPlayableNode;
+            }
+          }
+        } catch (_) {}
+        if (!sceneName && !hasPlayableScene) return;
+        if (sceneName === "Scene" && !hasPlayableScene) return;
+        window.__XQ_SCENE_READY__ = true;
+        fitCanvas();
+        syncHomeTitle();
+        setTimeout(hideSplash, 350);
+      }
+
+      window.addEventListener("resize", fitCanvas);
+      window.addEventListener("orientationchange", function () {
+        setTimeout(fitCanvas, 120);
+      });
+      window.addEventListener("error", function (event) {
+        console.error("[xiangqi] runtime error", event.message);
+        showStartupError("象棋加载失败，请稍后重试");
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        console.error("[xiangqi] promise rejection", event.reason);
+        showStartupError("象棋加载失败，请稍后重试");
+      });
+
+      fitCanvas();
+      bindHomeOverlay();
+      setInterval(syncHomeTitle, 300);
+      setInterval(installStudyRewardHook, 300);
+
+      loadScript("cocos/cocos2d-js-min.js?v=xq632", function () {
+        fitCanvas();
+        installPaidActionGate();
+        installStudyRewardHook();
+        if (typeof window.CC_PHYSICS_BUILTIN === "undefined") window.CC_PHYSICS_BUILTIN = false;
+        if (typeof window.CC_PHYSICS_CANNON === "undefined") window.CC_PHYSICS_CANNON = false;
+        if (typeof window.boot === "function") {
+          window.__XQ_SCENE_READY__ = false;
+          if (window.cc && cc.director && cc.Director) {
+            cc.director.on(cc.Director.EVENT_AFTER_SCENE_LAUNCH, markSceneReadyIfPlayable);
+          }
+          try {
+            window.boot();
+          } catch (error) {
+            console.error("[xiangqi] boot failed", error);
+            showStartupError("象棋加载失败，请稍后重试");
+            return;
+          }
+          setTimeout(syncHomeTitle, 600);
+          setTimeout(syncHomeTitle, 1200);
+          setInterval(markSceneReadyIfPlayable, 300);
+          setTimeout(function () {
+            if (!window.__XQ_SCENE_READY__) showStartupError("象棋加载中...");
+          }, 1800);
+        } else if (splash) {
+          splash.textContent = "象棋加载失败，请稍后重试";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

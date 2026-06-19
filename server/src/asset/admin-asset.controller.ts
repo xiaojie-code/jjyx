@@ -11,6 +11,11 @@ export class AdminAssetController {
     return this.assetService.adminListAccounts(query);
   }
 
+  @Get('referral-rewards')
+  referralRewards(@Query() query: any) {
+    return this.assetService.adminListReferralRewards(query);
+  }
+
   @Get('recharges')
   recharges(@Query() query: any) {
     return this.assetService.adminListRecharges(query);

@@ -30,4 +30,9 @@ export class AssetController {
   myWithdrawals(@CurrentUser('id') userId: number) {
     return this.assetService.myWithdrawals(userId);
   }
+
+  @Get('referral-rewards')
+  myReferralRewards(@CurrentUser('id') userId: number) {
+    return this.assetService.myReferralRewards(userId);
+  }
 }

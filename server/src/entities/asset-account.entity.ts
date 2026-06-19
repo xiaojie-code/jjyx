@@ -31,6 +31,9 @@ export class AssetAccount {
   @Column({ type: 'decimal', precision: 18, scale: 6, default: 0, name: 'total_interest', comment: '累计生成利息' })
   totalInterest: number;
 
+  @Column({ type: 'decimal', precision: 18, scale: 6, default: 0, name: 'total_referral_reward', comment: '累计推荐收益' })
+  totalReferralReward: number;
+
   @Column({ type: 'date', nullable: true, name: 'last_interest_date', comment: '最后一次计息日期' })
   lastInterestDate: string | null;
 
