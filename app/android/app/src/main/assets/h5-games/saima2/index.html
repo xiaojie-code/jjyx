@@ -97,14 +97,137 @@
       var progressBarFull = document.querySelector("#unity-progress-bar-full");
       var progressText = document.querySelector("#unity-progress-text");
       var warningBanner = document.querySelector("#unity-warning");
-      var appInitData = window.__GAME_APP_INIT__ || window.__SAIMA_APP_INIT__ || {};
-      window.__SAIMA_APP_INIT__ = appInitData;
+      var appInitData = {};
 
-      window.onAppMessage = function onAppMessage(message) {
-        if (!message || message.action !== "init") return;
-        appInitData = message.data || {};
-        window.__SAIMA_APP_INIT__ = appInitData;
-      };
+      (function setupSaimaAppBridge() {
+        var NativeWebSocket = window.WebSocket;
+
+        function parseQuery() {
+          var params = {};
+          var query = window.location.search || "";
+          if (query.charAt(0) === "?") query = query.slice(1);
+          query.split("&").forEach(function (pair) {
+            if (!pair) return;
+            var index = pair.indexOf("=");
+            var rawKey = index >= 0 ? pair.slice(0, index) : pair;
+            var rawValue = index >= 0 ? pair.slice(index + 1) : "";
+            try {
+              var key = decodeURIComponent(rawKey.replace(/\+/g, " "));
+              params[key] = decodeURIComponent(rawValue.replace(/\+/g, " "));
+            } catch (_) {}
+          });
+          return params;
+        }
+
+        function mergeInitData(data) {
+          appInitData = Object.assign({}, appInitData, data || {});
+          if (appInitData.appUserId && !appInitData.userId) {
+            appInitData.userId = appInitData.appUserId;
+          }
+          if (appInitData.userId && !appInitData.appUserId) {
+            appInitData.appUserId = appInitData.userId;
+          }
+          window.__GAME_APP_INIT__ = appInitData;
+          window.__SAIMA_APP_INIT__ = appInitData;
+          updateSaimaWsUrl();
+          return appInitData;
+        }
+
+        function isPrivateHost(host) {
+          host = String(host || "").toLowerCase();
+          return (
+            host === "localhost" ||
+            host === "127.0.0.1" ||
+            host === "::1" ||
+            /^192\.168\./.test(host) ||
+            /^10\./.test(host) ||
+            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+          );
+        }
+
+        function deriveSaimaWsUrl(apiBaseUrl) {
+          try {
+            var apiUrl = new URL(apiBaseUrl || "", window.location.href);
+            if (!apiUrl.hostname) return "";
+            var protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+            if (isPrivateHost(apiUrl.hostname)) {
+              return protocol + "//" + apiUrl.hostname + ":8080";
+            }
+            return protocol + "//" + apiUrl.hostname + "/saima-ws";
+          } catch (_) {
+            return "";
+          }
+        }
+
+        function asWebSocketUrl(value) {
+          value = String(value || "").trim();
+          return /^wss?:\/\//i.test(value) ? value : "";
+        }
+
+        function resolveSaimaWsUrl() {
+          return (
+            asWebSocketUrl(appInitData.saimaWsUrl) ||
+            asWebSocketUrl(appInitData.wsUrl) ||
+            deriveSaimaWsUrl(appInitData.apiBaseUrl) ||
+            "ws://localhost:8080"
+          );
+        }
+
+        function updateSaimaWsUrl() {
+          window.__SAIMA_WS_URL__ = resolveSaimaWsUrl();
+          return window.__SAIMA_WS_URL__;
+        }
+
+        function shouldRewriteWsUrl(url, targetUrl) {
+          if (!targetUrl || !url) return Boolean(targetUrl);
+          if (String(url) === String(targetUrl)) return false;
+          try {
+            var parsed = new URL(String(url), window.location.href);
+            return (
+              parsed.hostname === "localhost" ||
+              parsed.hostname === "127.0.0.1" ||
+              parsed.port === "8080"
+            );
+          } catch (_) {
+            return true;
+          }
+        }
+
+        function installWebSocketPatch() {
+          if (!NativeWebSocket || NativeWebSocket.__saimaPatched) return;
+
+          function SaimaWebSocket(url, protocols) {
+            var targetUrl = updateSaimaWsUrl();
+            var nextUrl = shouldRewriteWsUrl(url, targetUrl) ? targetUrl : url;
+            console.log("[saima] websocket url:", nextUrl);
+            if (protocols !== undefined) {
+              return new NativeWebSocket(nextUrl, protocols);
+            }
+            return new NativeWebSocket(nextUrl);
+          }
+
+          Object.getOwnPropertyNames(NativeWebSocket).forEach(function (key) {
+            try {
+              SaimaWebSocket[key] = NativeWebSocket[key];
+            } catch (_) {}
+          });
+          SaimaWebSocket.prototype = NativeWebSocket.prototype;
+          SaimaWebSocket.__saimaPatched = true;
+          window.WebSocket = SaimaWebSocket;
+        }
+
+        var queryData = parseQuery();
+        mergeInitData(window.__GAME_APP_INIT__ || {});
+        mergeInitData(window.__SAIMA_APP_INIT__ || {});
+        mergeInitData(queryData);
+        installWebSocketPatch();
+
+        window.onAppMessage = function onAppMessage(message) {
+          if (!message || message.action !== "init") return;
+          mergeInitData(message.data || {});
+          console.log("[saima] app init received");
+        };
+      })();
 
       function unityShowBanner(msg, type) {
         function updateBannerVisibility() {

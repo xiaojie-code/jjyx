@@ -152,6 +152,7 @@ class GameWebViewState extends State<GameWebView> {
         source: '''
 window.__GAME_APP_INIT__ = $initDataJson;
 window.__KILLER_APP_INIT__ = $initDataJson;
+window.__SAIMA_APP_INIT__ = $initDataJson;
 window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
 ''',
       ),

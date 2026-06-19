@@ -34,7 +34,17 @@ class AppConstants {
     final apiUri = Uri.tryParse(apiBaseUrl);
     if (apiUri != null && apiUri.host.isNotEmpty) {
       final protocol = apiUri.scheme == 'https' ? 'wss' : 'ws';
-      return '$protocol://${apiUri.host}:8080';
+      final host = apiUri.host.toLowerCase();
+      final isLocalHost = host == 'localhost' ||
+          host == '127.0.0.1' ||
+          host == '::1' ||
+          host.startsWith('192.168.') ||
+          host.startsWith('10.') ||
+          RegExp(r'^172\.(1[6-9]|2[0-9]|3[0-1])\.').hasMatch(host);
+      if (isLocalHost) {
+        return '$protocol://${apiUri.host}:8080';
+      }
+      return '$protocol://${apiUri.host}/saima-ws';
     }
     return 'ws://localhost:8080';
   }
