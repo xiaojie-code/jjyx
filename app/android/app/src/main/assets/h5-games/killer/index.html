@@ -1038,6 +1038,13 @@
             return;
           }
 
+          if ((action === "returntouzhu" || action === "returnchangesmallroom") && data.code === 1072) {
+            killerRoundReady = false;
+            setTimeout(startKillerRound, 120);
+            showBetTip("Preparing round, please try again.", 1800);
+            return;
+          }
+
           if (action === "returnchangesmallroom" && data.code === 1) {
             syncKillerBetState(info);
             showBetTip(info.has_bet === false ? "已选择房间，请投入积分。" : "房间已切换。", 1800);

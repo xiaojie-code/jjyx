@@ -1224,7 +1224,7 @@ class Common
         return $affected ? 1 : 0;
     }
 
-    static function robotUsers($minCount = 8)
+    static function robotUsers($minCount = 24)
     {
         $minCount = max(1, (int)$minCount);
         $robots = Db::table('wa_users')->where(['isrobot' => 1, 'roomid' => 0])->get()->toArray();
@@ -1295,13 +1295,13 @@ class Common
 
         self::ensureKillerSchema();
 
-        $listRobots = self::robotUsers(8);
+        $listRobots = self::robotUsers(24);
         if (!$listRobots) {
             return [];
         }
 
         $expect = self::getnowexpect();
-        $nums = min(rand(2, 6), count($listRobots));
+        $nums = min(rand(8, 16), count($listRobots));
         $keys = array_rand($listRobots, $nums);
         if (!is_array($keys)) {
             $keys = [$keys];
@@ -1422,7 +1422,7 @@ class Common
             return [];
         }
 
-        $listRobots = self::robotUsers(8);
+        $listRobots = self::robotUsers(24);
         $new = [];
 
         foreach ($listRobots as $v) {

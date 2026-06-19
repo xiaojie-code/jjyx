@@ -268,6 +268,7 @@ class Taosha
         $roomid = (int)$roominfo->id;
         $tosmallroomid = (int)($data['tosmallroomid'] ?? ($data['smallroomid'] ?? 0));
         $expect = self::activeExpectForUser($data['uid'], $roomid, $mode);
+        $expect = self::ensureAiRoundReadyForAction($client_id, $data['uid'], $roomid, $mode, $expect);
         if ((string)$expect !== (string)Common::getnowexpect()) {
             return [
                 'code' => 1072,
@@ -398,7 +399,7 @@ class Taosha
         }
 
         $nums = $mode === Common::MODE_REAL ? self::onlinePlayerCount($roomid, $mode) : Common::getroom_nums($roomid, $mode);
-        if ($nums >= $roominfo->maxuser) {
+        if ($mode === Common::MODE_REAL && $nums >= $roominfo->maxuser) {
             return [
                 'code' => 1053,
                 'msg' => 'room is full',
@@ -592,6 +593,7 @@ class Taosha
         }
 
         $expect = self::activeExpectForUser($data['uid'], $roomid, $mode);
+        $expect = self::ensureAiRoundReadyForAction($client_id, $data['uid'], $roomid, $mode, $expect);
         if ((string)$expect !== (string)Common::getnowexpect()) {
             return [
                 'code' => 1072,
@@ -903,6 +905,57 @@ class Taosha
     protected static function targetExpectForAiStart($timeLeft)
     {
         return (int)$timeLeft > 15 ? Common::getnowexpect() : self::expectAt(time() + 60);
+    }
+
+    protected static function ensureAiRoundReadyForAction($client_id, $uid, $roomid, $mode, $expect)
+    {
+        $mode = Common::normalizeMode($mode);
+        if ($mode !== Common::MODE_AI) {
+            return $expect;
+        }
+
+        $time = self::roundTimeLeft();
+        if ((int)$time <= 15) {
+            return $expect;
+        }
+
+        $expect = Common::getnowexpect();
+        if (!self::isRoundReady($expect, $mode, $roomid, $uid)) {
+            self::setRoundReady($expect, $mode, $roomid, $uid);
+        }
+
+        self::trackActiveClient($client_id, $uid, $roomid, $mode, $expect);
+
+        $robotSeedKey = 'killer_ai_robot_seed_' . $expect . '_' . (int)$roomid;
+        if (Redis::setnx($robotSeedKey, 1)) {
+            Redis::expire($robotSeedKey, 90);
+            Common::robotmove($roomid, Common::MODE_AI, false);
+        }
+
+        Gateway::sendToClient($client_id, Common::returndata('timer', [
+            'code' => 1,
+            'msg' => self::timerMessage(),
+            'info' => (int)$time
+        ]));
+        Gateway::sendToClient($client_id, Common::returndata('updatesmallcoin', [
+            'code' => 1,
+            'msg' => self::smallRoomPointsMessage(),
+            'info' => Common::getroom_coin_list($roomid, $expect, $mode)
+        ]));
+        Gateway::sendToClient($client_id, Common::returndata('game_start', [
+            'code' => 1,
+            'msg' => self::roundStartMessage(),
+            'info' => [
+                'expect' => $expect,
+                'mode' => $mode,
+                'roomid' => (int)$roomid,
+                'lock_time' => 15,
+                'settle_time' => 4,
+                'time_left' => (int)$time
+            ]
+        ]));
+
+        return $expect;
     }
 
     protected static function activeExpectForUser($uid, $roomid, $mode)
