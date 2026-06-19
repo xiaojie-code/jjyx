@@ -399,6 +399,8 @@
       var killerAssetVersion = "20260618-killer-raw-unity-assets-ws2";
       var killerUnityUiPatchTimer = 0;
       var killerUnityUiPatchStopTimer = 0;
+      var killerAiGameplayPatchTimer = 0;
+      var killerAiGameplayPatchStopTimer = 0;
 
       function normalizeKillerMode(mode) {
         var text = String(mode || "").toLowerCase();
@@ -752,6 +754,8 @@
         killerAiAutoEnterSent = true;
         hideWaiting();
         hideRoundPanel();
+        killerRoundReady = true;
+        scheduleKillerAiGameplayPatch(9000, { source: "ai_enter" });
         sendKillerAction("enterroom", { roomid: normalizeKillerRoomId(killerSession.roomid) });
         setTimeout(startKillerRound, 180);
         return true;
@@ -767,6 +771,10 @@
         killerRoundReady = true;
         resetKillerBetState("");
         showRoundPanel("准备中", "正在确认本局状态。", "已准备", true);
+        if (getKillerMode() === "ai") {
+          hideRoundPanel();
+          scheduleKillerAiGameplayPatch(9000, { source: "start_round" });
+        }
         sendKillerAction("start_round");
       }
 
@@ -802,6 +810,76 @@
         }
       }
 
+      function buildKillerAiGameplayState(extra) {
+        return JSON.stringify(Object.assign({
+          mode: "ai",
+          roomid: normalizeKillerRoomId(killerSession.roomid || 1),
+          uid: String(killerSession.uid || ""),
+          token: String(killerSession.token || ""),
+          expect: String(killerCurrentExpect || ""),
+          ready: true,
+          started: true,
+          roundRunning: true
+        }, extra || {}));
+      }
+
+      function forceKillerAiGameplayUi(extra) {
+        if (getKillerMode() !== "ai") return false;
+        hideWaiting();
+        if (killerRoundRunning) {
+          hideRoundPanel();
+        }
+
+        var ok = false;
+        var state = buildKillerAiGameplayState(extra);
+        var calls = [
+          ["Canvas", "CloseMatchPanel"],
+          ["Canvas", "HideMatchPanel"],
+          ["Canvas", "CloseMatching"],
+          ["Canvas", "HideMatching"],
+          ["Canvas", "OnEnterRoomSuccess", state],
+          ["Canvas", "OnGameStart", state],
+          ["Canvas", "ShowGamePanel", state],
+          ["UIRoot", "CloseMatchPanel"],
+          ["UIRoot", "HideMatchPanel"],
+          ["UIRoot", "OnEnterRoomSuccess", state],
+          ["UIRoot", "OnGameStart", state],
+          ["GameManager", "OnEnterRoomSuccess", state],
+          ["GameManager", "OnGameStart", state],
+          ["GameManager", "StartGame", state],
+          ["NetManager", "OnEnterRoomSuccess", state],
+          ["NetManager", "OnGameStart", state],
+          ["MatchingPanel", "Close"],
+          ["MatchingPanel", "Hide"],
+          ["MatchPanel", "Close"],
+          ["MatchPanel", "Hide"],
+          ["QuickRoomPanel", "Close"],
+          ["QuickRoomPanel", "Hide"],
+          ["WaitPanel", "Close"],
+          ["WaitPanel", "Hide"],
+          ["RoomPanel", "Show"]
+        ];
+
+        calls.forEach(function (call) {
+          ok = sendKillerUnityMessage(call[0], call[1], call[2]) || ok;
+        });
+        return ok;
+      }
+
+      function scheduleKillerAiGameplayPatch(durationMs, extra) {
+        if (getKillerMode() !== "ai") return;
+        clearInterval(killerAiGameplayPatchTimer);
+        clearTimeout(killerAiGameplayPatchStopTimer);
+        forceKillerAiGameplayUi(extra);
+        killerAiGameplayPatchTimer = setInterval(function () {
+          forceKillerAiGameplayUi(extra);
+        }, 450);
+        killerAiGameplayPatchStopTimer = setTimeout(function () {
+          clearInterval(killerAiGameplayPatchTimer);
+          killerAiGameplayPatchTimer = 0;
+        }, durationMs || 9000);
+      }
+
       function patchKillerUnityBetDropdown() {
         if (!window.unityInstance) return false;
         var ok = false;
@@ -826,6 +904,7 @@
 
       function scheduleKillerUnityUiPatch() {
         startKillerUnityUiPatchLoop(45000);
+        scheduleKillerAiGameplayPatch(9000);
       }
 
       function startKillerUnityUiPatchLoop(durationMs) {
@@ -977,6 +1056,7 @@
               killerAppLoginSent = true;
               hideAuthMask();
               setTimeout(requestKillerBalance, 150);
+              scheduleKillerAiGameplayPatch(9000, { source: "login" });
               setTimeout(enterKillerAiRoomNow, 220);
               return;
             }
@@ -991,6 +1071,10 @@
           if (action === "match_waiting") {
             if (getKillerMode() === "ai") {
               hideWaiting();
+              hideRoundPanel();
+              killerRoundReady = true;
+              killerRoundRunning = true;
+              scheduleKillerAiGameplayPatch(12000, { source: "match_waiting" });
               enterKillerAiRoomNow();
               return;
             }
@@ -1004,6 +1088,13 @@
               syncKillerBetState(info);
               killerRoundReady = !!info.ready;
               killerRoundRunning = info.round_status === "playing";
+              if (normalizeKillerMode(info.mode || getKillerMode()) === "ai") {
+                killerRoundReady = true;
+                killerRoundRunning = info.round_status === "playing" || info.status === "playing" || info.can_touzhu === true;
+                hideWaiting();
+                if (killerRoundRunning) hideRoundPanel();
+                scheduleKillerAiGameplayPatch(12000, Object.assign({ source: "returnenterroom" }, info));
+              }
               if (!killerRoundReady && !killerRoundRunning) {
                 if (normalizeKillerMode(info.mode || getKillerMode()) === "ai") {
                   setTimeout(startKillerRound, 120);
@@ -1026,6 +1117,19 @@
 
             killerRoundReady = true;
             syncKillerBetState(info);
+            if (getKillerMode() === "ai" && info.round_status !== "waiting_next") {
+              killerRoundRunning = true;
+              if (typeof info.expect !== "undefined" && String(info.expect) !== String(killerCurrentExpect || "")) {
+                resetKillerBetState(info.expect || "");
+              }
+              syncKillerBetState(info);
+              clearRoundWaitFallback();
+              hideWaiting();
+              hideRoundPanel();
+              scheduleKillerAiGameplayPatch(12000, Object.assign({ source: "returnstart_round" }, info));
+              showBetTip(killerHasBet ? ("已下注 " + (killerBetCoin || "") + " 积分，等待杀手出现。") : "本局开始，请下注。", 2600);
+              return;
+            }
             if (info.round_status === "waiting_next") {
               hideWaiting();
               scheduleRoundWaitFallback(info.wait_seconds || info.time_left || 60);
@@ -1060,6 +1164,7 @@
 
           if ((action === "returntouzhu" || action === "returnchangesmallroom") && data.code === 1072) {
             killerRoundReady = false;
+            scheduleKillerAiGameplayPatch(9000, { source: "retry_after_1072" });
             setTimeout(startKillerRound, 120);
             showBetTip("Preparing round, please try again.", 1800);
             return;
@@ -1080,6 +1185,7 @@
             clearRoundWaitFallback();
             resultPanel.hidden = true;
             scheduleKillerUnityUiPatch();
+            scheduleKillerAiGameplayPatch(12000, Object.assign({ source: "game_start" }, info));
             hideRoundPanel();
             hideWaiting();
             if (killerHasBet) {
@@ -1101,6 +1207,7 @@
 
           if (action === "default_touzhu") {
             syncKillerBetState(info);
+            scheduleKillerAiGameplayPatch(9000, Object.assign({ source: "default_touzhu" }, info));
             showBetTip("已默认下注 100 积分。", 2600);
             return;
           }
