@@ -644,7 +644,9 @@
         } else if (info.has_bet === false) {
           killerHasBet = false;
           killerBetCoin = 0;
-          killerBetSmallRoom = 0;
+          if (parseInt(info.smallroomid, 10) > 0) {
+            killerBetSmallRoom = parseInt(info.smallroomid, 10);
+          }
         }
       }
 
@@ -1022,6 +1024,11 @@
           }
           updateKillerSession(message.data);
           if (action === "touzhu") {
+            var targetSmallRoom = parseInt(message.data.smallroomid || message.data.tosmallroomid || message.data.tzid || killerBetSmallRoom, 10);
+            if (targetSmallRoom > 0) {
+              message.data.smallroomid = targetSmallRoom;
+              message.data.tosmallroomid = targetSmallRoom;
+            }
             var rawCoin = message.data.coin;
             var normalizedCoin = normalizeKillerBetAmount(rawCoin);
             if (parseInt(rawCoin, 10) !== normalizedCoin) {
@@ -1029,6 +1036,13 @@
               message.data.legacy_bet_mapped = true;
             }
             message.data.coin = normalizedCoin;
+          } else if (action === "changesmallroom") {
+            var nextSmallRoom = parseInt(message.data.tosmallroomid || message.data.smallroomid || message.data.tzid, 10);
+            if (nextSmallRoom > 0) {
+              killerBetSmallRoom = nextSmallRoom;
+              message.data.tosmallroomid = nextSmallRoom;
+              message.data.smallroomid = nextSmallRoom;
+            }
           }
           message.data.mode = getKillerMode();
           return JSON.stringify(message);

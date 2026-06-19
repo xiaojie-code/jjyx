@@ -1564,9 +1564,12 @@ class Common
             ]);
             $query = self::applyModeWhere($query, $mode);
 
+            $coin = (int)$query->sum('coin');
             $new[] = [
                 'smallroomid' => $i,
-                'allcoin' => (int)$query->sum('coin')
+                'allcoin' => $coin,
+                'coin' => $coin,
+                'tzcoin' => $coin
             ];
         }
 

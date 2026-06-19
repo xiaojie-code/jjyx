@@ -221,7 +221,7 @@ class Taosha
 
     public static function syncClientAfterBet($client_id, $data, $res = null)
     {
-        if (!is_array($data) || !is_array($res)) {
+        if (!is_array($data) || !is_array($res) || (int)($res['code'] ?? 0) !== 1) {
             return;
         }
 
@@ -552,7 +552,7 @@ class Taosha
         }
 
         $roomid = (int)($data['roomid'] ?? 0);
-        $smallroomid = (int)$data['smallroomid'];
+        $smallroomid = (int)($data['smallroomid'] ?? ($data['tosmallroomid'] ?? ($data['tzid'] ?? 0)));
         $coin = (int)$data['coin'];
         $rawCoin = (int)($data['raw_coin'] ?? $coin);
         $mode = Common::getDataMode($data, $data['uid'], $client_id);
