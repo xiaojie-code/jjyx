@@ -5,8 +5,8 @@ import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { resolve } from 'path'
 
-export default defineConfig({
-  base: '/',
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/admin/' : '/',
   plugins: [
     vue(),
     AutoImport({
@@ -34,4 +34,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))
