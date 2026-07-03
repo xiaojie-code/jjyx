@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
@@ -14,6 +15,7 @@ class RechargePage extends ConsumerStatefulWidget {
 }
 
 class _RechargePageState extends ConsumerState<RechargePage> {
+  static final RegExp _mobileRegex = RegExp(r'^1[3-9]\d{9}$');
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   bool _loading = true;
@@ -82,8 +84,8 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       Toast.warning(context, '请填写姓名');
       return;
     }
-    if (!RegExp(r'^1\d{10}$').hasMatch(phone)) {
-      Toast.warning(context, '请填写正确的11位手机号');
+    if (!_mobileRegex.hasMatch(phone)) {
+      Toast.warning(context, '请输入正确的11位手机号（需以13-19开头）');
       return;
     }
     if (_selectedAmount == null) {
@@ -113,7 +115,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       if (msg.contains('待核实')) {
         msg = '你有一笔待核实的充值申请，请等待管理员处理';
       } else if (msg.contains('手机号')) {
-        msg = '请填写正确的11位手机号';
+        msg = '请输入正确的11位手机号（需以13-19开头）';
       } else if (msg.contains('姓名')) {
         msg = '请填写姓名';
       }
@@ -334,6 +336,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
             maxLength: 11,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
               labelText: '手机号',
               hintText: '用于接收激活码短信',

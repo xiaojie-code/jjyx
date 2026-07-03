@@ -99,6 +99,13 @@
 
         <div v-if="result.weekly" class="result-block">
           <h3>每周积分返还</h3>
+          <el-alert
+            v-if="result.weekly.reason"
+            type="warning"
+            show-icon
+            :closable="false"
+            :title="reasonText(result.weekly.reason)"
+          />
           <el-descriptions :column="2" border>
             <el-descriptions-item label="生成周期">{{ result.weekly.createdPeriods || 0 }}</el-descriptions-item>
             <el-descriptions-item label="跳过周期">{{ result.weekly.skippedPeriods || 0 }}</el-descriptions-item>
@@ -193,8 +200,30 @@ function statusText(status: string) {
     preview: '试算',
     created: '已生成',
     already_exists: '已存在',
+    switch_disabled: '功能开关关闭',
+    invalid_rate: '返还比例配置异常',
+    before_feature_start: '早于功能开始时间',
+    no_history_consumption: '没有历史消费',
+    no_completed_week: '没有已结束周',
+    skipped: '已跳过',
   }
   return map[status] || status || '-'
+}
+
+function reasonText(reason: string) {
+  const map: Record<string, string> = {
+    switch_disabled: '每周积分返还功能开关当前关闭，本次补发没有写入统计数据。请先在功能管理中开启“积分返还”，再重新执行补发。',
+    invalid_rate: '积分返还倍率或每日比例配置异常，本次没有写入统计数据。',
+    before_feature_start: '所选周期早于积分返还功能开始时间，本次没有写入统计数据。',
+    no_history_consumption: '所选时间范围内没有可返还的历史积分消费。',
+    no_completed_week: '所选时间范围内没有完整结束的一周，暂不能生成周返还统计。',
+  }
+  return map[reason] || `本次补发未写入统计数据：${reason}`
+}
+
+function backfillWarning(data: any) {
+  if (data?.weekly?.reason) return reasonText(data.weekly.reason)
+  return ''
 }
 
 async function runBackfill(dryRun: boolean) {
@@ -205,7 +234,9 @@ async function runBackfill(dryRun: boolean) {
   loading.value = true
   try {
     result.value = await request.post('/reward-backfill/legacy', buildPayload(dryRun))
-    ElMessage.success(dryRun ? '试算完成' : '补发完成')
+    const warning = backfillWarning(result.value)
+    if (warning) ElMessage.warning(warning)
+    else ElMessage.success(dryRun ? '试算完成' : '补发完成')
   } finally {
     loading.value = false
   }

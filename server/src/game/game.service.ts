@@ -651,6 +651,48 @@ export class GameService {
     }
   }
 
+  private shouldPreserveFishingLevelField(key: string) {
+    const normalized = String(key || '').toLowerCase();
+    return (
+      /(^|_)(skill|bait|net|craft|rod|hook|rope).*(_|)(lv|level)$/.test(normalized) ||
+      /(skill|bait|net|craft|rod|hook|rope).*(lv|level)/.test(normalized) ||
+      /^lv(el)?$/.test(normalized)
+    );
+  }
+
+  private mergeFishingProgress(prev: any, next: any, key = ''): any {
+    if (Array.isArray(prev) && Array.isArray(next)) {
+      return next.map((item, index) => this.mergeFishingProgress(prev[index], item, key));
+    }
+
+    if (
+      prev &&
+      next &&
+      typeof prev === 'object' &&
+      typeof next === 'object' &&
+      !Array.isArray(prev) &&
+      !Array.isArray(next)
+    ) {
+      const merged = { ...next };
+      for (const childKey of Object.keys(prev)) {
+        if (Object.prototype.hasOwnProperty.call(next, childKey)) {
+          merged[childKey] = this.mergeFishingProgress(prev[childKey], next[childKey], childKey);
+        }
+      }
+      return merged;
+    }
+
+    if (this.shouldPreserveFishingLevelField(key)) {
+      const prevNumber = Number(prev);
+      const nextNumber = Number(next);
+      if (Number.isFinite(prevNumber) && Number.isFinite(nextNumber) && prevNumber > nextNumber) {
+        return prev;
+      }
+    }
+
+    return next;
+  }
+
   private async touchFishingDailyReward(userId: number, gameId: number, manager?: any) {
     if (!manager) {
       await this.ensureFishingSavesTable();
@@ -717,10 +759,13 @@ export class GameService {
     const rawSaveData = this.parseFishingSaveData(data);
     const balance = await this.currencyService.getBalance(userId);
     const dailyClaimed = await this.hasDailyFishingReward(userId, gameId);
-    const saveData = this.normalizeFishingSaveData(rawSaveData, Number(balance.points), dailyClaimed);
 
     const saved = await this.dataSource.transaction(async (mgr) => {
       let save = await mgr.findOne(FishingSave, { where: { userId, gameId } });
+      const mergedRawSaveData = save?.saveData
+        ? this.mergeFishingProgress(save.saveData, rawSaveData)
+        : rawSaveData;
+      const saveData = this.normalizeFishingSaveData(mergedRawSaveData, Number(balance.points), dailyClaimed);
       if (!save) {
         save = mgr.create(FishingSave, {
           userId,

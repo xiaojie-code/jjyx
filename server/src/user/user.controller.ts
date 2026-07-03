@@ -109,4 +109,9 @@ export class UserController {
   async getInviteRecords(@CurrentUser('id') userId: number) {
     return this.userService.getInviteRecords(userId);
   }
+
+  @Get('weekly-point-return')
+  async getMyWeeklyPointReturn(@CurrentUser('id') userId: number) {
+    return this.userService.getMyWeeklyPointReturn(userId);
+  }
 }

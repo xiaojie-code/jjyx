@@ -32,7 +32,7 @@ class Taosha
         foreach ($groups['waiting'] as $group) {
             self::sendToClients($group['clients'], Common::returndata('match_waiting', [
                 'code' => 1,
-                'msg' => 'waiting for real players',
+                'msg' => '正在等待真人玩家',
                 'info' => [
                     'mode' => Common::MODE_REAL,
                     'roomid' => $group['roomid'],
@@ -81,7 +81,7 @@ class Taosha
         if (!$roominfo) {
             return [
                 'code' => 1051,
-                'msg' => 'room not found',
+                'msg' => '房间不存在',
                 'info' => []
             ];
         }
@@ -95,7 +95,7 @@ class Taosha
             } else {
             return [
                 'code' => 1054,
-                'msg' => 'not in this room',
+                'msg' => '不在当前房间',
                 'info' => [
                     'roomid' => $roomid,
                     'mode' => $mode
@@ -107,7 +107,7 @@ class Taosha
         if ((int)($userinfo['coin'] ?? 0) < 100) {
             return [
                 'code' => 1056,
-                'msg' => 'points not enough',
+                'msg' => '积分不足',
                 'info' => [
                     'default_bet' => 100,
                     'balance' => (int)($userinfo['coin'] ?? 0)
@@ -128,7 +128,7 @@ class Taosha
 
         return [
             'code' => 1,
-            'msg' => $waitingNext ? 'ready for next round' : 'round ready',
+            'msg' => $waitingNext ? '已准备下一局' : '本局已准备',
             'info' => array_merge($status, [
                 'uid' => $uid,
                 'expect' => $expect,
@@ -261,7 +261,7 @@ class Taosha
         if (!$roominfo) {
             return [
                 'code' => 1051,
-                'msg' => 'room not found',
+                'msg' => '房间不存在',
                 'info' => []
             ];
         }
@@ -272,7 +272,7 @@ class Taosha
         if ((string)$expect !== (string)Common::getnowexpect()) {
             return [
                 'code' => 1072,
-                'msg' => 'round is waiting to start',
+                'msg' => '本局正在等待开始',
                 'info' => self::roundStatusInfo($roomid, $mode, $expect, $data['uid'])
             ];
         }
@@ -280,7 +280,7 @@ class Taosha
         if (!self::isRoundReady($expect, $mode, $roomid, $data['uid'])) {
             return [
                 'code' => 1072,
-                'msg' => 'round is not started',
+                'msg' => '本局还未开始',
                 'info' => self::roundStatusInfo($roomid, $mode, $expect, $data['uid'])
             ];
         }
@@ -288,7 +288,7 @@ class Taosha
         if (!self::canPlayModeForExpect($roomid, $mode, $expect)) {
             return [
                 'code' => 1071,
-                'msg' => 'waiting for real players',
+                'msg' => '正在等待真人玩家',
                 'info' => self::modeStatusForExpect($roomid, $mode, $expect)
             ];
         }
@@ -296,7 +296,7 @@ class Taosha
         if (!self::canOperate()) {
             return [
                 'code' => 1059,
-                'msg' => 'room is locked',
+                'msg' => '房间已锁定',
                 'info' => []
             ];
         }
@@ -304,7 +304,7 @@ class Taosha
         if ($tosmallroomid < 1 || $tosmallroomid > 8) {
             return [
                 'code' => 1061,
-                'msg' => 'small room not found',
+                'msg' => '房间不存在',
                 'info' => []
             ];
         }
@@ -314,7 +314,7 @@ class Taosha
         if (!$lockToken) {
             return [
                 'code' => 1064,
-                'msg' => 'request is processing',
+                'msg' => '请求处理中，请稍候',
                 'info' => []
             ];
         }
@@ -335,7 +335,7 @@ class Taosha
                 self::broadcastUserPosition($roomid, $mode, $data['uid'], $tosmallroomid);
                 return [
                     'code' => 1,
-                    'msg' => 'position changed',
+                    'msg' => '位置已切换',
                     'info' => [
                         'smallroomid' => $tosmallroomid,
                         'coin' => 0,
@@ -359,7 +359,7 @@ class Taosha
 
         return [
             'code' => 1,
-            'msg' => 'change room success',
+            'msg' => '房间切换成功',
             'info' => [
                 'smallroomid' => $tosmallroomid,
                 'mode' => $mode
@@ -381,7 +381,7 @@ class Taosha
         if (!$roominfo) {
             return [
                 'code' => 1051,
-                'msg' => 'room not found',
+                'msg' => '房间不存在',
                 'info' => []
             ];
         }
@@ -391,7 +391,7 @@ class Taosha
         if ($userinfo['coin'] < $roominfo->minprice) {
             return [
                 'code' => 1052,
-                'msg' => 'coin below room minimum',
+                'msg' => '积分低于房间要求',
                 'info' => [
                     'minprice' => (int)$roominfo->minprice
                 ]
@@ -402,7 +402,7 @@ class Taosha
         if ($mode === Common::MODE_REAL && $nums >= $roominfo->maxuser) {
             return [
                 'code' => 1053,
-                'msg' => 'room is full',
+                'msg' => '房间已满',
                 'info' => []
             ];
         }
@@ -472,7 +472,7 @@ class Taosha
 
         Gateway::sendToGroup($group, Common::returndata('user_enter_room', [
             'code' => 1,
-            'msg' => 'user entered room',
+            'msg' => '玩家已进入房间',
             'info' => [
                 'userinfo' => $userinfo,
                 'mode' => $mode
@@ -481,7 +481,7 @@ class Taosha
 
         return [
             'code' => 1,
-            'msg' => 'enter success',
+            'msg' => '进入成功',
             'info' => $info
         ];
     }
@@ -500,7 +500,7 @@ class Taosha
         if (!$roominfo) {
             return [
                 'code' => 1051,
-                'msg' => 'room not found',
+                'msg' => '房间不存在',
                 'info' => []
             ];
         }
@@ -513,7 +513,7 @@ class Taosha
 
         return [
             'code' => 1,
-            'msg' => 'leave success',
+            'msg' => '离开成功',
             'info' => [
                 'uid' => $data['uid'],
                 'mode' => $mode
@@ -528,7 +528,7 @@ class Taosha
             self::clearActiveClient($client_id);
             return [
                 'code' => 1,
-                'msg' => 'connection closed',
+                'msg' => '连接已关闭',
                 'info' => [
                     'uid' => $uid
                 ]
@@ -560,7 +560,7 @@ class Taosha
         if ($smallroomid < 1 || $smallroomid > 8) {
             return [
                 'code' => 1061,
-                'msg' => 'small room not found',
+                'msg' => '房间不存在',
                 'info' => []
             ];
         }
@@ -568,7 +568,7 @@ class Taosha
         if ($coin <= 0) {
             return [
                 'code' => 1055,
-                'msg' => 'points must be greater than 0',
+                'msg' => '下注积分必须大于 0',
                 'info' => []
             ];
         }
@@ -577,7 +577,7 @@ class Taosha
         if (!$roominfo) {
             return [
                 'code' => 1051,
-                'msg' => 'room not found',
+                'msg' => '房间不存在',
                 'info' => []
             ];
         }
@@ -587,7 +587,7 @@ class Taosha
         if ((int)$userinfo['roomid'] !== $roomid) {
             return [
                 'code' => 1054,
-                'msg' => 'not in this room',
+                'msg' => '不在当前房间',
                 'info' => []
             ];
         }
@@ -597,14 +597,14 @@ class Taosha
         if ((string)$expect !== (string)Common::getnowexpect()) {
             return [
                 'code' => 1072,
-                'msg' => 'round is waiting to start',
+                'msg' => '本局正在等待开始',
                 'info' => self::roundStatusInfo($roomid, $mode, $expect, $data['uid'])
             ];
         }
         if (!self::isRoundReady($expect, $mode, $roomid, $data['uid'])) {
             return [
                 'code' => 1072,
-                'msg' => 'round is not started',
+                'msg' => '本局还未开始',
                 'info' => self::roundStatusInfo($roomid, $mode, $expect, $data['uid'])
             ];
         }
@@ -619,7 +619,7 @@ class Taosha
         if (!Common::isAllowedBetAmount($coin, $isRobotUser)) {
             return [
                 'code' => 1057,
-                'msg' => 'invalid bet amount',
+                'msg' => '下注积分无效',
                 'info' => [
                     'raw_coin' => $rawCoin,
                     'coin' => $coin,
@@ -631,7 +631,7 @@ class Taosha
         if ($userinfo['coin'] < $coin) {
             return [
                 'code' => 1056,
-                'msg' => 'points not enough',
+                'msg' => '积分不足',
                 'info' => []
             ];
         }
@@ -639,7 +639,7 @@ class Taosha
         if (!self::canPlayModeForExpect($roomid, $mode, $expect)) {
             return [
                 'code' => 1071,
-                'msg' => 'waiting for real players',
+                'msg' => '正在等待真人玩家',
                 'info' => self::modeStatusForExpect($roomid, $mode, $expect)
             ];
         }
@@ -647,7 +647,7 @@ class Taosha
         if (!self::canOperate()) {
             return [
                 'code' => 1059,
-                'msg' => 'room is locked',
+                'msg' => '房间已锁定',
                 'info' => []
             ];
         }
@@ -657,7 +657,7 @@ class Taosha
         if (!$lockToken) {
             return [
                 'code' => 1064,
-                'msg' => 'bet request is processing',
+                'msg' => '下注处理中，请稍候',
                 'info' => []
             ];
         }
@@ -680,7 +680,7 @@ class Taosha
                 if (!$sameCoin) {
                     return [
                         'code' => 1065,
-                        'msg' => 'bet amount is locked in this round',
+                        'msg' => '本局下注积分已锁定',
                         'info' => [
                             'id' => $exists->id,
                             'smallroomid' => (int)$exists->tzid,
@@ -706,7 +706,7 @@ class Taosha
 
                 return [
                     'code' => 1,
-                    'msg' => $sameRoom ? 'already bet' : 'change room success',
+                    'msg' => $sameRoom ? '已下注' : '房间切换成功',
                     'info' => [
                         'id' => $exists->id,
                         'smallroomid' => $smallroomid,
@@ -740,7 +740,7 @@ class Taosha
                 Db::rollBack();
                 return [
                     'code' => 1063,
-                    'msg' => 'bet failed',
+                    'msg' => '下注失败',
                     'info' => []
                 ];
             }
@@ -749,7 +749,7 @@ class Taosha
                 Db::rollBack();
                 return [
                     'code' => 1056,
-                    'msg' => 'points not enough',
+                    'msg' => '积分不足',
                     'info' => []
                 ];
             }
@@ -772,7 +772,7 @@ class Taosha
             if ($existingAfterRollback) {
                 return [
                     'code' => 1,
-                    'msg' => 'already bet',
+                    'msg' => '已下注',
                     'info' => [
                         'id' => $existingAfterRollback->id,
                         'smallroomid' => (int)$existingAfterRollback->tzid,
@@ -789,7 +789,7 @@ class Taosha
 
             return [
                 'code' => 1063,
-                'msg' => 'bet failed',
+                'msg' => '下注失败',
                 'info' => []
             ];
         } finally {
@@ -802,7 +802,7 @@ class Taosha
 
         return [
             'code' => 1,
-            'msg' => 'bet success',
+            'msg' => '下注成功',
             'info' => [
                 'smallroomid' => $smallroomid,
                 'coin' => $coin,
@@ -842,7 +842,7 @@ class Taosha
 
         return [
             'code' => 1,
-            'msg' => 'get success',
+            'msg' => '获取成功',
             'info' => [
                 'list' => $list,
                 'killer' => $killer,
@@ -1589,7 +1589,7 @@ class Taosha
             foreach ($moved as $move) {
                 self::sendToClients($group['clients'], Common::returndata('usertouzhu', [
                     'code' => 1,
-                    'msg' => 'robot position changed',
+                    'msg' => '机器人位置已更新',
                     'info' => [
                         'uid' => $move['uid'] ?? '',
                         'smallroomid' => $move['smallroomid'] ?? 0,
@@ -1672,7 +1672,7 @@ class Taosha
                 self::clearRoundReady($expect, $mode, $roomid, $uid);
                 self::sendToClients($clientIds, Common::returndata('default_touzhu_failed', [
                     'code' => 1056,
-                    'msg' => 'points not enough',
+                    'msg' => '积分不足',
                     'info' => [
                         'expect' => $expect,
                         'roomid' => $roomid,
@@ -1709,7 +1709,7 @@ class Taosha
                 Db::rollBack();
                 self::sendToClients($clientIds, Common::returndata('default_touzhu_failed', [
                     'code' => 1056,
-                    'msg' => 'points not enough',
+                    'msg' => '积分不足',
                     'info' => [
                         'expect' => $expect,
                         'roomid' => $roomid,
@@ -1753,7 +1753,7 @@ class Taosha
         ]));
         self::sendToClients($clientIds, Common::returndata('default_touzhu', [
             'code' => 1,
-            'msg' => 'default bet placed',
+            'msg' => '已默认下注',
             'info' => [
                 'expect' => $expect,
                 'roomid' => $roomid,
@@ -1914,7 +1914,7 @@ class Taosha
     {
         Gateway::sendToGroup(Common::roomGroup($roomid, $mode), Common::returndata('usertouzhu', [
             'code' => 1,
-            'msg' => 'user position changed',
+            'msg' => '位置已更新',
             'info' => [
                 'uid' => $uid,
                 'smallroomid' => $smallroomid,
@@ -1930,13 +1930,13 @@ class Taosha
 
         Gateway::sendToGroup($group, Common::returndata('updatesmallcoin', [
             'code' => 1,
-            'msg' => 'small room coins updated',
+            'msg' => '房间积分已更新',
             'info' => Common::getroom_coin_list($roomid, $expect, $mode)
         ]));
 
         Gateway::sendToGroup($group, Common::returndata('usertouzhu', [
             'code' => 1,
-            'msg' => 'user bet position changed',
+            'msg' => '下注位置已更新',
             'info' => [
                 'uid' => $uid,
                 'smallroomid' => $smallroomid,

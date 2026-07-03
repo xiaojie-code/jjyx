@@ -396,7 +396,45 @@
         2000: 3000
       };
       window.__KILLER_BET_AMOUNTS__ = killerBetAmounts;
-      var killerAssetVersion = "20260618-killer-raw-unity-assets-ws2";
+      var KILLER_DEFAULT_MODE = "ai";
+      var KILLER_HIDDEN_PLAYER_NAME = "\u200B";
+      var KILLER_MESSAGE_TRANSLATIONS = {
+        "Preparing round, please try again.": "本局正在准备，请稍后再试。",
+        "waiting for real players": "正在等待真人玩家",
+        "room not found": "房间不存在",
+        "not in this room": "不在当前房间",
+        "points not enough": "积分不足",
+        "ready for next round": "已准备下一局",
+        "round ready": "本局已准备",
+        "round is waiting to start": "本局正在等待开始",
+        "round is not started": "本局还未开始",
+        "room is locked": "房间已锁定",
+        "small room not found": "房间不存在",
+        "request is processing": "请求处理中，请稍候",
+        "position changed": "位置已切换",
+        "change room success": "房间切换成功",
+        "coin below room minimum": "积分低于房间要求",
+        "room is full": "房间已满",
+        "user entered room": "玩家已进入房间",
+        "enter success": "进入成功",
+        "leave success": "离开成功",
+        "connection closed": "连接已关闭",
+        "points must be greater than 0": "下注积分必须大于 0",
+        "invalid bet amount": "下注积分无效",
+        "bet request is processing": "下注处理中，请稍候",
+        "bet amount is locked in this round": "本局下注积分已锁定",
+        "already bet": "已下注",
+        "bet failed": "下注失败",
+        "bet success": "下注成功",
+        "get success": "获取成功",
+        "robot position changed": "机器人位置已更新",
+        "user position changed": "位置已更新",
+        "small room coins updated": "房间积分已更新",
+        "user bet position changed": "下注位置已更新",
+        "default bet placed": "已默认下注",
+        "invalid message": "消息格式错误"
+      };
+      var killerAssetVersion = "20260625-killer-direct-ai-cn-v1";
       var killerUnityUiPatchTimer = 0;
       var killerUnityUiPatchStopTimer = 0;
       var killerAiGameplayPatchTimer = 0;
@@ -459,7 +497,7 @@
       }
 
       function getKillerMode() {
-        return normalizeKillerMode(window.__KILLER_MODE__ || localStorage.getItem("killer_match_mode") || "ai");
+        return normalizeKillerMode(window.__KILLER_MODE__ || KILLER_DEFAULT_MODE);
       }
 
       function normalizeKillerRoomId(roomid) {
@@ -531,11 +569,11 @@
       }
 
       function setKillerMode(mode) {
-        window.__KILLER_MODE__ = normalizeKillerMode(mode);
+        window.__KILLER_MODE__ = KILLER_DEFAULT_MODE;
         localStorage.setItem("killer_match_mode", window.__KILLER_MODE__);
         applyKillerModeToUrl(window.__KILLER_MODE__);
         killerSession.mode = window.__KILLER_MODE__;
-        modeBadge.textContent = window.__KILLER_MODE__ === "real" ? "多人对战" : "AI 对战";
+        modeBadge.textContent = "AI 对战";
         modeBadge.hidden = false;
       }
 
@@ -1051,6 +1089,164 @@
         }
       }
 
+      function localizeKillerText(text) {
+        if (typeof text !== "string") return text;
+        var trimmed = text.trim();
+        return KILLER_MESSAGE_TRANSLATIONS[trimmed] || text;
+      }
+
+      function localizeKillerMessageFields(value, depth) {
+        if (!value || depth > 10) return value;
+        if (Array.isArray(value)) {
+          value.forEach(function (item) {
+            localizeKillerMessageFields(item, depth + 1);
+          });
+          return value;
+        }
+        if (typeof value !== "object") return value;
+
+        Object.keys(value).forEach(function (key) {
+          var item = value[key];
+          if (
+            typeof item === "string" &&
+            (key === "msg" || key === "message" || key === "tip" || key === "tips" || key === "error")
+          ) {
+            value[key] = localizeKillerText(item);
+            return;
+          }
+          localizeKillerMessageFields(item, depth + 1);
+        });
+        return value;
+      }
+
+      function killerSelfUidText() {
+        return String(killerSession.uid || appInitData.userId || appInitData.user_id || "").trim();
+      }
+
+      function killerSelfAccountText() {
+        return String(killerSession.account || appAccount() || "").trim();
+      }
+
+      function killerSelfDisplayName() {
+        return String(appInitData.nickname || killerSelfAccountText() || killerSelfUidText() || "玩家").trim();
+      }
+
+      function killerValueMatchesSelf(value, selfValue) {
+        return !!selfValue && String(value || "").trim() === String(selfValue).trim();
+      }
+
+      function isKillerSelfUserObject(value) {
+        if (!value || typeof value !== "object") return false;
+        var selfUid = killerSelfUidText();
+        var selfAccount = killerSelfAccountText();
+        if (
+          killerValueMatchesSelf(value.id, selfUid) ||
+          killerValueMatchesSelf(value.uid, selfUid) ||
+          killerValueMatchesSelf(value.userId, selfUid) ||
+          killerValueMatchesSelf(value.user_id, selfUid) ||
+          killerValueMatchesSelf(value.userid, selfUid)
+        ) {
+          return true;
+        }
+        if (
+          killerValueMatchesSelf(value.username, selfAccount) ||
+          killerValueMatchesSelf(value.account, selfAccount) ||
+          killerValueMatchesSelf(value.phone, selfAccount)
+        ) {
+          return true;
+        }
+        return false;
+      }
+
+      function looksLikeKillerUserObject(value, hintUser) {
+        if (!value || typeof value !== "object") return false;
+        return !!(
+          hintUser ||
+          value.userinfo ||
+          typeof value.uid !== "undefined" ||
+          typeof value.userId !== "undefined" ||
+          typeof value.user_id !== "undefined" ||
+          typeof value.userid !== "undefined" ||
+          typeof value.isrobot !== "undefined" ||
+          typeof value.client_id !== "undefined" ||
+          typeof value.clientid !== "undefined" ||
+          typeof value.username !== "undefined" ||
+          typeof value.nickname !== "undefined" ||
+          typeof value.displayName !== "undefined" ||
+          typeof value.name !== "undefined"
+        );
+      }
+
+      function setKillerDisplayNameFields(value, isSelf) {
+        if (!value || typeof value !== "object") return;
+        var displayName = isSelf ? killerSelfDisplayName() : KILLER_HIDDEN_PLAYER_NAME;
+        value.nickname = displayName;
+        value.username = isSelf ? (killerSelfAccountText() || displayName) : KILLER_HIDDEN_PLAYER_NAME;
+        value.name = displayName;
+        value.displayName = displayName;
+      }
+
+      function sanitizeKillerPlayerNames(value, hintUser, depth) {
+        if (!value || depth > 12) return value;
+        if (Array.isArray(value)) {
+          value.forEach(function (item) {
+            sanitizeKillerPlayerNames(item, hintUser, depth + 1);
+          });
+          return value;
+        }
+        if (typeof value !== "object") return value;
+
+        var userLike = looksLikeKillerUserObject(value, hintUser);
+        var selfLike = isKillerSelfUserObject(value) || isKillerSelfUserObject(value.userinfo);
+        if (userLike) {
+          setKillerDisplayNameFields(value, selfLike);
+        }
+
+        Object.keys(value).forEach(function (key) {
+          var childHint =
+            key === "userinfo" ||
+            key === "selfuserinfo" ||
+            key === "user" ||
+            key === "player" ||
+            key === "onlinelist" ||
+            key === "room_players" ||
+            key === "players" ||
+            key === "winners" ||
+            key === "losers";
+          sanitizeKillerPlayerNames(value[key], childHint, depth + 1);
+        });
+        return value;
+      }
+
+      function shouldSanitizeKillerNames(action) {
+        return [
+          "returnenterroom",
+          "user_enter_room",
+          "game_start",
+          "usertouzhu",
+          "returntouzhu",
+          "returnchangesmallroom",
+          "default_touzhu",
+          "killerappear",
+          "result"
+        ].indexOf(action) !== -1;
+      }
+
+      function sanitizeKillerIncomingPayload(payload) {
+        if (typeof payload !== "string") return payload;
+        try {
+          var message = JSON.parse(payload);
+          var action = String((message && message.action) || "");
+          localizeKillerMessageFields(message, 0);
+          if (shouldSanitizeKillerNames(action)) {
+            sanitizeKillerPlayerNames(message.data, false, 0);
+          }
+          return JSON.stringify(message);
+        } catch (error) {
+          return payload;
+        }
+      }
+
       function handleKillerSocketMessage(event) {
         if (typeof event.data !== "string") return;
         try {
@@ -1180,7 +1376,7 @@
             killerRoundReady = false;
             scheduleKillerAiGameplayPatch(9000, { source: "retry_after_1072" });
             setTimeout(startKillerRound, 120);
-            showBetTip("Preparing round, please try again.", 1800);
+            showBetTip("本局正在准备，请稍后再试。", 1800);
             return;
           }
 
@@ -1343,6 +1539,109 @@
         }, 12000);
       }
 
+      function createKillerSanitizedMessageEvent(event, data) {
+        if (data === event.data) return event;
+        try {
+          return new MessageEvent("message", {
+            data: data,
+            origin: event.origin,
+            lastEventId: event.lastEventId,
+            source: event.source,
+            ports: event.ports
+          });
+        } catch (error) {
+          return {
+            data: data,
+            origin: event.origin,
+            lastEventId: event.lastEventId,
+            source: event.source,
+            ports: event.ports,
+            target: event.target,
+            currentTarget: event.currentTarget,
+            type: event.type
+          };
+        }
+      }
+
+      function installKillerIncomingMessagePatch(socket) {
+        if (!socket || socket.__KILLER_INCOMING_PATCHED__) return;
+
+        var nativeAddEventListener = socket.addEventListener.bind(socket);
+        var nativeRemoveEventListener = socket.removeEventListener.bind(socket);
+        var listenerMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+        var wrappedPairs = [];
+
+        function rememberListener(original, wrapped) {
+          if (listenerMap) {
+            listenerMap.set(original, wrapped);
+          } else {
+            wrappedPairs.push([original, wrapped]);
+          }
+        }
+
+        function findWrappedListener(original) {
+          if (listenerMap) return listenerMap.get(original);
+          for (var i = 0; i < wrappedPairs.length; i += 1) {
+            if (wrappedPairs[i][0] === original) return wrappedPairs[i][1];
+          }
+          return null;
+        }
+
+        function wrapMessageListener(listener) {
+          if (!listener) return listener;
+          var existing = findWrappedListener(listener);
+          if (existing) return existing;
+
+          var wrapped = function (event) {
+            var nextData = sanitizeKillerIncomingPayload(event.data);
+            var nextEvent = createKillerSanitizedMessageEvent(event, nextData);
+            if (typeof listener === "function") {
+              return listener.call(socket, nextEvent);
+            }
+            if (listener && typeof listener.handleEvent === "function") {
+              return listener.handleEvent(nextEvent);
+            }
+          };
+          rememberListener(listener, wrapped);
+          return wrapped;
+        }
+
+        socket.addEventListener = function patchedAddEventListener(type, listener, options) {
+          return nativeAddEventListener(type, type === "message" ? wrapMessageListener(listener) : listener, options);
+        };
+
+        socket.removeEventListener = function patchedRemoveEventListener(type, listener, options) {
+          return nativeRemoveEventListener(type, type === "message" ? (findWrappedListener(listener) || listener) : listener, options);
+        };
+
+        var onMessageListener = null;
+        nativeAddEventListener("message", function (event) {
+          if (!onMessageListener) return;
+          var nextData = sanitizeKillerIncomingPayload(event.data);
+          var nextEvent = createKillerSanitizedMessageEvent(event, nextData);
+          if (typeof onMessageListener === "function") {
+            onMessageListener.call(socket, nextEvent);
+          } else if (onMessageListener && typeof onMessageListener.handleEvent === "function") {
+            onMessageListener.handleEvent(nextEvent);
+          }
+        });
+
+        try {
+          Object.defineProperty(socket, "onmessage", {
+            configurable: true,
+            enumerable: true,
+            get: function () {
+              return onMessageListener;
+            },
+            set: function (listener) {
+              onMessageListener = listener;
+            }
+          });
+        } catch (error) {}
+
+        socket.__KILLER_INCOMING_PATCHED__ = true;
+      }
+
       (function installKillerWebSocketPatch() {
         if (!window.WebSocket || window.__KILLER_WEBSOCKET_PATCHED__) return;
 
@@ -1354,6 +1653,7 @@
             protocols === undefined
               ? new NativeWebSocket(rewrittenUrl)
               : new NativeWebSocket(rewrittenUrl, protocols);
+          installKillerIncomingMessagePatch(socket);
           killerSocket = socket;
           window.__KILLER_SOCKET__ = socket;
           console.log("[killer] websocket url:", rewrittenUrl);
@@ -1452,23 +1752,9 @@
       }
 
       function showModeEntry() {
-        var queryMode = getKillerModeFromQuery();
-        if (queryMode) {
-          setKillerMode(queryMode);
-          startUnity();
-          return;
-        }
-
-        setKillerMode(localStorage.getItem("killer_match_mode") || "ai");
-        Array.prototype.forEach.call(modePanel.querySelectorAll("[data-killer-mode]"), function (button) {
-          var mode = normalizeKillerMode(button.getAttribute("data-killer-mode"));
-          button.classList.toggle("is-active", mode === getKillerMode());
-          button.addEventListener("click", function () {
-            setKillerMode(mode);
-            startUnity();
-          });
-        });
-        modePanel.hidden = false;
+        modePanel.hidden = true;
+        setKillerMode(KILLER_DEFAULT_MODE);
+        startUnity();
       }
 
       roundButton.addEventListener("click", startKillerRound);

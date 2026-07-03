@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 
@@ -68,12 +69,26 @@ class GameWebViewState extends State<GameWebView> {
   String _errorMessage = '';
   final List<String> _debugLogs = [];
   bool _debugPanelExpanded = false;
+  Timer? _xiangqiScreenPollTimer;
+  bool _showXiangqiRoomEntryGuard = false;
+  bool _xiangqiRoomEntryBusy = false;
+  DateTime? _xiangqiRoomEntryGuardCooldownUntil;
+
+  bool get _isXiangqiGame {
+    final url = widget.gameUrl.toLowerCase();
+    return url.contains('/uploads/games/xiangqi/') ||
+        url.contains('/assets/h5-games/xiangqi/') ||
+        url.contains('/h5-games/xiangqi/');
+  }
 
   bool get _forceNoCacheForBundledGame {
     final url = widget.gameUrl.toLowerCase();
     return url.contains('/uploads/games/xiangqi/') ||
         url.contains('/assets/h5-games/xiangqi/') ||
         url.contains('/h5-games/xiangqi/') ||
+        url.contains('/uploads/games/killer/') ||
+        url.contains('/assets/h5-games/killer/') ||
+        url.contains('/h5-games/killer/') ||
         url.contains('/uploads/games/saima2/') ||
         url.contains('/assets/h5-games/saima2/') ||
         url.contains('/h5-games/saima2/');
@@ -139,6 +154,98 @@ class GameWebViewState extends State<GameWebView> {
     });
   }
 
+  void _startXiangqiScreenPolling() {
+    if (!_isXiangqiGame) return;
+    _xiangqiScreenPollTimer?.cancel();
+    _xiangqiScreenPollTimer = Timer.periodic(
+      const Duration(milliseconds: 350),
+      (_) => _pollXiangqiScreenMode(),
+    );
+    _pollXiangqiScreenMode();
+  }
+
+  Future<void> _pollXiangqiScreenMode() async {
+    final controller = _webViewController;
+    if (!_isXiangqiGame || controller == null || !mounted) return;
+    try {
+      final result = await controller.evaluateJavascript(
+        source: '''
+(function () {
+  var mode = String(
+    (document.body && document.body.getAttribute("data-xq-screen")) ||
+    window.__XQ_LAST_SCREEN_MODE__ ||
+    ""
+  );
+  var home = false;
+  try {
+    var homeOverlay = document.getElementById("xiangqiHomeOverlay");
+    home = !!(homeOverlay && homeOverlay.classList && homeOverlay.classList.contains("show"));
+  } catch (_) {}
+  var suppress = window.__XQ_NATIVE_ROOM_GUARD_SUPPRESS__ === true;
+  try {
+    if (
+      document.body &&
+      document.body.classList &&
+      (
+        document.body.classList.contains("xq-room-entry-ready") ||
+        Date.now() < Number(window.__XQ_FORCE_ROOM_ENTRY_GUARD_UNTIL__ || 0)
+      )
+    ) {
+      mode = "room";
+    }
+  } catch (_) {}
+  if (mode !== "room") {
+    try {
+      var scene = window.cc && cc.director && cc.director.getScene ? cc.director.getScene() : null;
+      if (
+        scene &&
+        typeof window.__xiangqiGetLikelyRoomButtons === "function" &&
+        window.__xiangqiGetLikelyRoomButtons(scene).length >= 3
+      ) {
+        mode = "room";
+      }
+    } catch (_) {}
+  }
+  return (suppress ? "1" : "0") + "|" + (home ? "1" : "0") + "|" + mode;
+})()
+''',
+      );
+      final parts =
+          result?.toString().replaceAll('"', '').trim().split('|') ??
+              const <String>[];
+      final suppressFromH5 = parts.isNotEmpty && parts[0] == '1';
+      final mode = parts.length > 2 ? parts.sublist(2).join('|').trim() : '';
+      final now = DateTime.now();
+      final cooldownUntil = _xiangqiRoomEntryGuardCooldownUntil;
+      final inRoomEntryCooldown =
+          cooldownUntil != null && now.isBefore(cooldownUntil);
+      if (inRoomEntryCooldown && mode == 'room') {
+        if (_showXiangqiRoomEntryGuard && mounted) {
+          setState(() => _showXiangqiRoomEntryGuard = false);
+        }
+        return;
+      }
+      if (cooldownUntil != null && !now.isBefore(cooldownUntil)) {
+        _xiangqiRoomEntryGuardCooldownUntil = null;
+      }
+      if (suppressFromH5 && mode != 'room') {
+        if (_showXiangqiRoomEntryGuard && mounted) {
+          setState(() => _showXiangqiRoomEntryGuard = false);
+        }
+        return;
+      }
+      // Xiangqi now handles room staking inside the bundled H5. Keeping the
+      // native fallback overlay active can swallow taps after returning here.
+      final shouldShow = false;
+      if (shouldShow != _showXiangqiRoomEntryGuard && mounted) {
+        setState(() => _showXiangqiRoomEntryGuard = shouldShow);
+        _addDebugLog(
+          'xiangqi room guard ${shouldShow ? 'on' : 'off'} mode=$mode',
+        );
+      }
+    } catch (_) {}
+  }
+
   UnmodifiableListView<UserScript> _initialUserScripts() {
     final initDataJson = jsonEncode(widget.userInfo.toJson());
     final messageJson = jsonEncode({
@@ -167,6 +274,7 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
 
   @override
   void dispose() {
+    _xiangqiScreenPollTimer?.cancel();
     widget.jsBridge.detach();
     // 恢复竖屏和系统 UI
     SystemChrome.setPreferredOrientations([
@@ -255,13 +363,15 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
                         : CacheMode.LOAD_DEFAULT,
                     mixedContentMode:
                         MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-                    webViewAssetLoader: WebViewAssetLoader(
-                      domain: 'appassets.androidplatform.net',
-                      httpAllowed: true,
-                      pathHandlers: [
-                        AssetsPathHandler(path: '/assets/'),
-                      ],
-                    ),
+                    webViewAssetLoader: kIsWeb
+                        ? null
+                        : WebViewAssetLoader(
+                            domain: 'appassets.androidplatform.net',
+                            httpAllowed: true,
+                            pathHandlers: [
+                              AssetsPathHandler(path: '/assets/'),
+                            ],
+                          ),
                     mediaPlaybackRequiresUserGesture: false,
                     allowsInlineMediaPlayback: true,
                     userAgent:
@@ -274,6 +384,9 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
                   onWebViewCreated: (controller) {
                     _webViewController = controller;
                     _addDebugLog('webview created');
+                    if (_forceNoCacheForBundledGame) {
+                      controller.clearCache();
+                    }
                     // Attach JSBridge to the controller — registers all JS handlers.
                     widget.jsBridge.attach(controller);
                   },
@@ -282,13 +395,20 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
                     setState(() {
                       _isLoading = true;
                       _hasError = false;
+                      if (_isXiangqiGame) {
+                        _showXiangqiRoomEntryGuard = false;
+                        _xiangqiRoomEntryGuardCooldownUntil = null;
+                      }
                     });
                   },
                   onLoadStop: (controller, url) {
                     _addDebugLog('load stop ${_shortUrl(url)}');
-                    setState(() => _isLoading = false);
+                    setState(() {
+                      _isLoading = false;
+                    });
                     // Send user info to H5 once the page finishes loading.
                     widget.jsBridge.sendInit(widget.userInfo);
+                    _startXiangqiScreenPolling();
                   },
                   onProgressChanged: (controller, progress) {
                     if (progress != _loadProgress) {
@@ -388,6 +508,163 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
           ],
         ),
       ),
+    );
+  }
+
+  Map<String, Object> _xiangqiRoomConfig(int index) {
+    const rooms = [
+      {
+        'roomName': '入门房间',
+        'roomKey': 'beginner',
+        'stake': 100,
+        'winReturn': 200,
+      },
+      {
+        'roomName': '高手房间',
+        'roomKey': 'expert',
+        'stake': 300,
+        'winReturn': 600,
+      },
+      {
+        'roomName': '国手房间',
+        'roomKey': 'master',
+        'stake': 1000,
+        'winReturn': 2000,
+      },
+    ];
+    final safeIndex = index.clamp(0, rooms.length - 1).toInt();
+    return rooms[safeIndex];
+  }
+
+  Future<void> _handleXiangqiRoomTap(int index) async {
+    if (_xiangqiRoomEntryBusy) return;
+    final controller = _webViewController;
+    if (controller == null) return;
+
+    final config = _xiangqiRoomConfig(index);
+    final roomName = config['roomName'] as String;
+    final roomKey = config['roomKey'] as String;
+    final stake = config['stake'] as int;
+    final winReturn = config['winReturn'] as int;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('确认押注'),
+        content: Text(
+          '$roomName需先押注 $stake 积分。\n'
+          '胜利获得 $winReturn 积分，失败扣除押注，平局返还押注。\n'
+          '是否确认进入？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _xiangqiRoomEntryBusy = true);
+    final roundId =
+        'xiangqi_battle_${roomKey}_${DateTime.now().millisecondsSinceEpoch}';
+    final result = await widget.jsBridge.changePointsFromNative(
+      amount: -stake.toDouble(),
+      reason: 'xiangqi_battle_bet',
+      requestId: '$roundId:bet',
+      extra: {
+        'module': 'battle',
+        'roomName': roomName,
+        'roomKey': roomKey,
+        'stake': stake,
+        'roundId': roundId,
+      },
+    );
+
+    if (!mounted) return;
+    setState(() => _xiangqiRoomEntryBusy = false);
+
+    if (result['success'] != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('积分不足或押注扣除失败，请稍后再试')),
+      );
+      return;
+    }
+
+    final payload = jsonEncode({
+      'roomName': roomName,
+      'roomKey': roomKey,
+      'stake': stake,
+      'winReturn': winReturn,
+      'roundId': roundId,
+      'balance': result['balance'],
+    });
+    try {
+      await controller.evaluateJavascript(
+        source: '''
+(function () {
+  var stake = $payload;
+  if (window.__xiangqiSetNativeBattleStake) {
+    window.__xiangqiSetNativeBattleStake(stake);
+  }
+  if (window.__xiangqiNativeEnterRoom) {
+    return window.__xiangqiNativeEnterRoom($index);
+  }
+  return false;
+})()
+''',
+      );
+    } catch (_) {}
+    if (mounted) {
+      setState(() {
+        _xiangqiRoomEntryGuardCooldownUntil = DateTime.now().add(
+          const Duration(milliseconds: 2500),
+        );
+        _showXiangqiRoomEntryGuard = false;
+      });
+    }
+  }
+
+  Widget _buildXiangqiRoomEntryGuard() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isPortrait = constraints.maxHeight > constraints.maxWidth;
+        final topFractions = isPortrait
+            ? <double>[0.335, 0.490, 0.646]
+            : <double>[0.285, 0.415, 0.545];
+        final hitHeight = isPortrait ? 0.072 : 0.078;
+        final horizontalInset = constraints.maxWidth * (isPortrait ? 0.11 : 0.18);
+        return Stack(
+          children: [
+            for (var i = 0; i < topFractions.length; i += 1)
+              Positioned(
+                left: horizontalInset,
+                right: horizontalInset,
+                top: constraints.maxHeight * topFractions[i],
+                height: constraints.maxHeight * hitHeight,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _handleXiangqiRoomTap(i),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            if (_xiangqiRoomEntryBusy)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black26,
+                  child: const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 

@@ -25,6 +25,7 @@ import { Message } from '../entities/message.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { MatrixService } from '../matrix/matrix.service';
+import { CurrencyService } from '../currency/currency.service';
 
 const LOW_ACTIVATION_AMOUNT = 500;
 const HIGH_ACTIVATION_AMOUNT = 2000;
@@ -54,6 +55,7 @@ export class UserService implements OnModuleInit {
     private readonly friendshipRepo: Repository<Friendship>,
     private readonly jwtService: JwtService,
     private readonly dataSource: DataSource,
+    private readonly currencyService: CurrencyService,
     @Inject(forwardRef(() => MatrixService))
     private readonly matrixService: MatrixService,
   ) {}
@@ -69,6 +71,7 @@ export class UserService implements OnModuleInit {
       `ALTER TABLE users ADD INDEX idx_users_activation_amount (activation_amount)`,
       `ALTER TABLE cdk_types ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额：500或2000' AFTER description`,
       `ALTER TABLE cdks ADD COLUMN activation_amount DECIMAL(10,2) NULL COMMENT '激活档位金额快照：500或2000' AFTER items_json`,
+      `ALTER TABLE user_currencies ADD COLUMN copper DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER silver`,
     ];
     for (const sql of alters) {
       try {
@@ -83,6 +86,134 @@ export class UserService implements OnModuleInit {
       `UPDATE cdks SET activation_amount = ? WHERE activation_amount IS NULL`,
       [HIGH_ACTIVATION_AMOUNT],
     );
+  }
+
+  private roundPoints(value: number) {
+    return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
+  }
+
+  private calculateWeeklyReturnProjection(row: any) {
+    const status = Number(row.status || 0);
+    const paidDays = Math.max(0, Math.min(7, Number(row.paidDays ?? row.paid_days ?? 0)));
+    const multiplier = Number(row.multiplier || 0);
+    const dailyRate = Number(row.dailyRate ?? row.daily_rate ?? 0);
+    let base = this.roundPoints(
+      Math.max(0, Number(row.remainingBasePoints ?? row.remaining_base_points ?? 0)),
+    );
+
+    if (status !== 0 || paidDays >= 7 || multiplier <= 0 || dailyRate <= 0 || base <= 0) {
+      return { unpaidDays: 0, nextReturnAmount: 0, pendingReturnPoints: 0 };
+    }
+
+    let pendingReturnPoints = 0;
+    let nextReturnAmount = 0;
+    for (let day = paidDays + 1; day <= 7; day += 1) {
+      const amount = this.roundPoints(base * multiplier * dailyRate);
+      if (amount <= 0) break;
+      if (nextReturnAmount <= 0) nextReturnAmount = amount;
+      pendingReturnPoints = this.roundPoints(pendingReturnPoints + amount);
+      base = this.roundPoints(Math.max(0, base - amount));
+    }
+
+    return {
+      unpaidDays: Math.max(0, 7 - paidDays),
+      nextReturnAmount,
+      pendingReturnPoints,
+    };
+  }
+
+  private addDaysToLocalDateText(dateText: string, days: number) {
+    if (!dateText) return '';
+    const [year, month, day] = dateText.split('-').map((item) => Number(item));
+    if (!year || !month || !day) return dateText;
+    const date = new Date(year, month - 1, day);
+    date.setDate(date.getDate() + days);
+    const two = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
+  }
+
+  private mapWeeklyPointReturnAccount(row: any) {
+    if (!row) return null;
+    const eligible = this.roundPoints(Number(row.eligibleConsumedPoints || 0));
+    const excluded = this.roundPoints(Number(row.excludedConsumedPoints || 0));
+    const returned = this.roundPoints(Number(row.returnedPoints || 0));
+    const projection = this.calculateWeeklyReturnProjection(row);
+    const weekEndDate = row.weekEndDate?.toString() || '';
+
+    return {
+      ...row,
+      id: Number(row.id),
+      periodId: Number(row.periodId),
+      userId: Number(row.userId),
+      status: Number(row.status),
+      paidDays: Number(row.paidDays || 0),
+      multiplier: Number(row.multiplier || 0),
+      dailyRate: Number(row.dailyRate || 0),
+      eligibleConsumedPoints: eligible,
+      excludedConsumedPoints: excluded,
+      totalConsumedPoints: this.roundPoints(eligible + excluded),
+      remainingBasePoints: this.roundPoints(Number(row.remainingBasePoints || 0)),
+      returnedPoints: returned,
+      pendingReturnPoints: projection.pendingReturnPoints,
+      expectedReturnPoints: this.roundPoints(returned + projection.pendingReturnPoints),
+      nextReturnAmount: projection.nextReturnAmount,
+      unpaidDays: projection.unpaidDays,
+      returnWeekStartDate: this.addDaysToLocalDateText(weekEndDate, 1),
+      returnWeekEndDate: this.addDaysToLocalDateText(weekEndDate, 7),
+    };
+  }
+
+  private buildWeeklyReturnSchedule(account: any, records: any[]) {
+    if (!account) return [];
+    const byDay = new Map<number, any>();
+    for (const record of records) {
+      byDay.set(Number(record.dayIndex), record);
+    }
+
+    const schedule: any[] = [];
+    let forecastBase = this.roundPoints(Number(account.remainingBasePoints || 0));
+    const paidDays = Number(account.paidDays || 0);
+    const multiplier = Number(account.multiplier || 0);
+    const dailyRate = Number(account.dailyRate || 0);
+    const weekEndDate = account.weekEndDate?.toString() || '';
+
+    for (let day = 1; day <= 7; day += 1) {
+      const paidRecord = byDay.get(day);
+      const returnDate = this.addDaysToLocalDateText(weekEndDate, day);
+      if (paidRecord) {
+        schedule.push({
+          ...paidRecord,
+          dayIndex: day,
+          returnDate: paidRecord.returnDate || returnDate,
+          paid: true,
+        });
+        continue;
+      }
+
+      let returnAmount = 0;
+      let baseBeforeReturn = forecastBase;
+      let baseAfterReturn = forecastBase;
+      if (day > paidDays && Number(account.status) === 0 && multiplier > 0 && dailyRate > 0 && forecastBase > 0) {
+        returnAmount = this.roundPoints(forecastBase * multiplier * dailyRate);
+        baseAfterReturn = this.roundPoints(Math.max(0, forecastBase - returnAmount));
+        forecastBase = baseAfterReturn;
+      }
+
+      schedule.push({
+        id: 0,
+        dayIndex: day,
+        returnDate,
+        baseBeforeReturn,
+        multiplier,
+        dailyRate,
+        returnAmount,
+        baseAfterReturn,
+        paid: false,
+        status: 0,
+      });
+    }
+
+    return schedule;
   }
 
   private normalizeActivationAmount(value: any): number | null {
@@ -379,6 +510,7 @@ export class UserService implements OnModuleInit {
             points: Number(currency.points),
             gold: Number(currency.gold),
             silver: Number(currency.silver),
+            copper: Number(currency.copper),
             specialPointsTier1: Number(currency.specialPointsTier1),
             specialPointsTier2: Number(currency.specialPointsTier2),
             specialPointsTier3: Number(currency.specialPointsTier3),
@@ -546,6 +678,9 @@ export class UserService implements OnModuleInit {
               case 'silver':
                 currency.silver = Number(currency.silver) + amount;
                 break;
+              case 'copper':
+                currency.copper = Number(currency.copper) + amount;
+                break;
               case 'reward_points':
                 currency.rewardPoints = Number(currency.rewardPoints) + amount;
                 break;
@@ -611,6 +746,108 @@ export class UserService implements OnModuleInit {
         reward: 0,
       })),
       rewards: [],
+    };
+  }
+
+  /** 当前用户的每周积分返还信息 */
+  async getMyWeeklyPointReturn(userId: number) {
+    await this.currencyService.ensureDefaultConfigs();
+
+    const accountRows = await this.dataSource.query(
+      `SELECT
+         a.id,
+         a.period_id AS periodId,
+         a.user_id AS userId,
+         DATE_FORMAT(p.week_start_date, '%Y-%m-%d') AS weekStartDate,
+         DATE_FORMAT(p.week_end_date, '%Y-%m-%d') AS weekEndDate,
+         a.eligible_consumed_points AS eligibleConsumedPoints,
+         a.excluded_consumed_points AS excludedConsumedPoints,
+         a.remaining_base_points AS remainingBasePoints,
+         a.total_returned_points AS returnedPoints,
+         a.paid_days AS paidDays,
+         a.multiplier,
+         a.daily_rate AS dailyRate,
+         a.status,
+         DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+         DATE_FORMAT(a.updated_at, '%Y-%m-%d %H:%i:%s') AS updatedAt
+       FROM weekly_point_return_accounts a
+       LEFT JOIN weekly_point_return_periods p ON p.id = a.period_id
+       WHERE a.user_id = ?
+       ORDER BY p.week_start_date DESC, a.id DESC
+       LIMIT 1`,
+      [userId],
+    );
+
+    const rawCurrent = accountRows?.[0] || null;
+    const current = this.mapWeeklyPointReturnAccount(rawCurrent);
+
+    const recordRows = current
+      ? await this.dataSource.query(
+          `SELECT
+             r.id,
+             DATE_FORMAT(r.return_date, '%Y-%m-%d') AS returnDate,
+             r.day_index AS dayIndex,
+             r.base_before_return AS baseBeforeReturn,
+             r.multiplier,
+             r.daily_rate AS dailyRate,
+             r.return_amount AS returnAmount,
+             r.base_after_return AS baseAfterReturn,
+             r.currency_log_id AS currencyLogId,
+             r.status,
+             DATE_FORMAT(r.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt
+           FROM weekly_point_return_daily_records r
+           WHERE r.account_id = ?
+           ORDER BY r.day_index ASC, r.id ASC`,
+          [current.id],
+        )
+      : [];
+
+    const records = recordRows.map((row: any) => ({
+      ...row,
+      id: Number(row.id),
+      dayIndex: Number(row.dayIndex),
+      status: Number(row.status),
+      baseBeforeReturn: this.roundPoints(Number(row.baseBeforeReturn || 0)),
+      multiplier: Number(row.multiplier || 0),
+      dailyRate: Number(row.dailyRate || 0),
+      returnAmount: this.roundPoints(Number(row.returnAmount || 0)),
+      baseAfterReturn: this.roundPoints(Number(row.baseAfterReturn || 0)),
+      currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
+      paid: true,
+    }));
+
+    const historyRows = await this.dataSource.query(
+      `SELECT
+         a.id,
+         a.period_id AS periodId,
+         a.user_id AS userId,
+         DATE_FORMAT(p.week_start_date, '%Y-%m-%d') AS weekStartDate,
+         DATE_FORMAT(p.week_end_date, '%Y-%m-%d') AS weekEndDate,
+         a.eligible_consumed_points AS eligibleConsumedPoints,
+         a.excluded_consumed_points AS excludedConsumedPoints,
+         a.remaining_base_points AS remainingBasePoints,
+         a.total_returned_points AS returnedPoints,
+         a.paid_days AS paidDays,
+         a.multiplier,
+         a.daily_rate AS dailyRate,
+         a.status,
+         DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+         DATE_FORMAT(a.updated_at, '%Y-%m-%d %H:%i:%s') AS updatedAt
+       FROM weekly_point_return_accounts a
+       LEFT JOIN weekly_point_return_periods p ON p.id = a.period_id
+       WHERE a.user_id = ?
+       ORDER BY p.week_start_date DESC, a.id DESC
+       LIMIT 8`,
+      [userId],
+    );
+
+    return {
+      current,
+      records,
+      schedule: this.buildWeeklyReturnSchedule(current, records),
+      history: historyRows
+        .map((row: any) => this.mapWeeklyPointReturnAccount(row))
+        .filter(Boolean),
     };
   }
 }

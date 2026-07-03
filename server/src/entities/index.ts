@@ -40,6 +40,7 @@ export { AssetInterestRecord } from './asset-interest-record.entity';
 export { AssetReferralRewardRecord } from './asset-referral-reward-record.entity';
 export { PointReturn } from './point-return.entity';
 export { PointSynthesis } from './point-synthesis.entity';
+export { SignInRecord } from './sign-in-record.entity';
 
 // Operation entities
 export { CdkType } from './cdk-type.entity';

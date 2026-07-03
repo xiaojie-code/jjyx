@@ -53,6 +53,13 @@
             <el-table-column label="顶点用户" width="140">
               <template #default="{ row }">{{ row.ownerNickname || row.ownerAccount }}</template>
             </el-table-column>
+            <el-table-column label="直推用户" width="120" align="center">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openDirectUsers(row.ownerId, row.ownerNickname || row.ownerAccount)">
+                  {{ Number(row.activatedDirectUserCount || 0) }}/{{ Number(row.directUserCount || 0) }}
+                </el-button>
+              </template>
+            </el-table-column>
             <el-table-column prop="round" label="轮次" width="70" align="center" />
             <el-table-column label="状态" width="90" align="center">
               <template #default="{ row }">
@@ -69,6 +76,13 @@
             </el-table-column>
             <el-table-column label="下轮资金" width="110" align="right">
               <template #default="{ row }">{{ Number(row.nextRoundFund).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="已提现总额" width="120" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openMatrixWithdrawals(row.ownerId, row.ownerNickname || row.ownerAccount)">
+                  {{ Number(row.totalWithdrawn || 0).toFixed(2) }}
+                </el-button>
+              </template>
             </el-table-column>
             <el-table-column prop="createdAt" label="创建时间" width="180" :formatter="dateTimeFormatter" />
             <el-table-column label="操作" width="100" align="center">
@@ -115,6 +129,13 @@
             </el-table-column>
             <el-table-column label="金额" width="100" align="right">
               <template #default="{ row }">{{ Number(row.amount).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="已提现总额" width="120" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openMatrixWithdrawals(row.ownerId, row.ownerNickname)">
+                  {{ Number(row.ownerTotalWithdrawn || 0).toFixed(2) }}
+                </el-button>
+              </template>
             </el-table-column>
             <el-table-column label="基数/比例" width="130" align="center">
               <template #default="{ row }">
@@ -210,6 +231,55 @@
         </el-table>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="withdrawalVisible" :title="`${withdrawalUserName || '用户'} 已提现明细`" width="720px">
+      <el-table :data="withdrawalList" v-loading="withdrawalLoading" stripe>
+        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column label="提现金额" width="120" align="right">
+          <template #default="{ row }">{{ Number(row.amount || 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column label="提现方式" width="110">
+          <template #default="{ row }">{{ row.paymentMethod === 'bank' ? '银行卡' : '支付宝' }}</template>
+        </el-table-column>
+        <el-table-column label="收款信息" min-width="220">
+          <template #default="{ row }">{{ row.accountName || '-' }} / {{ row.accountNumber || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="reviewTime" label="通过时间" width="180" :formatter="dateTimeFormatter" />
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="directUsersVisible" :title="`${directUsersOwnerName || '用户'} 直推用户`" width="820px">
+      <div v-if="directUsersSummary" class="direct-summary">
+        <el-tag type="primary" effect="light">总直推 {{ directUsersSummary.total || 0 }} 人</el-tag>
+        <el-tag type="success" effect="light">已激活 {{ directUsersSummary.activatedCount || 0 }} 人</el-tag>
+        <el-tag type="info" effect="light">未激活 {{ directUsersSummary.inactiveCount || 0 }} 人</el-tag>
+      </div>
+      <el-table :data="directUsersList" v-loading="directUsersLoading" stripe>
+        <el-table-column prop="id" label="用户ID" width="90" align="center" />
+        <el-table-column label="用户" min-width="160">
+          <template #default="{ row }">{{ row.nickname || row.account || `用户${row.id}` }}</template>
+        </el-table-column>
+        <el-table-column prop="account" label="账号" min-width="140" />
+        <el-table-column label="激活状态" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.isActivated ? 'success' : 'info'" size="small">
+              {{ row.isActivated ? '已激活' : '未激活' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="激活档位" width="100" align="center">
+          <template #default="{ row }">{{ row.activationAmount ? `${row.activationAmount}元` : '-' }}</template>
+        </el-table-column>
+        <el-table-column label="账号状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
+              {{ row.status === 1 ? '正常' : row.status === 2 ? '已删除' : '禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="registerTime" label="注册时间" width="180" :formatter="dateTimeFormatter" />
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -243,6 +313,15 @@ const incomeType = ref('')
 // 详情
 const detailVisible = ref(false)
 const detailData = ref<any>(null)
+const withdrawalVisible = ref(false)
+const withdrawalLoading = ref(false)
+const withdrawalUserName = ref('')
+const withdrawalList = ref<any[]>([])
+const directUsersVisible = ref(false)
+const directUsersLoading = ref(false)
+const directUsersOwnerName = ref('')
+const directUsersSummary = ref<any>(null)
+const directUsersList = ref<any[]>([])
 
 async function loadStats() {
   try { stats.value = (await request.get('/matrix/stats')) as any } catch {}
@@ -277,6 +356,35 @@ async function viewDetail(matrixId: number) {
   } catch {}
 }
 
+async function openMatrixWithdrawals(userId: number, userName?: string) {
+  if (!userId) return
+  withdrawalUserName.value = userName || `用户${userId}`
+  withdrawalVisible.value = true
+  withdrawalLoading.value = true
+  try {
+    const res: any = await request.get(`/matrix/withdrawals/${userId}`)
+    withdrawalList.value = res.list || []
+  } finally {
+    withdrawalLoading.value = false
+  }
+}
+
+async function openDirectUsers(userId: number, userName?: string) {
+  if (!userId) return
+  directUsersOwnerName.value = userName || `用户${userId}`
+  directUsersVisible.value = true
+  directUsersLoading.value = true
+  directUsersSummary.value = null
+  directUsersList.value = []
+  try {
+    const res: any = await request.get(`/matrix/direct-users/${userId}`)
+    directUsersSummary.value = res
+    directUsersList.value = res.list || []
+  } finally {
+    directUsersLoading.value = false
+  }
+}
+
 function slotClass(num: number) {
   const slot = detailData.value?.slots?.find((s: any) => s.slotNumber === num)
   if (!slot) return 'empty'
@@ -299,6 +407,7 @@ onMounted(() => { loadStats(); loadMatrices(); loadIncomes() })
 .stat-label { font-size: 13px; color: #909399; margin-top: 4px; }
 .content-card { border-radius: 12px; border: none; }
 .pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 20px; padding-top: 16px; }
+.direct-summary { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
 
 .matrix-visual { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 20px; background: #f9fafb; border-radius: 10px; }
 .matrix-row { display: flex; gap: 12px; justify-content: center; }

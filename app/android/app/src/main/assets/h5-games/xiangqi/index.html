@@ -216,6 +216,60 @@
       display: none;
     }
 
+    #xiangqiRoomEntryOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 78;
+      display: none;
+      pointer-events: none;
+    }
+
+    body[data-xq-screen="room"] #xiangqiRoomEntryOverlay,
+    body.xq-room-entry-ready #xiangqiRoomEntryOverlay {
+      display: block;
+      pointer-events: auto;
+    }
+
+    .xiangqi-room-hit {
+      position: absolute;
+      left: 11%;
+      width: 78%;
+      height: 7.2%;
+      border: 0;
+      padding: 0;
+      margin: 0;
+      background: transparent;
+      color: transparent;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .xiangqi-room-hit[data-xq-room-index="0"] {
+      top: 33.5%;
+    }
+
+    .xiangqi-room-hit[data-xq-room-index="1"] {
+      top: 49%;
+    }
+
+    .xiangqi-room-hit[data-xq-room-index="2"] {
+      top: 64.5%;
+    }
+
+    @media (orientation: landscape) {
+      .xiangqi-room-hit[data-xq-room-index="0"] {
+        top: 28.5%;
+      }
+
+      .xiangqi-room-hit[data-xq-room-index="1"] {
+        top: 41.5%;
+      }
+
+      .xiangqi-room-hit[data-xq-room-index="2"] {
+        top: 54.5%;
+      }
+    }
+
     .xiangqi-pay-modal {
       position: fixed;
       inset: 0;
@@ -317,6 +371,11 @@
       <button class="xiangqi-home-button" type="button" data-xq-node="btn1"><span>对战</span></button>
       <button class="xiangqi-home-button" type="button" data-xq-node="btn2"><span>名局研习</span></button>
     </div>
+  </div>
+  <div id="xiangqiRoomEntryOverlay" aria-hidden="true">
+    <button class="xiangqi-room-hit" type="button" data-xq-room-index="0"></button>
+    <button class="xiangqi-room-hit" type="button" data-xq-room-index="1"></button>
+    <button class="xiangqi-room-hit" type="button" data-xq-room-index="2"></button>
   </div>
   <div id="splash">象棋加载中...</div>
 
@@ -483,16 +542,188 @@
           hint: 0
         },
         pendingDeduct: null,
+        pendingPointChanges: {},
         actionBusy: false,
+        roomEntryBusy: false,
+        roomPointerGateUntil: 0,
+        roomEntryCancelBlockUntil: 0,
         toastTimer: null,
-        pendingStudyRewards: {}
+        pendingStudyRewards: {},
+        battleStake: null,
+        roomEntryPass: null
       };
       var actionLabels = {
         retract: "悔棋",
         hint: "提示"
       };
+      var ROOM_STAKES = {
+        "\u5165\u95e8\u623f\u95f4": { key: "beginner", stake: 100, winReturn: 200 },
+        "\u9ad8\u624b\u623f\u95f4": { key: "expert", stake: 300, winReturn: 600 },
+        "\u56fd\u624b\u623f\u95f4": { key: "master", stake: 1000, winReturn: 2000 }
+      };
+      var ROOM_ORDER = ["\u5165\u95e8\u623f\u95f4", "\u9ad8\u624b\u623f\u95f4", "\u56fd\u624b\u623f\u95f4"];
+      window.__xiangqiHasActiveBattleStake = function () {
+        return !!(state.battleStake && !state.battleStake.settled);
+      };
       var STUDY_REWARD_STORAGE_KEY = "xiangqi.study.rewardedLevels.v1";
       var STUDY_MAX_LEVEL = 240;
+
+      function safeDisarmRoomEntryGuard() {
+        window.__XQ_FORCE_ROOM_ENTRY_GUARD_UNTIL__ = 0;
+        if (document.body && document.body.classList) {
+          document.body.classList.remove("xq-room-entry-ready");
+        }
+        if (typeof window.__xiangqiDisarmRoomEntryGuard === "function") {
+          try {
+            window.__xiangqiDisarmRoomEntryGuard();
+          } catch (_) {}
+        }
+      }
+
+      function clearStaleBattleStakeForRoomEntry(roomName) {
+        if (!state.battleStake || state.battleStake.settled) return;
+        console.log("[xiangqi] clear stale battle stake before new room entry", {
+          previousRoom: state.battleStake.roomName,
+          nextRoom: roomName
+        });
+        state.battleStake.settled = true;
+        state.battleStake = null;
+        window.__XQ_NATIVE_ROOM_GUARD_SUPPRESS__ = false;
+      }
+
+      function authorizeRoomEntry(roomName, roundId) {
+        state.roomEntryPass = {
+          roomName: roomName,
+          roundId: roundId || "",
+          expiresAt: Date.now() + 4000,
+          used: false
+        };
+        window.__XQ_ROOM_ENTRY_BYPASS__ = false;
+      }
+
+      function runAuthorizedRoomEntry(roomName, context, runner) {
+        var pass = state.roomEntryPass;
+        if (!pass || pass.used || pass.roomName !== roomName || Date.now() > pass.expiresAt) {
+          state.roomEntryPass = null;
+          window.__XQ_ROOM_ENTRY_BYPASS__ = false;
+          window.__XQ_ROOM_ENTRY_AUTH_RUNNING__ = false;
+          return false;
+        }
+        pass.used = true;
+        state.roomEntryPass = null;
+        window.__XQ_ROOM_ENTRY_BYPASS__ = false;
+        window.__XQ_ROOM_ENTRY_AUTH_RUNNING__ = true;
+        try {
+          if (typeof runner === "function") runner.call(context);
+        } catch (error) {
+          console.error("[xiangqi] authorized room entry failed:", error);
+        } finally {
+          window.__XQ_ROOM_ENTRY_AUTH_RUNNING__ = false;
+        }
+        return true;
+      }
+
+      function getXqLabelTextFromNode(node) {
+        if (!node || !window.cc || !cc.Label) return "";
+        var text = "";
+        var label = node.getComponent ? node.getComponent(cc.Label) : null;
+        if (label && label.string) text += String(label.string);
+        var children = node.children || [];
+        for (var i = 0; i < children.length; i += 1) {
+          var childLabel = children[i].getComponent ? children[i].getComponent(cc.Label) : null;
+          if (childLabel && childLabel.string) text += " " + String(childLabel.string);
+        }
+        return text;
+      }
+      var getXLabelTextFromNode = getXqLabelTextFromNode;
+      window.getXqLabelTextFromNode = getXqLabelTextFromNode;
+      window.getXLabelTextFromNode = getXqLabelTextFromNode;
+
+      function getXqNodeWorldY(node) {
+        var y = 0;
+        var cursor = node;
+        var found = false;
+        try {
+          while (cursor) {
+            if (cursor.isValid === false) break;
+            if (isFinite(cursor.y)) {
+              y += Number(cursor.y);
+              found = true;
+            }
+            cursor = cursor.parent;
+          }
+        } catch (_) {}
+        return found ? y : 0;
+      }
+
+      function xqNodeContains(parent, child) {
+        var cursor = child;
+        try {
+          while (cursor) {
+            if (cursor.isValid === false) return false;
+            if (cursor === parent) return true;
+            cursor = cursor.parent;
+          }
+        } catch (_) {}
+        return false;
+      }
+
+      function getLikelyXqRoomButtons(root) {
+        if (!root || !window.cc || !cc.Button) return [];
+        var candidates = [];
+        var skipName = /back|close|home|return|setting|sound|music|share|rank/i;
+        var walk = function (node) {
+          if (!node || node.isValid === false || (node.active === false && node.name !== "Canvas")) return;
+          var button = null;
+          try {
+            button = node.getComponent ? node.getComponent(cc.Button) : null;
+          } catch (_) {
+            button = null;
+          }
+          if (button) {
+            var width = Math.abs(Number(node.width || 0));
+            var height = Math.abs(Number(node.height || 0));
+            var name = String(node.name || "");
+            if (!skipName.test(name) && width >= 180 && height >= 45) {
+              candidates.push({
+                node: node,
+                y: getXqNodeWorldY(node),
+                area: width * height,
+                text: getXqLabelTextFromNode(node)
+              });
+            }
+          }
+          var children = [];
+          try {
+            children = node.children || [];
+          } catch (_) {
+            children = [];
+          }
+          for (var i = 0; i < children.length; i += 1) walk(children[i]);
+        };
+        walk(root);
+        candidates = candidates.filter(function (item) {
+          var text = String(item.text || "");
+          return text.indexOf("\u5bf9\u6218") < 0 &&
+            text.indexOf("\u540d\u5c40") < 0 &&
+            text.indexOf("\u6094\u68cb") < 0 &&
+            text.indexOf("\u63d0\u793a") < 0;
+        });
+        if (candidates.length < 3) return [];
+        candidates.sort(function (a, b) {
+          if (Math.abs(b.area - a.area) > 1200) return b.area - a.area;
+          return b.y - a.y;
+        });
+        var buttons = candidates.slice(0, 6).sort(function (a, b) {
+          return b.y - a.y;
+        }).slice(0, 3);
+        if (Math.abs(buttons[0].y - buttons[2].y) < 120) return [];
+        return buttons;
+      }
+      window.__xiangqiGetLabelTextFromNode = getXqLabelTextFromNode;
+      window.__xiangqiGetNodeWorldY = getXqNodeWorldY;
+      window.__xiangqiNodeContains = xqNodeContains;
+      window.__xiangqiGetLikelyRoomButtons = getLikelyXqRoomButtons;
 
       function toNumber(value) {
         var number = Number(value);
@@ -623,6 +854,45 @@
         });
       }
 
+      function changePoints(amount, reason, requestId, extra) {
+        return new Promise(function (resolve) {
+          if (!hasAppBridge()) {
+            resolve({ success: false, bridgeMissing: true, balance: state.balance });
+            return;
+          }
+
+          requestId = requestId || ("xiangqi_points_" + Date.now() + "_" + Math.random().toString(16).slice(2));
+          if (state.pendingPointChanges[requestId]) {
+            resolve({ success: false, busy: true, balance: state.balance });
+            return;
+          }
+
+          var timer = window.setTimeout(function () {
+            var pending = state.pendingPointChanges[requestId];
+            if (!pending) return;
+            delete state.pendingPointChanges[requestId];
+            pending.resolve({ success: false, timeout: true, balance: state.balance });
+          }, 10000);
+
+          state.pendingPointChanges[requestId] = {
+            resolve: resolve,
+            timer: timer
+          };
+
+          var payload = Object.assign({}, extra || {}, {
+            amount: amount,
+            reason: reason,
+            requestId: requestId
+          });
+
+          if (!postGameMessage("changePoints", payload)) {
+            window.clearTimeout(timer);
+            delete state.pendingPointChanges[requestId];
+            resolve({ success: false, bridgeMissing: true, balance: state.balance });
+          }
+        });
+      }
+
       function readRewardedStudyLevels() {
         try {
           var raw = window.localStorage && localStorage.getItem(STUDY_REWARD_STORAGE_KEY);
@@ -659,6 +929,291 @@
         var actualAmount = toNumber(data.amount);
         if (data.duplicate === true || actualAmount === 0) return;
         showToast("名局研习通关 +" + formatPoints(actualAmount === null ? pending.reward : actualAmount) + " 积分");
+      }
+
+      function handlePointChangeResult(data) {
+        var requestId = data && data.requestId ? String(data.requestId) : "";
+        var pending = requestId ? state.pendingPointChanges[requestId] : null;
+        if (!pending) return;
+        delete state.pendingPointChanges[requestId];
+        window.clearTimeout(pending.timer);
+        pending.resolve({
+          success: data.success !== false,
+          balance: balanceFromData(data),
+          amount: toNumber(data.amount),
+          duplicate: data.duplicate === true,
+          message: data.message || "",
+          data: data
+        });
+      }
+
+      function showBattleConfirm(roomName, config) {
+        return new Promise(function (resolve) {
+          var modal = document.getElementById("xiangqiPayModal");
+          var title = document.getElementById("xiangqiPayTitle");
+          var content = document.getElementById("xiangqiPayContent");
+          var cancel = document.getElementById("xiangqiPayCancel");
+          var confirm = document.getElementById("xiangqiPayConfirm");
+          var text = roomName + "需押注 " + config.stake + " 积分，胜利获得 " + config.winReturn +
+            " 积分，失败扣除押注，平局返还押注。是否进入？";
+
+          if (!modal || !title || !content || !cancel || !confirm) {
+            resolve(window.confirm(text));
+            return;
+          }
+
+          var resolved = false;
+          var cleanup = function () {
+            ["touchstart", "touchmove", "touchend", "pointerdown", "pointerup", "mousedown", "mouseup", "click"].forEach(function (type) {
+              modal.removeEventListener(type, swallowModalEvent, true);
+            });
+            cancel.removeEventListener("touchend", cancelHandler, true);
+            cancel.removeEventListener("pointerup", cancelHandler, true);
+            cancel.removeEventListener("click", cancelHandler, true);
+            confirm.removeEventListener("touchend", confirmHandler, true);
+            confirm.removeEventListener("pointerup", confirmHandler, true);
+            confirm.removeEventListener("click", confirmHandler, true);
+          };
+          var done = function (value, event) {
+            if (event) {
+              if (event.cancelable !== false && event.preventDefault) event.preventDefault();
+              if (event.stopPropagation) event.stopPropagation();
+              if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+            }
+            if (resolved) return;
+            resolved = true;
+            if (!value) {
+              state.roomEntryCancelBlockUntil = Date.now() + 1200;
+              state.roomPointerGateUntil = Date.now() + 1200;
+            }
+            modal.classList.remove("show");
+            modal.setAttribute("aria-hidden", "true");
+            cancel.onclick = null;
+            confirm.onclick = null;
+            cleanup();
+            resolve(value);
+          };
+          var swallowModalEvent = function (event) {
+            if (event.target === cancel || event.target === confirm) return;
+            if (event.cancelable !== false && event.preventDefault) event.preventDefault();
+            if (event.stopPropagation) event.stopPropagation();
+          };
+          var cancelHandler = function (event) {
+            done(false, event);
+          };
+          var confirmHandler = function (event) {
+            done(true, event);
+          };
+
+          title.textContent = "确认押注";
+          content.innerHTML =
+            roomName + "需押注 <b>" + config.stake + "</b> 积分。<br>" +
+            "胜利获得 <b>" + config.winReturn + "</b> 积分，失败扣除押注，平局返还押注。<br>" +
+            "当前积分：" + formatPoints(state.balance) + "。";
+          ["touchstart", "touchmove", "touchend", "pointerdown", "pointerup", "mousedown", "mouseup", "click"].forEach(function (type) {
+            modal.addEventListener(type, swallowModalEvent, { passive: false, capture: true });
+          });
+          cancel.addEventListener("touchend", cancelHandler, { passive: false, capture: true });
+          cancel.addEventListener("pointerup", cancelHandler, { passive: false, capture: true });
+          cancel.addEventListener("click", cancelHandler, { passive: false, capture: true });
+          confirm.addEventListener("touchend", confirmHandler, { passive: false, capture: true });
+          confirm.addEventListener("pointerup", confirmHandler, { passive: false, capture: true });
+          confirm.addEventListener("click", confirmHandler, { passive: false, capture: true });
+          cancel.onclick = function (event) { done(false, event); };
+          confirm.onclick = function (event) { done(true, event); };
+          modal.classList.add("show");
+          modal.setAttribute("aria-hidden", "false");
+        });
+      }
+
+      function triggerXiangqiRoomButton(index) {
+        try {
+          var scene = window.cc && cc.director && cc.director.getScene ? cc.director.getScene() : null;
+          var buttons = getLikelyXqRoomButtons(scene);
+          var item = buttons[index];
+          var node = item && item.node;
+          if (!node || !window.cc || !cc.Button) return false;
+          var button = node.getComponent ? node.getComponent(cc.Button) : null;
+          if (button && cc.Component && cc.Component.EventHandler && button.clickEvents) {
+            cc.Component.EventHandler.emitEvents(button.clickEvents, { target: node });
+          }
+          if (node.emit) node.emit("click", button);
+          return true;
+        } catch (error) {
+          window.__XQ_ROOM_ENTRY_BYPASS__ = false;
+          console.warn("[xiangqi] room overlay trigger failed:", error);
+          return false;
+        }
+      }
+
+      function tapXiangqiRoomCanvas(index) {
+        var canvas = document.getElementById("GameCanvas") || document.querySelector("canvas");
+        if (!canvas) return false;
+        var rect = canvas.getBoundingClientRect();
+        var centerX = rect.left + rect.width * 0.5;
+        var portrait = rect.height > rect.width;
+        var centers = portrait ? [0.385, 0.542, 0.697] : [0.342, 0.472, 0.602];
+        var centerY = rect.top + rect.height * (centers[index] || centers[1]);
+        var target = canvas;
+        try {
+          ["pointerdown", "mousedown", "touchstart", "pointerup", "mouseup", "touchend", "click"].forEach(function (type) {
+            var event;
+            if (type.indexOf("touch") === 0 && typeof TouchEvent !== "undefined" && typeof Touch !== "undefined") {
+              var touch = new Touch({
+                identifier: Date.now(),
+                target: target,
+                clientX: centerX,
+                clientY: centerY,
+                screenX: centerX,
+                screenY: centerY,
+                pageX: centerX,
+                pageY: centerY
+              });
+              event = new TouchEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                touches: type === "touchend" ? [] : [touch],
+                targetTouches: type === "touchend" ? [] : [touch],
+                changedTouches: [touch]
+              });
+            } else if (type.indexOf("pointer") === 0 && typeof PointerEvent !== "undefined") {
+              event = new PointerEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                clientX: centerX,
+                clientY: centerY,
+                pointerId: 1,
+                pointerType: "touch",
+                isPrimary: true
+              });
+            } else {
+              event = new MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                clientX: centerX,
+                clientY: centerY
+              });
+            }
+            target.dispatchEvent(event);
+          });
+          return true;
+        } catch (error) {
+          console.warn("[xiangqi] room canvas fallback failed:", error);
+          return false;
+        }
+      }
+
+      window.__xiangqiSetNativeBattleStake = function (payload) {
+        payload = payload && typeof payload === "object" ? payload : {};
+        var roomName = payload.roomName || ROOM_ORDER[0];
+        var config = ROOM_STAKES[roomName] || {};
+        window.__XQ_NATIVE_ROOM_GUARD_SUPPRESS__ = true;
+        safeDisarmRoomEntryGuard();
+        state.battleStake = {
+          roomName: roomName,
+          roomKey: payload.roomKey || config.key || "",
+          stake: Number(payload.stake || config.stake || 0),
+          winReturn: Number(payload.winReturn || config.winReturn || 0),
+          roundId: payload.roundId || ("xiangqi_battle_native_" + Date.now()),
+          settled: false
+        };
+        if (typeof payload.balance !== "undefined") {
+          updateBalance(balanceFromData(payload));
+        }
+        authorizeRoomEntry(roomName, state.battleStake.roundId);
+        return true;
+      };
+
+      window.__xiangqiNativeEnterRoom = function (index) {
+        index = Math.max(0, Math.min(2, Math.floor(Number(index) || 0)));
+        return triggerXiangqiRoomButton(index) || tapXiangqiRoomCanvas(index);
+      };
+
+      function bindRoomEntryOverlay() {
+        var overlay = document.getElementById("xiangqiRoomEntryOverlay");
+        if (!overlay || overlay.__xiangqiBound) return;
+        overlay.__xiangqiBound = true;
+        var handleRoomOverlayEvent = function (event) {
+          var button = event.target && event.target.closest ? event.target.closest("[data-xq-room-index]") : null;
+          if (!button) return;
+          if (event.cancelable !== false && event.preventDefault) event.preventDefault();
+          if (event.stopPropagation) event.stopPropagation();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+          var modal = document.getElementById("xiangqiPayModal");
+          if (modal && modal.classList && modal.classList.contains("show")) return;
+          var now = Date.now();
+          if (state.roomEntryCancelBlockUntil && now < state.roomEntryCancelBlockUntil) return;
+          if (state.roomPointerGateUntil && now < state.roomPointerGateUntil) return;
+          state.roomPointerGateUntil = now + 850;
+          var index = Math.floor(Number(button.getAttribute("data-xq-room-index")) || 0);
+          var roomName = ROOM_ORDER[index];
+          if (!roomName || typeof window.__xiangqiRequestRoomEntry !== "function") return;
+          window.__xiangqiRequestRoomEntry(roomName, null, function () {
+            triggerXiangqiRoomButton(index) || tapXiangqiRoomCanvas(index);
+          });
+        };
+        ["touchstart", "pointerdown", "mousedown", "click"].forEach(function (type) {
+          overlay.addEventListener(type, handleRoomOverlayEvent, { passive: false, capture: true });
+        });
+      }
+
+      function isRoomEntrySceneForPointer() {
+        if (
+          document.body &&
+          (
+            document.body.getAttribute("data-xq-screen") === "room" ||
+            document.body.classList.contains("xq-room-entry-ready") ||
+            window.__XQ_LAST_SCREEN_MODE__ === "room"
+          )
+        ) {
+          return true;
+        }
+        try {
+          var scene = window.cc && cc.director && cc.director.getScene ? cc.director.getScene() : null;
+          return !!(scene && getLikelyXqRoomButtons(scene).length >= 3);
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function getRoomPointerPoint(event) {
+        if (event && event.touches && event.touches.length) return event.touches[0];
+        if (event && event.changedTouches && event.changedTouches.length) return event.changedTouches[0];
+        return event || {};
+      }
+
+      function roomIndexFromClientPoint(clientX, clientY) {
+        var width = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+        var height = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
+        var xRatio = Number(clientX || 0) / width;
+        var yRatio = Number(clientY || 0) / height;
+        var portrait = height > width;
+        var left = portrait ? 0.105 : 0.16;
+        var right = portrait ? 0.895 : 0.84;
+        if (xRatio < left || xRatio > right) return -1;
+        var tops = portrait ? [0.33, 0.485, 0.64] : [0.28, 0.41, 0.54];
+        var hitHeight = 0.09;
+        for (var i = 0; i < tops.length; i += 1) {
+          if (yRatio >= tops[i] && yRatio <= tops[i] + hitHeight) return i;
+        }
+        return -1;
+      }
+
+      function installRoomPointerCapture() {
+        if (window.__XQ_ROOM_POINTER_CAPTURED__) return;
+        window.__XQ_ROOM_POINTER_CAPTURED__ = true;
+      }
+
+      if (!window.__XQ_ROOM_POINTER_TRACKED__) {
+        window.__XQ_ROOM_POINTER_TRACKED__ = true;
+        ["pointerdown", "mousedown", "touchstart"].forEach(function (type) {
+          document.addEventListener(type, function (event) {
+            var point = event;
+            if (event.touches && event.touches.length) point = event.touches[0];
+            window.__XQ_LAST_POINTER_CLIENT_Y__ = Number(point.clientY || 0);
+            window.__XQ_LAST_POINTER_TIME__ = Date.now();
+          }, { capture: true, passive: true });
+        });
       }
 
       window.__xiangqiAwardStudyLevel = function (level) {
@@ -701,7 +1256,10 @@
         }
         if (action === "balanceUpdate" || action === "pointsChangeResult") {
           updateBalance(balanceFromData(data));
-          if (action === "pointsChangeResult") handleStudyRewardResult(data);
+          if (action === "pointsChangeResult") {
+            handleStudyRewardResult(data);
+            handlePointChangeResult(data);
+          }
           return;
         }
         if (action === "deductPointsResult") {
@@ -764,7 +1322,134 @@
         return false;
       };
 
+      window.__xiangqiRequestRoomEntry = function (roomName, context, runner) {
+        var config = ROOM_STAKES[roomName];
+        if (!config) return true;
+        if (state.roomEntryCancelBlockUntil && Date.now() < state.roomEntryCancelBlockUntil) {
+          return false;
+        }
+        if (runAuthorizedRoomEntry(roomName, context, runner)) {
+          return false;
+        }
+        var isRoomEntryScene = !!(
+          document.body &&
+          (
+            document.body.getAttribute("data-xq-screen") === "room" ||
+            window.__XQ_LAST_SCREEN_MODE__ === "room"
+          )
+        );
+        if (!isRoomEntryScene) {
+          try {
+            var scene = window.cc && cc.director && cc.director.getScene ? cc.director.getScene() : null;
+            isRoomEntryScene = getLikelyXqRoomButtons(scene).length >= 3;
+          } catch (_) {}
+        }
+        if (!isRoomEntryScene) {
+          console.warn("[xiangqi] room entry scene not confirmed, force stake gate", roomName);
+          window.__XQ_LAST_SCREEN_MODE__ = "room";
+          if (document.body) {
+            document.body.setAttribute("data-xq-screen", "room");
+            if (document.body.classList) document.body.classList.add("xq-room-entry-ready");
+          }
+          if (typeof window.__xiangqiSyncRoomEntryGuardClass === "function") {
+            try {
+              window.__xiangqiSyncRoomEntryGuardClass("room");
+            } catch (_) {}
+          }
+        }
+        clearStaleBattleStakeForRoomEntry(roomName);
+        if (state.roomEntryBusy) {
+          showToast("正在处理，请稍候");
+          return false;
+        }
+        if (state.balance !== null && state.balance < config.stake) {
+          showToast("积分不足" + config.stake + "，请稍后再试");
+          return false;
+        }
+
+        state.roomEntryBusy = true;
+        showBattleConfirm(roomName, config).then(function (confirmed) {
+          if (!confirmed) {
+            state.roomEntryBusy = false;
+            return;
+          }
+          var roundId = "xiangqi_battle_" + config.key + "_" + Date.now() + "_" + Math.random().toString(16).slice(2);
+          changePoints(-config.stake, "xiangqi_battle_bet", roundId + ":bet", {
+            module: "battle",
+            roomName: roomName,
+            roomKey: config.key,
+            stake: config.stake,
+            roundId: roundId
+          }).then(function (result) {
+            state.roomEntryBusy = false;
+            if (!result || result.success === false) {
+              if (result && result.bridgeMissing) {
+                showToast("请在App内使用积分功能");
+              } else if (result && result.timeout) {
+                showToast("押注扣除超时，请稍后再试");
+              } else {
+                showToast("积分不足或押注扣除失败");
+              }
+              return;
+            }
+            if (result.balance !== null) updateBalance(result.balance);
+            state.battleStake = {
+              roomName: roomName,
+              roomKey: config.key,
+              stake: config.stake,
+              winReturn: config.winReturn,
+              roundId: roundId,
+              settled: false
+            };
+            window.__XQ_NATIVE_ROOM_GUARD_SUPPRESS__ = true;
+            safeDisarmRoomEntryGuard();
+            authorizeRoomEntry(roomName, roundId);
+            runAuthorizedRoomEntry(roomName, context, runner);
+            window.setTimeout(requestBalance, 250);
+          });
+        }).catch(function (error) {
+          state.roomEntryBusy = false;
+          console.warn("[xiangqi] room entry confirm failed:", error);
+        });
+        return false;
+      };
+
+      window.__xiangqiSettleBattle = function (result) {
+        var stake = state.battleStake;
+        if (!stake || stake.settled) return false;
+        stake.settled = true;
+
+        var numericResult = Number(result);
+        var outcome = numericResult === 0 ? "win" : (numericResult === 2 ? "draw" : "lose");
+        var amount = outcome === "win" ? stake.winReturn : (outcome === "draw" ? stake.stake : 0);
+        if (amount <= 0) {
+          showToast("本局失败，押注" + stake.stake + "积分已扣除");
+          window.setTimeout(requestBalance, 250);
+          return true;
+        }
+
+        changePoints(amount, "xiangqi_battle_" + outcome, stake.roundId + ":" + outcome, {
+          module: "battle",
+          roomName: stake.roomName,
+          roomKey: stake.roomKey,
+          stake: stake.stake,
+          roundId: stake.roundId,
+          result: outcome
+        }).then(function (resultData) {
+          if (!resultData || resultData.success === false) {
+            showToast("对局结算失败，请稍后查看积分明细");
+            return;
+          }
+          if (resultData.balance !== null) updateBalance(resultData.balance);
+          showToast(outcome === "win" ? ("胜利 +" + amount + " 积分") : ("平局返还 " + amount + " 积分"));
+          window.setTimeout(requestBalance, 250);
+        });
+        return true;
+      };
+
       updateBalance(balanceFromData(window.__GAME_APP_INIT__ || {}));
+      bindRoomEntryOverlay();
+      installRoomPointerCapture();
       window.setTimeout(requestBalance, 600);
     })();
   </script>
@@ -786,6 +1471,105 @@
           console.error("[xiangqi] failed to load", src);
         };
         document.body.appendChild(script);
+      }
+
+      function installCocosWorldMatrixGuard() {
+        try {
+          if (!window.cc) return;
+          if (cc.Follow && cc.Follow.prototype && !cc.Follow.prototype.__xiangqiWorldGuard) {
+            var originalFollowStep = cc.Follow.prototype.step;
+            cc.Follow.prototype.step = function () {
+              try {
+                if (!this.target || !this._followedNode || !this.target.parent) return;
+                if (this.target.isValid === false || this._followedNode.isValid === false) return;
+                return originalFollowStep.apply(this, arguments);
+              } catch (error) {
+                if (String(error && (error.message || error)).indexOf("_worldMatrix") >= 0) return;
+                throw error;
+              }
+            };
+            cc.Follow.prototype.__xiangqiWorldGuard = true;
+          }
+          if (cc.Node && cc.Node.prototype && !cc.Node.prototype.__xiangqiWorldGuard) {
+            var nodeProto = cc.Node.prototype;
+            var guardPoint = function (node) {
+              var x = node && isFinite(node.x) ? Number(node.x) : 0;
+              var y = node && isFinite(node.y) ? Number(node.y) : 0;
+              return cc.v2 ? cc.v2(x, y) : { x: x, y: y };
+            };
+            ["convertToWorldSpaceAR", "convertToNodeSpaceAR", "convertToWorldSpace", "convertToNodeSpace"].forEach(function (name) {
+              var original = nodeProto[name];
+              if (typeof original !== "function") return;
+              nodeProto[name] = function () {
+                try {
+                  if (!this || this.isValid === false) return guardPoint(this);
+                  return original.apply(this, arguments);
+                } catch (error) {
+                  if (String(error && (error.message || error)).indexOf("_worldMatrix") >= 0) {
+                    return guardPoint(this);
+                  }
+                  throw error;
+                }
+              };
+            });
+            nodeProto.__xiangqiWorldGuard = true;
+          }
+          if (cc.RenderFlow && !cc.RenderFlow.__xiangqiWorldGuard) {
+            var sanitizeRenderTree = function (node, parent, depth) {
+              if (!node || depth > 80) return;
+              if (parent && !node._parent) node._parent = parent;
+              var children = null;
+              try {
+                children = node._children || node.children || null;
+              } catch (_) {
+                children = null;
+              }
+              if (!children || !children.length) return;
+              for (var i = children.length - 1; i >= 0; i -= 1) {
+                var child = children[i];
+                if (!child || child.isValid === false) {
+                  try { children.splice(i, 1); } catch (_) {}
+                  continue;
+                }
+                if (!child._parent) child._parent = node;
+                sanitizeRenderTree(child, node, depth + 1);
+              }
+            };
+            var originalVisitRootNode = cc.RenderFlow.visitRootNode;
+            if (typeof originalVisitRootNode === "function") {
+              cc.RenderFlow.visitRootNode = function (node) {
+                sanitizeRenderTree(node, null, 0);
+                try {
+                  return originalVisitRootNode.apply(this, arguments);
+                } catch (error) {
+                  if (String(error && (error.message || error)).indexOf("_worldMatrix") >= 0) {
+                    sanitizeRenderTree(node, null, 0);
+                    return;
+                  }
+                  throw error;
+                }
+              };
+            }
+            var originalRender = cc.RenderFlow.render;
+            if (typeof originalRender === "function") {
+              cc.RenderFlow.render = function (node) {
+                sanitizeRenderTree(node, null, 0);
+                try {
+                  return originalRender.apply(this, arguments);
+                } catch (error) {
+                  if (String(error && (error.message || error)).indexOf("_worldMatrix") >= 0) {
+                    sanitizeRenderTree(node, null, 0);
+                    return;
+                  }
+                  throw error;
+                }
+              };
+            }
+            cc.RenderFlow.__xiangqiWorldGuard = true;
+          }
+        } catch (error) {
+          console.warn("[xiangqi] world matrix guard failed", error);
+        }
       }
 
       function showStartupError(message) {
@@ -867,6 +1651,11 @@
           var button = event.target && event.target.closest ? event.target.closest("[data-xq-node]") : null;
           if (!button) return;
           var nodeName = button.getAttribute("data-xq-node");
+          if (nodeName === "btn1") {
+            armRoomEntryGuard(20000);
+          } else {
+            disarmRoomEntryGuard();
+          }
           setHomeOverlayVisible(false);
           window.setTimeout(function () {
             if (!emitCocosButton(nodeName)) tapCanvasFallback(nodeName);
@@ -898,13 +1687,57 @@
         } catch (_) {}
       }
 
+      function armRoomEntryGuard(duration) {
+        window.__XQ_FORCE_ROOM_ENTRY_GUARD_UNTIL__ =
+          Date.now() + Math.max(3000, Number(duration) || 20000);
+        syncRoomEntryGuardClass(window.__XQ_LAST_SCREEN_MODE__ || "");
+      }
+      window.__xiangqiArmRoomEntryGuard = armRoomEntryGuard;
+
+      function disarmRoomEntryGuard() {
+        window.__XQ_FORCE_ROOM_ENTRY_GUARD_UNTIL__ = 0;
+        if (document.body && document.body.classList) {
+          document.body.classList.remove("xq-room-entry-ready");
+        }
+      }
+      window.__xiangqiDisarmRoomEntryGuard = disarmRoomEntryGuard;
+
+      function syncRoomEntryGuardClass(mode) {
+        if (!document.body || !document.body.classList) return;
+        if (mode === "game" || mode === "study") {
+          window.__XQ_FORCE_ROOM_ENTRY_GUARD_UNTIL__ = 0;
+        }
+        var forced = Date.now() < Number(window.__XQ_FORCE_ROOM_ENTRY_GUARD_UNTIL__ || 0);
+        var show = mode === "room" || forced;
+        if (!show) {
+          try {
+            var scene = window.cc && cc.director && cc.director.getScene ? cc.director.getScene() : null;
+            show = !!(scene && getLikelyXqRoomButtons(scene).length >= 3);
+          } catch (_) {}
+        }
+        document.body.classList.toggle("xq-room-entry-ready", !!show);
+      }
+      window.__xiangqiSyncRoomEntryGuardClass = syncRoomEntryGuardClass;
+
       function setScreenMode(mode) {
+        window.__XQ_LAST_SCREEN_MODE__ = mode || "";
+        var hasActiveBattleStake =
+          typeof window.__xiangqiHasActiveBattleStake === "function" &&
+          window.__xiangqiHasActiveBattleStake();
+        if (mode === "room" || mode === "home" || mode === "study") {
+          window.__XQ_NATIVE_ROOM_GUARD_SUPPRESS__ = false;
+          window.__XQ_ROOM_ENTRY_BYPASS__ = false;
+          window.__XQ_ROOM_ENTRY_AUTH_RUNNING__ = false;
+        } else if (mode !== "game" && !hasActiveBattleStake) {
+          window.__XQ_NATIVE_ROOM_GUARD_SUPPRESS__ = false;
+        }
         if (!document.body) return;
         if (mode) {
           document.body.setAttribute("data-xq-screen", mode);
         } else {
           document.body.removeAttribute("data-xq-screen");
         }
+        syncRoomEntryGuardClass(mode);
       }
 
       function installPaidActionGate() {
@@ -913,6 +1746,115 @@
           if (cc.Component.EventHandler.__xiangqiPaidGate) return;
           var originalEmitEvents = cc.Component.EventHandler.emitEvents;
           if (typeof originalEmitEvents !== "function") return;
+
+          var rememberTouchNode = function (node) {
+            if (!node) return;
+            window.__XQ_LAST_TOUCH_NODE__ = node;
+            window.__XQ_LAST_TOUCH_TIME__ = Date.now();
+          };
+          try {
+            if (cc.Button && cc.Button.prototype && !cc.Button.prototype.__xiangqiTouchTracked) {
+              var buttonProto = cc.Button.prototype;
+              var originalButtonTouchEnded = buttonProto._onTouchEnded;
+              if (typeof originalButtonTouchEnded === "function") {
+                buttonProto._onTouchEnded = function (event) {
+                  var touchNode = this.node || (event && event.target);
+                  rememberTouchNode(touchNode);
+                  try {
+                    var isRoomTouchScreen = document.body && document.body.getAttribute("data-xq-screen") === "room";
+                    if (!isRoomTouchScreen) {
+                      try {
+                        var sceneForRoomTouch = cc.director && cc.director.getScene ? cc.director.getScene() : null;
+                        isRoomTouchScreen = getLikelyXqRoomButtons(sceneForRoomTouch).length >= 3;
+                      } catch (_) {}
+                    }
+                    if (!window.__XQ_ROOM_ENTRY_AUTH_RUNNING__ &&
+                        typeof window.__xiangqiRequestRoomEntry === "function") {
+                      var touchedRoomName = "";
+                      if (typeof roomNameFromNodeText === "function") {
+                        touchedRoomName = roomNameFromNodeText(touchNode);
+                      }
+                      if (!touchedRoomName && isRoomTouchScreen && typeof roomNameFromNode === "function") {
+                        touchedRoomName = roomNameFromNode(touchNode);
+                      }
+                      if (!touchedRoomName && isRoomTouchScreen && typeof roomNameFromRecentPointer === "function") {
+                        touchedRoomName = roomNameFromRecentPointer();
+                      }
+                      if (touchedRoomName) {
+                        var buttonContext = this;
+                        var buttonArgs = arguments;
+                        console.log("[xiangqi] room button touch gate", touchedRoomName);
+                        return window.__xiangqiRequestRoomEntry(touchedRoomName, this, function () {
+                          return originalButtonTouchEnded.apply(buttonContext, buttonArgs);
+                        });
+                      }
+                    }
+                  } catch (roomGateError) {
+                    console.warn("[xiangqi] room touch gate failed:", roomGateError);
+                  }
+                  return originalButtonTouchEnded.apply(this, arguments);
+                };
+              }
+              buttonProto.__xiangqiTouchTracked = true;
+            }
+            if (cc.Node && cc.Node.prototype && !cc.Node.prototype.__xiangqiTouchTracked) {
+              var nodeProto = cc.Node.prototype;
+              var originalNodeEmit = nodeProto.emit;
+              if (typeof originalNodeEmit === "function") {
+                nodeProto.emit = function (type) {
+                  var emitType = String(type || "").toLowerCase();
+                  var isPointerEmit = emitType.indexOf("touch") >= 0 || emitType.indexOf("click") >= 0;
+                  if (isPointerEmit) {
+                    rememberTouchNode(this);
+                    try {
+                      var shouldGateRoomEmit =
+                        emitType === "click" ||
+                        emitType === "touchend" ||
+                        emitType === "touchended" ||
+                        emitType.indexOf("touchend") >= 0;
+                      if (
+                        shouldGateRoomEmit &&
+                        !window.__XQ_ROOM_ENTRY_AUTH_RUNNING__ &&
+                        typeof window.__xiangqiRequestRoomEntry === "function"
+                      ) {
+                        var nodeRoomName = "";
+                        if (typeof roomNameFromNodeText === "function") {
+                          nodeRoomName = roomNameFromNodeText(this);
+                        }
+                        var nodeEmitRoomScreen = document.body && document.body.getAttribute("data-xq-screen") === "room";
+                        if (!nodeEmitRoomScreen) {
+                          try {
+                            var nodeEmitScene = cc.director && cc.director.getScene ? cc.director.getScene() : null;
+                            nodeEmitRoomScreen = getLikelyXqRoomButtons(nodeEmitScene).length >= 3;
+                          } catch (_) {}
+                        }
+                        if (!nodeRoomName && nodeEmitRoomScreen && typeof roomNameFromNode === "function") {
+                          nodeRoomName = roomNameFromNode(this);
+                        }
+                        if (!nodeRoomName && nodeEmitRoomScreen && typeof roomNameFromRecentPointer === "function") {
+                          nodeRoomName = roomNameFromRecentPointer();
+                        }
+                        if (nodeRoomName) {
+                          var nodeContext = this;
+                          var nodeArgs = arguments;
+                          console.log("[xiangqi] room node emit gate", nodeRoomName);
+                          return window.__xiangqiRequestRoomEntry(nodeRoomName, this, function () {
+                            return originalNodeEmit.apply(nodeContext, nodeArgs);
+                          });
+                        }
+                      }
+                    } catch (nodeGateError) {
+                      console.warn("[xiangqi] room node emit gate failed:", nodeGateError);
+                    }
+                  }
+                  return originalNodeEmit.apply(this, arguments);
+                };
+              }
+              nodeProto.__xiangqiTouchTracked = true;
+            }
+          } catch (trackError) {
+            console.warn("[xiangqi] touch tracker failed:", trackError);
+          }
 
           var handlerName = function (handler) {
             return String(
@@ -947,14 +1889,100 @@
               return name === "restartGame";
             });
           };
+          var labelTextFromNode = function (node) {
+            return getXqLabelTextFromNode(node);
+          };
+          var roomNameFromText = function (text) {
+            text = String(text || "");
+            if (text.indexOf("\u5165\u95e8\u623f\u95f4") >= 0) return "\u5165\u95e8\u623f\u95f4";
+            if (text.indexOf("\u9ad8\u624b\u623f\u95f4") >= 0) return "\u9ad8\u624b\u623f\u95f4";
+            if (text.indexOf("\u56fd\u624b\u623f\u95f4") >= 0) return "\u56fd\u624b\u623f\u95f4";
+            return "";
+          };
+          var roomNameFromNodeText = function (node) {
+            var cursor = node;
+            for (var depth = 0; cursor && depth < 4; depth += 1) {
+              var roomName = roomNameFromText(labelTextFromNode(cursor));
+              if (roomName) return roomName;
+              cursor = cursor.parent;
+            }
+            return "";
+          };
+          var roomNameFromNode = function (node) {
+            var textRoomName = roomNameFromNodeText(node);
+            if (textRoomName) return textRoomName;
+            try {
+              var scene = cc.director && cc.director.getScene ? cc.director.getScene() : null;
+              var buttons = getLikelyXqRoomButtons(scene);
+              for (var i = 0; i < buttons.length && i < ROOM_ORDER.length; i += 1) {
+                if (xqNodeContains(buttons[i].node, node) || xqNodeContains(node, buttons[i].node)) {
+                  return ROOM_ORDER[i];
+                }
+              }
+              var y = getXqNodeWorldY(node);
+              var closestIndex = -1;
+              var closestDistance = Infinity;
+              for (var j = 0; j < buttons.length && j < ROOM_ORDER.length; j += 1) {
+                var distance = Math.abs(buttons[j].y - y);
+                if (distance < closestDistance) {
+                  closestDistance = distance;
+                  closestIndex = j;
+                }
+              }
+              if (closestIndex >= 0 && closestDistance < 180) return ROOM_ORDER[closestIndex];
+            } catch (_) {}
+            return "";
+          };
+          var roomNameFromRecentPointer = function () {
+            if (Date.now() - Number(window.__XQ_LAST_POINTER_TIME__ || 0) >= 1500) return "";
+            var ratio = Number(window.__XQ_LAST_POINTER_CLIENT_Y__ || 0) /
+              Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
+            if (ratio >= 0.33 && ratio <= 0.405) return ROOM_ORDER[0];
+            if (ratio >= 0.48 && ratio <= 0.555) return ROOM_ORDER[1];
+            if (ratio >= 0.63 && ratio <= 0.705) return ROOM_ORDER[2];
+            return "";
+          };
+          var roomNameFromEvents = function (events, eventArg) {
+            var isRoomScreen = document.body && document.body.getAttribute("data-xq-screen") === "room";
+            if (!isRoomScreen) {
+              try {
+                var scene = cc.director && cc.director.getScene ? cc.director.getScene() : null;
+                isRoomScreen = getLikelyXqRoomButtons(scene).length >= 3;
+              } catch (_) {}
+            }
+            var roomName = eventArg && eventArg.target ? roomNameFromNodeText(eventArg.target) : "";
+            if (roomName) return roomName;
+            roomName = eachHandler(events, function (_name, handler) {
+              return handler && handler.target ? roomNameFromNodeText(handler.target) : "";
+            });
+            if (roomName) return roomName;
+            if (!isRoomScreen) return "";
+            roomName = eventArg && eventArg.target ? roomNameFromNode(eventArg.target) : "";
+            if (roomName) return roomName;
+            if (window.__XQ_LAST_TOUCH_NODE__ && Date.now() - (window.__XQ_LAST_TOUCH_TIME__ || 0) < 1200) {
+              roomName = roomNameFromNode(window.__XQ_LAST_TOUCH_NODE__);
+              if (roomName) return roomName;
+            }
+            roomName = roomNameFromRecentPointer();
+            if (roomName) return roomName;
+            return "";
+          };
 
           cc.Component.EventHandler.emitEvents = function (events) {
-            if (window.__XQ_PAID_ACTION_BYPASS__) {
+            if (window.__XQ_PAID_ACTION_BYPASS__ || window.__XQ_ROOM_ENTRY_AUTH_RUNNING__) {
               return originalEmitEvents.apply(this, arguments);
             }
 
             if (hasRestart(events) && typeof window.__xiangqiResetPaidActionCounts === "function") {
               window.__xiangqiResetPaidActionCounts();
+            }
+
+            var roomName = roomNameFromEvents(events, arguments[1]);
+            if (roomName && typeof window.__xiangqiRequestRoomEntry === "function") {
+              var roomArgs = arguments;
+              return window.__xiangqiRequestRoomEntry(roomName, this, function () {
+                return originalEmitEvents.apply(cc.Component.EventHandler, roomArgs);
+              });
             }
 
             var paidType = paidTypeFromEvents(events);
@@ -1010,9 +2038,11 @@
           proto.setData = function (result) {
             var returnValue = originalSetData.apply(this, arguments);
             try {
-              if (Number(result) === 0 && typeof window.__xiangqiAwardStudyLevel === "function") {
-                var info = getStudyLevelInfo();
-                if (info) window.__xiangqiAwardStudyLevel(info.level);
+              var info = getStudyLevelInfo();
+              if (Number(result) === 0 && info && typeof window.__xiangqiAwardStudyLevel === "function") {
+                window.__xiangqiAwardStudyLevel(info.level);
+              } else if (!info && typeof window.__xiangqiSettleBattle === "function") {
+                window.__xiangqiSettleBattle(result);
               }
             } catch (error) {
               console.warn("[xiangqi] study reward hook failed:", error);
@@ -1059,6 +2089,9 @@
                 for (var i = 0; i < children.length; i += 1) walk(children[i]);
               };
               walk(scene);
+              if (!hasRoomSelect && getLikelyXqRoomButtons(scene).length >= 3) {
+                hasRoomSelect = true;
+              }
               isHomeScene = (hasBattle && hasStudyTitle) ||
                 (hasHomeButton1 && hasHomeButton2 && !hasRoomSelect && !isGameScene);
             }
@@ -1133,22 +2166,18 @@
       });
       window.addEventListener("error", function (event) {
         console.error("[xiangqi] runtime error", event.message);
-        showStartupError("象棋加载失败，请稍后重试");
+        if (event.error && event.error.stack) console.error("[xiangqi] runtime stack", event.error.stack);
       });
       window.addEventListener("unhandledrejection", function (event) {
         console.error("[xiangqi] promise rejection", event.reason);
-        showStartupError("象棋加载失败，请稍后重试");
       });
 
       fitCanvas();
       bindHomeOverlay();
-      setInterval(syncHomeTitle, 300);
-      setInterval(installStudyRewardHook, 300);
 
       loadScript("cocos/cocos2d-js-min.js?v=xq632", function () {
         fitCanvas();
-        installPaidActionGate();
-        installStudyRewardHook();
+        installCocosWorldMatrixGuard();
         if (typeof window.CC_PHYSICS_BUILTIN === "undefined") window.CC_PHYSICS_BUILTIN = false;
         if (typeof window.CC_PHYSICS_CANNON === "undefined") window.CC_PHYSICS_CANNON = false;
         if (typeof window.boot === "function") {
@@ -1163,9 +2192,14 @@
             showStartupError("象棋加载失败，请稍后重试");
             return;
           }
+          setTimeout(installPaidActionGate, 600);
+          setTimeout(installStudyRewardHook, 600);
           setTimeout(syncHomeTitle, 600);
           setTimeout(syncHomeTitle, 1200);
           setInterval(markSceneReadyIfPlayable, 300);
+          setInterval(syncHomeTitle, 500);
+          setInterval(installPaidActionGate, 1000);
+          setInterval(installStudyRewardHook, 1000);
           setTimeout(function () {
             if (!window.__XQ_SCENE_READY__) showStartupError("象棋加载中...");
           }, 1800);

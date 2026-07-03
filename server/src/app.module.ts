@@ -17,6 +17,7 @@ import { MatrixModule } from './matrix/matrix.module';
 import { NotificationModule } from './notification/notification.module';
 import { PushModule } from './push/push.module';
 import { AssetModule } from './asset/asset.module';
+import { SignInModule } from './sign-in/sign-in.module';
 
 @Module({
   imports: [
@@ -84,6 +85,8 @@ import { AssetModule } from './asset/asset.module';
 
     // Asset package module
     AssetModule,
+
+    SignInModule,
 
     // Service notification module (单向服务通知)
     NotificationModule,

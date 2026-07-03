@@ -24,6 +24,9 @@ export class UserCurrency {
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
   silver: number;
 
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  copper: number;
+
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0, name: 'special_points_tier1' })
   specialPointsTier1: number;
 

@@ -20,7 +20,8 @@ class GameHallPage extends ConsumerStatefulWidget {
 }
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
-  static const String _gameShellVersion = '20260619-saima2-replace-legacy';
+  static const String _gameShellVersion =
+      '20260625-killer-direct-ai-cn-v44';
   static const String _h5AssetBaseUrl =
       'http://appassets.androidplatform.net/assets/h5-games';
 
@@ -968,7 +969,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
               ),
               const SizedBox(width: 12),
               _buildXiangQueOption(
-                iconAsset: 'assets/game-icons/xqtb.png',
+                iconAsset: 'assets/game-icons/xqtb2.png',
                 title: '象棋游戏',
                 onTap: () => Navigator.of(dialogContext).pop('xiangqi'),
               ),

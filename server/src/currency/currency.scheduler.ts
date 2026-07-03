@@ -12,17 +12,18 @@ export class CurrencyScheduler implements OnModuleInit {
   async onModuleInit() {
     await this.currencyService.ensureDefaultConfigs();
     const pendingRewards = await this.currencyService.processPendingDirectGameRewards(500);
+    const pendingReturns = await this.currencyService.dailyPointReturn();
     this.logger.log(
-      `系统配置初始化完成，未处理游戏流水奖励补处理: processed=${pendingRewards.processed || 0}, rewards=${pendingRewards.rewardCount || 0}`,
+      `系统配置初始化完成，未处理游戏流水奖励补处理: processed=${pendingRewards.processed || 0}, rewards=${pendingRewards.rewardCount || 0}; 每周积分返还启动补处理: records=${pendingReturns.paidRecords || 0}, points=${pendingReturns.paidPoints || 0}`,
     );
   }
 
-  /** 每天0:00 奖励积分产出 */
+  /** 每天0:00 铜币产出 */
   @Cron('0 0 0 * * *')
   async handleDailyReward() {
-    this.logger.log('开始执行每日奖励积分产出...');
+    this.logger.log('开始执行每日铜币产出...');
     await this.currencyService.dailyRewardProduction();
-    this.logger.log('每日奖励积分产出完成');
+    this.logger.log('每日铜币产出完成');
   }
 
   /** 每天00:00:01 发放当日每周积分返还 */

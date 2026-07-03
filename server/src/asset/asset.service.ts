@@ -653,6 +653,9 @@ export class AssetService implements OnModuleInit {
     if (query.status !== undefined && query.status !== '') {
       qb.where('w.status = :status', { status: Number(query.status) });
     }
+    if (query.userId !== undefined && query.userId !== '') {
+      qb.andWhere('w.user_id = :userId', { userId: Number(query.userId) });
+    }
     if (keyword) {
       qb.andWhere(
         `(CAST(w.id AS CHAR) LIKE :keyword
@@ -670,6 +673,9 @@ export class AssetService implements OnModuleInit {
     if (query.status !== undefined && query.status !== '') {
       totalQb.where('w.status = :status', { status: Number(query.status) });
     }
+    if (query.userId !== undefined && query.userId !== '') {
+      totalQb.andWhere('w.user_id = :userId', { userId: Number(query.userId) });
+    }
     if (keyword) {
       totalQb.andWhere(
         `(CAST(w.id AS CHAR) LIKE :keyword
@@ -682,6 +688,32 @@ export class AssetService implements OnModuleInit {
       );
     }
     return { list, total: await totalQb.getCount(), page, pageSize };
+  }
+
+  async adminAssetStats() {
+    const accountStats = await this.accountRepo.createQueryBuilder('a')
+      .select('COUNT(1)', 'totalAccounts')
+      .addSelect('COALESCE(SUM(a.principal_balance), 0)', 'totalPrincipal')
+      .addSelect('COALESCE(SUM(a.interest_balance), 0)', 'totalInterest')
+      .addSelect('COALESCE(SUM(a.total_recharged), 0)', 'totalRecharged')
+      .addSelect('COALESCE(SUM(a.total_withdrawn), 0)', 'totalWithdrawn')
+      .addSelect('COALESCE(SUM(a.total_referral_reward), 0)', 'totalReferralReward')
+      .getRawOne();
+
+    const pendingWithdrawal = await this.withdrawalRepo.createQueryBuilder('w')
+      .select('COALESCE(SUM(w.amount), 0)', 'pendingWithdrawAmount')
+      .where('w.status = :status', { status: 0 })
+      .getRawOne();
+
+    return {
+      totalAccounts: Number(accountStats?.totalAccounts || 0),
+      totalPrincipal: Number(accountStats?.totalPrincipal || 0),
+      totalInterest: Number(accountStats?.totalInterest || 0),
+      totalRecharged: Number(accountStats?.totalRecharged || 0),
+      totalWithdrawn: Number(accountStats?.totalWithdrawn || 0),
+      totalReferralReward: Number(accountStats?.totalReferralReward || 0),
+      pendingWithdrawAmount: Number(pendingWithdrawal?.pendingWithdrawAmount || 0),
+    };
   }
 
   async adminReviewWithdrawal(id: number, operatorId: number, data: { action?: string; remark?: string }) {
@@ -787,6 +819,7 @@ export class AssetService implements OnModuleInit {
       .leftJoin(User, 'referrer', 'referrer.id = rw.referrer_user_id')
       .leftJoin(User, 'rechargeUser', 'rechargeUser.id = rw.recharge_user_id')
       .leftJoin(AssetRechargeOrder, 'o', 'o.id = rw.recharge_order_id')
+      .leftJoin(AssetAccount, 'aa', 'aa.user_id = rw.referrer_user_id')
       .select([
         'rw.id AS id',
         'rw.referrer_user_id AS referrerUserId',
@@ -800,6 +833,7 @@ export class AssetService implements OnModuleInit {
         'rw.recharge_amount AS rechargeAmount',
         'rw.reward_rate AS rewardRate',
         'rw.reward_amount AS rewardAmount',
+        'aa.total_withdrawn AS referrerTotalWithdrawn',
         'o.real_name AS rechargeRealName',
         'o.phone AS rechargePhone',
         'rw.created_at AS createdAt',

@@ -18,7 +18,7 @@ export class CurrencyLog {
   @Column({ type: 'varchar', length: 50, unique: true })
   sn: string;
 
-  @Column({ type: 'varchar', length: 20, name: 'currency_type', comment: 'points/gold/silver/special/reward' })
+  @Column({ type: 'varchar', length: 20, name: 'currency_type', comment: 'points/gold/silver/copper/special/reward' })
   currencyType: string;
 
   @Column({ type: 'decimal', precision: 18, scale: 6, comment: '变动数量（正为收入，负为支出）' })

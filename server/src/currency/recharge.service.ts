@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 import { RechargeOrder } from '../entities/recharge-order.entity';
 import { User } from '../entities/user.entity';
 import { SystemConfig } from '../entities/system-config.entity';
@@ -15,6 +16,7 @@ import { ServiceNotificationService } from '../notification/service-notification
 import { SmsService } from './sms.service';
 
 const RECHARGE_AMOUNT_OPTIONS = [500, 2000];
+const CHINA_MOBILE_REGEX = /^1[3-9]\d{9}$/;
 
 @Injectable()
 export class RechargeService implements OnModuleInit {
@@ -86,6 +88,62 @@ export class RechargeService implements OnModuleInit {
     return RECHARGE_AMOUNT_OPTIONS.includes(amount) ? amount : null;
   }
 
+  private isValidMainlandMobile(phone: string): boolean {
+    return CHINA_MOBILE_REGEX.test(phone);
+  }
+
+  private getDefaultCdkTypeMeta(activationAmount: number) {
+    return {
+      name: `充值${activationAmount}激活码`,
+      description: `充值${activationAmount}元用户专用激活码`,
+    };
+  }
+
+  private async findOrCreateCdkTypeByAmount(activationAmount: number) {
+    const normalized = this.normalizeRechargeAmount(activationAmount);
+    if (!normalized) throw new BadRequestException('请选择CDK档位：500或2000');
+
+    const existing = await this.cdkTypeRepo.findOne({
+      where: { activationAmount: normalized as any },
+    });
+    if (existing) return existing;
+
+    const meta = this.getDefaultCdkTypeMeta(normalized);
+    return this.cdkTypeRepo.save(
+      this.cdkTypeRepo.create({
+        name: meta.name,
+        description: meta.description,
+        activationAmount: normalized,
+      }),
+    );
+  }
+
+  private generateCdkCode(): string {
+    return uuidv4().replace(/-/g, '').substring(0, 16).toUpperCase();
+  }
+
+  private async createRechargeActivationCdk(activationAmount: number): Promise<Cdk> {
+    const normalized = this.normalizeRechargeAmount(activationAmount);
+    if (!normalized) throw new BadRequestException('请选择CDK档位：500或2000');
+
+    const cdkType = await this.findOrCreateCdkTypeByAmount(normalized);
+    for (let i = 0; i < 8; i++) {
+      const cdk = this.cdkRepo.create({
+        code: this.generateCdkCode(),
+        cdkTypeId: cdkType.id,
+        itemsJson: [],
+        activationAmount: normalized,
+        status: 0,
+      });
+      try {
+        return await this.cdkRepo.save(cdk);
+      } catch (error) {
+        if (i === 7) throw error;
+      }
+    }
+    throw new BadRequestException('激活码生成失败，请稍后重试');
+  }
+
   private inferActivationAmountFromItems(itemsJson: any): number | null {
     if (!Array.isArray(itemsJson)) return null;
     for (const item of itemsJson) {
@@ -135,8 +193,8 @@ export class RechargeService implements OnModuleInit {
     const phone = String(data.phone || '').trim();
     if (!realName) throw new BadRequestException('请填写姓名');
     if (realName.length > 20) throw new BadRequestException('姓名过长');
-    if (!/^1\d{10}$/.test(phone)) {
-      throw new BadRequestException('请填写正确的11位手机号');
+    if (!this.isValidMainlandMobile(phone)) {
+      throw new BadRequestException('请填写正确的11位手机号（需以13-19开头）');
     }
     const amount =
       data.amount === undefined || data.amount === null
@@ -296,40 +354,39 @@ export class RechargeService implements OnModuleInit {
   async adminSendActivationCode(
     id: number,
     operatorId: number,
-    data: { code?: string },
+    _data: { code?: string },
   ) {
     const order = await this.orderRepo.findOne({ where: { id: Number(id) } });
     if (!order) throw new NotFoundException('充值订单不存在');
     if (order.status !== 0) throw new BadRequestException('该订单已处理');
 
-    const code = String(data.code || '').trim();
     const realName = String(order.realName || '').trim();
     const phone = String(order.phone || '').trim();
 
     if (!realName) throw new BadRequestException('付款人姓名为空，不能发送短信');
-    if (!phone) throw new BadRequestException('手机号为空，不能发送短信');
-    if (!code) throw new BadRequestException('请填写激活码');
+    if (!this.isValidMainlandMobile(phone)) {
+      throw new BadRequestException('手机号格式不正确，需为11位且以13-19开头');
+    }
     const orderAmount = this.normalizeRechargeAmount(order.amount);
     if (!orderAmount) {
       throw new BadRequestException('订单充值金额不合法，请让用户重新选择500或2000提交');
     }
-    const codeAmount = await this.resolveCdkActivationAmount(code);
-    if (!codeAmount) {
-      throw new BadRequestException('激活码未配置500/2000档位，不能发送');
-    }
-    if (codeAmount !== orderAmount) {
-      throw new BadRequestException(`激活码档位为${codeAmount}，与订单充值${orderAmount}不一致`);
-    }
 
-    await this.smsService.sendActivationCode({
-      mobile: phone,
-      code,
-      realName,
-    });
+    const cdk = await this.createRechargeActivationCdk(orderAmount);
+    try {
+      await this.smsService.sendActivationCode({
+        mobile: phone,
+        code: cdk.code,
+        realName,
+      });
+    } catch (error) {
+      await this.cdkRepo.delete(cdk.id).catch(() => undefined);
+      throw error;
+    }
 
     await this.orderRepo.update(id, {
       status: 1,
-      adminRemark: `激活码：${code}`,
+      adminRemark: `激活码：${cdk.code}`,
       operatorId: Number(operatorId) || null,
       handledAt: new Date(),
     });
@@ -339,10 +396,16 @@ export class RechargeService implements OnModuleInit {
       type: 'recharge_result',
       title: '充值已处理',
       content: `你的充值申请已核实，激活码已通过短信发送至 ${phone}，请注意查收。`,
-      payload: { orderId: order.id, status: 1 },
+      payload: { orderId: order.id, status: 1, cdkId: cdk.id, activationAmount: orderAmount },
     });
 
-    return { message: '激活码短信已发送', phone };
+    return {
+      message: '激活码短信已发送',
+      phone,
+      code: cdk.code,
+      cdkId: cdk.id,
+      activationAmount: orderAmount,
+    };
   }
 
   /** 管理端：统计 */

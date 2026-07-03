@@ -100,6 +100,12 @@ const router = createRouter({
           meta: { title: '奖励补账', icon: 'Coin' },
         },
         {
+          path: 'weekly-point-returns',
+          name: 'WeeklyPointReturns',
+          component: () => import('@/views/rewards/WeeklyPointReturnManage.vue'),
+          meta: { title: '积分返还统计', icon: 'DataLine' },
+        },
+        {
           path: 'social',
           name: 'SocialManage',
           component: () => import('@/views/social/SocialManage.vue'),

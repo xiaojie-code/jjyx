@@ -40,7 +40,7 @@ class Events
         if (!is_array($data)) {
             Gateway::sendToClient($client_id, Common::returndata('error', [
                 'code' => 400,
-                'msg' => 'invalid message',
+                'msg' => '消息格式错误',
                 'info' => ''
             ]));
             return;

@@ -125,7 +125,7 @@
             <el-option label="积分" value="points" />
             <el-option label="金币" value="gold" />
             <el-option label="银币" value="silver" />
-            <el-option label="奖励积分" value="reward" />
+            <el-option label="铜币" value="copper" />
           </el-select>
         </el-form-item>
         <el-form-item label="数量">

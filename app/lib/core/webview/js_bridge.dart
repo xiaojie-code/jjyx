@@ -132,6 +132,76 @@ class JSBridge {
     await _sendToH5('pointsChangeResult', data);
   }
 
+  /// App-native game controls can use the same game point流水接口 as H5.
+  Future<Map<String, dynamic>> changePointsFromNative({
+    required double amount,
+    required String reason,
+    String? requestId,
+    Map<String, dynamic> extra = const {},
+  }) async {
+    if (amount == 0) {
+      return {
+        'success': false,
+        'balance': _latestPoints ?? _userInfo?.points ?? 0,
+        'amount': amount,
+        'message': 'amount is zero',
+      };
+    }
+
+    final requestData = <String, dynamic>{
+      ...extra,
+      'amount': amount,
+      'reason': reason.isNotEmpty ? reason : 'game_points_change',
+    };
+    if (requestId != null && requestId.isNotEmpty) {
+      requestData['requestId'] = requestId;
+    }
+
+    try {
+      final result = await _apiClient.post<Map<String, dynamic>>(
+        ApiEndpoints.gamePointsChange(_gameId),
+        data: requestData,
+      );
+      final balance = (result?['balance'] as num?)?.toDouble() ??
+          (result?['points'] as num?)?.toDouble() ??
+          (_latestPoints ?? _userInfo?.points ?? 0);
+      final actualAmount = (result?['amount'] as num?)?.toDouble() ?? amount;
+      final duplicate = result?['duplicate'] == true;
+      _latestPoints = balance;
+      await sendPointsChangeResult(
+        success: true,
+        balance: balance,
+        amount: actualAmount,
+        requestedAmount: amount,
+        duplicate: duplicate,
+        message: result?['message']?.toString(),
+        requestId: requestId,
+      );
+      return {
+        'success': true,
+        'balance': balance,
+        'amount': actualAmount,
+        'duplicate': duplicate,
+        'message': result?['message']?.toString(),
+      };
+    } catch (e) {
+      debugPrint('[JSBridge] native changePoints failed: $e');
+      final balance = _latestPoints ?? _userInfo?.points ?? 0;
+      await sendPointsChangeResult(
+        success: false,
+        balance: balance,
+        amount: amount,
+        requestId: requestId,
+      );
+      return {
+        'success': false,
+        'balance': balance,
+        'amount': amount,
+        'message': e.toString(),
+      };
+    }
+  }
+
   /// Send the result of a skin purchase back to H5.
   Future<void> sendBuySkinResult({
     required bool success,

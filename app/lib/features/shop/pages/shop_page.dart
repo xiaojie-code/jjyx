@@ -18,9 +18,30 @@ class _ShopPageState extends State<ShopPage> {
 
   static const List<_ShopProduct> _products = [
     _ShopProduct(
-      title: '云芯智能炒菜机',
-      subtitle: '智能菜谱、精准控温、自动翻炒，少油烟也能稳定出餐',
-      imageName: 'wecom-temp-102952-7f383878d5d4ae179ab2335d5ebe12a1.jpg',
+      title: '云芯智能健康指环',
+      subtitle: '血压血氧心电、血脂尿酸、睡眠监测',
+      imageName: 'product-health-ring.png',
+      imageFit: BoxFit.contain,
+    ),
+    _ShopProduct(
+      title: '云芯健康陪伴手表',
+      subtitle: '血压心率监测、SOS 求助、防摔倒提醒',
+      imageName: 'product-health-watch.png',
+    ),
+    _ShopProduct(
+      title: '云芯健康陪伴手表二代',
+      subtitle: '气泵测压、心电监测、AI 中医诊疗',
+      imageName: 'product-health-watch-2.jpg',
+    ),
+    _ShopProduct(
+      title: '云芯ai智能眼镜',
+      subtitle: '拍照录像录音、AI 识物、实时翻译',
+      imageName: 'product-ai-glasses.png',
+    ),
+    _ShopProduct(
+      title: '云芯智能平板',
+      subtitle: '高清大屏、AI 助手、办公娱乐随行',
+      imageName: 'product-tablet.png',
     ),
     _ShopProduct(
       title: '云芯智能饮水机',
@@ -33,6 +54,44 @@ class _ShopPageState extends State<ShopPage> {
       imageName: 'wecom-temp-106614-d3636a8da16208935187051b9af7d1b0.jpg',
     ),
     _ShopProduct(
+      title: '云芯 AI 伴侣机器人',
+      subtitle: '可定制专属脸模与声音，支持陪伴互动、日程提醒和情绪交流',
+      imageName: 'bl.png',
+      secondaryImageName: 'bl1.png',
+      imageFit: BoxFit.contain,
+    ),
+    _ShopProduct(
+      title: '云芯即热式电热水器',
+      subtitle: '即开即热、精准恒温、智能节能',
+      imageName: 'wecom-temp-81610-3123efb8a6290ed8802926f63a996ab5.jpg',
+    ),
+    _ShopProduct(
+      title: '云芯抽油烟机',
+      subtitle: '大吸力排烟、低噪运行、智能清洁',
+      imageName: 'product-range-hood.jpg',
+    ),
+    _ShopProduct(
+      title: '云芯洗碗机-带烘干',
+      subtitle: '强力洗净、热风烘干、除菌存储',
+      imageName: 'product-dishwasher-dryer.jpg',
+    ),
+    _ShopProduct(
+      title: '云芯智能炒菜机',
+      subtitle: '智能菜谱、精准控温、自动翻炒，少油烟也能稳定出餐',
+      imageName: 'wecom-temp-102952-7f383878d5d4ae179ab2335d5ebe12a1.jpg',
+    ),
+    _ShopProduct(
+      title: '云芯空调（上门安装）',
+      subtitle: '快速制冷暖、静音节能、上门安装',
+      imageName: 'product-air-conditioner.jpg',
+    ),
+    _ShopProduct(
+      title: '云芯三轮车',
+      subtitle: '灵活出行、稳定承载、智能续航',
+      imageName: 'slc-composite.png',
+      imageFit: BoxFit.contain,
+    ),
+    _ShopProduct(
       title: '云芯大屏对开门冰箱 605L',
       subtitle: 'AI 屏显食材、风冷无霜、双循环保鲜',
       imageName: 'wecom-temp-118430-281e0c3401f86df1e1c929e80d621e2b.jpg',
@@ -41,18 +100,6 @@ class _ShopPageState extends State<ShopPage> {
       title: '云芯智慧大屏 100 寸',
       subtitle: '4K HDR、AI 影音、远场语音、全面屏',
       imageName: 'wecom-temp-66807-eeaeb548f43a250372d3c78260367bdf.jpg',
-    ),
-    _ShopProduct(
-      title: '云芯即热式电热水器',
-      subtitle: '即开即热、精准恒温、智能节能',
-      imageName: 'wecom-temp-81610-3123efb8a6290ed8802926f63a996ab5.jpg',
-    ),
-    _ShopProduct(
-      title: '云芯 AI 伴侣机器人',
-      subtitle: '可定制专属脸模与声音，支持陪伴互动、日程提醒和情绪交流',
-      imageName: 'bl.png',
-      secondaryImageName: 'bl1.png',
-      isWide: true,
     ),
   ];
 
@@ -123,6 +170,9 @@ class _ShopPageState extends State<ShopPage> {
   }
 
   String _productImageAsset(String imageName) {
+    if (imageName.startsWith('assets/')) {
+      return imageName;
+    }
     return 'assets/shangcheng/$imageName';
   }
 
@@ -172,14 +222,23 @@ class _ShopPageState extends State<ShopPage> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: SizedBox(
-                  height: product.isWide ? 210 : 230,
+                  height: secondaryImageAsset != null ? 210 : 230,
                   child: Row(
                     children: [
-                      Expanded(child: _buildPreSaleImage(imageAsset)),
+                      Expanded(
+                        child: _buildPreSaleImage(
+                          imageAsset,
+                          fit: product.imageFit,
+                        ),
+                      ),
                       if (secondaryImageAsset != null) ...[
                         Container(width: 1, color: const Color(0xFFE6E9EE)),
                         Expanded(
-                            child: _buildPreSaleImage(secondaryImageAsset)),
+                          child: _buildPreSaleImage(
+                            secondaryImageAsset,
+                            fit: product.imageFit,
+                          ),
+                        ),
                       ],
                     ],
                   ),
@@ -225,7 +284,7 @@ class _ShopPageState extends State<ShopPage> {
     );
   }
 
-  Widget _buildPreSaleImage(String? asset) {
+  Widget _buildPreSaleImage(String? asset, {BoxFit fit = BoxFit.cover}) {
     if (asset == null) {
       return const ColoredBox(
         color: Color(0xFFF3F7FB),
@@ -243,8 +302,8 @@ class _ShopPageState extends State<ShopPage> {
       color: const Color(0xFFFBFBFC),
       child: Image.asset(
         asset,
-        fit: BoxFit.cover,
-        alignment: Alignment.topCenter,
+        fit: fit,
+        alignment: Alignment.center,
         width: double.infinity,
         height: double.infinity,
         errorBuilder: (context, error, stackTrace) => const Center(
@@ -303,10 +362,6 @@ class _ShopPageState extends State<ShopPage> {
 
   @override
   Widget build(BuildContext context) {
-    final regularProducts =
-        _products.where((product) => !product.isWide).toList(growable: false);
-    final wideProducts =
-        _products.where((product) => product.isWide).toList(growable: false);
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     final scaleExtra = (textScale - 1.0).clamp(0.0, 0.45).toDouble();
     final regularCardExtent =
@@ -345,8 +400,8 @@ class _ShopPageState extends State<ShopPage> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               sliver: SliverGrid(
                 delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildProductCard(regularProducts[index]),
-                  childCount: regularProducts.length,
+                  (context, index) => _buildProductCard(_products[index]),
+                  childCount: _products.length,
                 ),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
@@ -356,17 +411,6 @@ class _ShopPageState extends State<ShopPage> {
                 ),
               ),
             ),
-            if (wideProducts.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) =>
-                        _buildWideProductCard(wideProducts[index]),
-                    childCount: wideProducts.length,
-                  ),
-                ),
-              ),
           ],
         ),
       ),
@@ -563,19 +607,10 @@ class _ShopPageState extends State<ShopPage> {
       imageAsset: product.imageName == null
           ? null
           : _productImageAsset(product.imageName!),
-      onTap: () => _showPreSaleDialog(product),
-    );
-  }
-
-  Widget _buildWideProductCard(_ShopProduct product) {
-    return _WideProductCard(
-      product: product,
-      imageAsset: product.imageName == null
-          ? null
-          : _productImageAsset(product.imageName!),
       secondaryImageAsset: product.secondaryImageName == null
           ? null
           : _productImageAsset(product.secondaryImageName!),
+      imageFit: product.imageFit,
       onTap: () => _showPreSaleDialog(product),
     );
   }
@@ -586,10 +621,14 @@ class _ProductCard extends StatefulWidget {
     required this.product,
     required this.onTap,
     this.imageAsset,
+    this.secondaryImageAsset,
+    this.imageFit = BoxFit.cover,
   });
 
   final _ShopProduct product;
   final String? imageAsset;
+  final String? secondaryImageAsset;
+  final BoxFit imageFit;
   final VoidCallback onTap;
 
   @override
@@ -640,7 +679,7 @@ class _ProductCardState extends State<_ProductCard> {
               children: [
                 AspectRatio(
                   aspectRatio: 1.08,
-                  child: _buildProductImage(),
+                  child: _buildProductImageArea(),
                 ),
                 Expanded(
                   child: Padding(
@@ -708,8 +747,25 @@ class _ProductCardState extends State<_ProductCard> {
     );
   }
 
-  Widget _buildProductImage() {
-    final asset = widget.imageAsset;
+  Widget _buildProductImageArea() {
+    final secondaryAsset = widget.secondaryImageAsset;
+    if (secondaryAsset == null) {
+      return _buildProductImage(widget.imageAsset);
+    }
+
+    return Ink(
+      color: const Color(0xFFFBFBFC),
+      child: Row(
+        children: [
+          Expanded(child: _buildProductImage(widget.imageAsset)),
+          Container(width: 1, color: const Color(0xFFE6E9EE)),
+          Expanded(child: _buildProductImage(secondaryAsset)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductImage(String? asset) {
     if (asset == null) {
       return Ink(
         decoration: const BoxDecoration(
@@ -729,174 +785,8 @@ class _ProductCardState extends State<_ProductCard> {
       color: const Color(0xFFFBFBFC),
       child: Image.asset(
         asset,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (context, error, stackTrace) => const Center(
-          child: Icon(
-            Icons.image_not_supported_outlined,
-            color: Color(0xFF98A2B3),
-            size: 34,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _WideProductCard extends StatefulWidget {
-  const _WideProductCard({
-    required this.product,
-    required this.onTap,
-    this.imageAsset,
-    this.secondaryImageAsset,
-  });
-
-  final _ShopProduct product;
-  final String? imageAsset;
-  final String? secondaryImageAsset;
-  final VoidCallback onTap;
-
-  @override
-  State<_WideProductCard> createState() => _WideProductCardState();
-}
-
-class _WideProductCardState extends State<_WideProductCard> {
-  bool _pressed = false;
-
-  void _setPressed(bool value) {
-    if (_pressed == value) return;
-    setState(() => _pressed = value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final imageHeight = screenWidth >= 420 ? 236.0 : 216.0;
-
-    return AnimatedScale(
-      scale: _pressed ? 0.985 : 1,
-      duration: const Duration(milliseconds: 90),
-      curve: Curves.easeOut,
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        clipBehavior: Clip.antiAlias,
-        child: Ink(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFE6E9EE)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x08000000),
-                blurRadius: 10,
-                offset: Offset(0, 4),
-              ),
-            ],
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            splashColor: const Color(0xFFFF4D24).withOpacity(0.08),
-            highlightColor: const Color(0xFFFF4D24).withOpacity(0.04),
-            onTap: widget.onTap,
-            onTapDown: (_) => _setPressed(true),
-            onTapUp: (_) => _setPressed(false),
-            onTapCancel: () => _setPressed(false),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  height: imageHeight,
-                  child: Row(
-                    children: [
-                      Expanded(child: _buildImage(widget.imageAsset)),
-                      Container(width: 1, color: const Color(0xFFE6E9EE)),
-                      Expanded(child: _buildImage(widget.secondaryImageAsset)),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 13, 14, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.product.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF101828),
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          height: 1.25,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        widget.product.subtitle,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF7A8494),
-                          fontSize: 13,
-                          height: 1.38,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Center(
-                        child: SizedBox(
-                          width: 188,
-                          height: 38,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF4D24),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Center(
-                              child: Text(
-                                '订购',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildImage(String? asset) {
-    if (asset == null) {
-      return const ColoredBox(
-        color: Color(0xFFF3F7FB),
-        child: Center(
-          child: Icon(
-            Icons.smart_toy_outlined,
-            color: Color(0xFF2F80ED),
-            size: 54,
-          ),
-        ),
-      );
-    }
-
-    return ColoredBox(
-      color: const Color(0xFFFBFBFC),
-      child: Image.asset(
-        asset,
-        fit: BoxFit.cover,
-        alignment: Alignment.topCenter,
+        fit: widget.imageFit,
+        alignment: Alignment.center,
         width: double.infinity,
         height: double.infinity,
         errorBuilder: (context, error, stackTrace) => const Center(
@@ -917,12 +807,12 @@ class _ShopProduct {
     required this.subtitle,
     this.imageName,
     this.secondaryImageName,
-    this.isWide = false,
+    this.imageFit = BoxFit.cover,
   });
 
   final String title;
   final String subtitle;
   final String? imageName;
   final String? secondaryImageName;
-  final bool isWide;
+  final BoxFit imageFit;
 }

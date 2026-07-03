@@ -36,6 +36,7 @@ class CurrencyModel {
   final double points;
   final double gold;
   final double silver;
+  final double copper;
   final double specialPointsTier1;
   final double specialPointsTier2;
   final double specialPointsTier3;
@@ -46,6 +47,7 @@ class CurrencyModel {
     required this.points,
     required this.gold,
     required this.silver,
+    required this.copper,
     required this.specialPointsTier1,
     required this.specialPointsTier2,
     required this.specialPointsTier3,
@@ -58,6 +60,7 @@ class CurrencyModel {
       points: (json['points'] as num?)?.toDouble() ?? 0,
       gold: (json['gold'] as num?)?.toDouble() ?? 0,
       silver: (json['silver'] as num?)?.toDouble() ?? 0,
+      copper: (json['copper'] as num?)?.toDouble() ?? 0,
       specialPointsTier1: (json['specialPointsTier1'] as num?)?.toDouble() ?? 0,
       specialPointsTier2: (json['specialPointsTier2'] as num?)?.toDouble() ?? 0,
       specialPointsTier3: (json['specialPointsTier3'] as num?)?.toDouble() ?? 0,

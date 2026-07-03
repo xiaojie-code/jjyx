@@ -73,7 +73,7 @@ export class AdminController {
   @Get('recharge/orders') getRechargeOrders(@Query() query: any) { return this.adminService.getRechargeOrders(query); }
   @Get('recharge/stats') getRechargeStats() { return this.adminService.getRechargeStats(); }
   @Put('recharge/:id/review') reviewRecharge(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number, @Body() data: { action: 'approve' | 'reject'; remark?: string }) { return this.adminService.reviewRecharge(id, operatorId, data); }
-  @Post('recharge/:id/send-code') sendRechargeActivationCode(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number, @Body() data: { code?: string }) { return this.adminService.sendRechargeActivationCode(id, operatorId, data); }
+  @Post('recharge/:id/send-code') sendRechargeActivationCode(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number, @Body() data: { code?: string } = {}) { return this.adminService.sendRechargeActivationCode(id, operatorId, data); }
 
   // 充值收款码上传
   @Post('recharge/qrcode')
@@ -103,6 +103,17 @@ export class AdminController {
   @Post('reward-backfill/legacy') backfillLegacyRewardMechanisms(@Body() data: any) {
     return this.adminService.backfillLegacyRewardMechanisms(data);
   }
+  @Get('weekly-point-returns/overview') getWeeklyPointReturnOverview(@Query() query: any) {
+    return this.adminService.getWeeklyPointReturnOverview(query);
+  }
+  @Get('weekly-point-returns/accounts') getWeeklyPointReturnAccounts(@Query() query: any) {
+    return this.adminService.getWeeklyPointReturnAccounts(query);
+  }
+  @Get('weekly-point-returns/accounts/:accountId/daily') getWeeklyPointReturnAccountDaily(
+    @Param('accountId', ParseIntPipe) accountId: number,
+  ) {
+    return this.adminService.getWeeklyPointReturnAccountDaily(accountId);
+  }
 
   // 分销
   @Get('agents') getAgents(@Query() query: any) { return this.adminService.getAgents(query); }
@@ -119,6 +130,8 @@ export class AdminController {
     return this.adminService.getMatrixList(query, pagination);
   }
   @Get('matrix/detail/:id') getMatrixDetail(@Param('id', ParseIntPipe) id: number) { return this.adminService.getMatrixDetail(id); }
+  @Get('matrix/direct-users/:userId') getMatrixDirectUsers(@Param('userId', ParseIntPipe) userId: number) { return this.adminService.getMatrixDirectUsers(userId); }
+  @Get('matrix/withdrawals/:userId') getMatrixWithdrawals(@Param('userId', ParseIntPipe) userId: number) { return this.adminService.getMatrixWithdrawals(userId); }
   @Get('matrix/incomes') getMatrixIncomes(@Query() query: any, @Query('page') page: string, @Query('pageSize') pageSize: string) {
     const pagination = new PaginationDto(); pagination.page = parseInt(page, 10) || 1; pagination.pageSize = parseInt(pageSize, 10) || 20;
     return this.adminService.getMatrixIncomes(query, pagination);

@@ -6,6 +6,11 @@ import { AssetService } from './asset.service';
 export class AdminAssetController {
   constructor(private readonly assetService: AssetService) {}
 
+  @Get('stats')
+  stats() {
+    return this.assetService.adminAssetStats();
+  }
+
   @Get('accounts')
   accounts(@Query() query: any) {
     return this.assetService.adminListAccounts(query);

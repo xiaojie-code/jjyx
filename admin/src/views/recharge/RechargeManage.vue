@@ -77,20 +77,17 @@
             <el-form-item label="充值金额">
               <el-input v-model="sendCodeForm.amountText" disabled />
             </el-form-item>
-            <el-form-item label="激活码" required>
-              <el-input
-                v-model.trim="sendCodeForm.code"
-                placeholder="请输入要发送给用户的激活码"
-                clearable
-                maxlength="64"
-                show-word-limit
-              />
-            </el-form-item>
+            <el-alert
+              type="info"
+              :closable="false"
+              show-icon
+              title="系统会根据充值金额自动生成对应档位的激活码，并通过短信发送到该手机号。"
+            />
           </el-form>
           <template #footer>
             <el-button @click="sendCodeDialogVisible = false">取消</el-button>
             <el-button type="primary" :loading="sendCodeSending" @click="confirmSendCode">
-              确认发送
+              确认生成并发送
             </el-button>
           </template>
         </el-dialog>
@@ -171,7 +168,6 @@ const sendCodeForm = reactive({
   realName: '',
   phone: '',
   amountText: '',
-  code: '',
 })
 
 const cfg = reactive<Record<string, string>>({
@@ -211,7 +207,6 @@ function openSendCodeDialog(row: any) {
   sendCodeForm.realName = row.realName || ''
   sendCodeForm.phone = row.phone || ''
   sendCodeForm.amountText = row.amount != null ? `${row.amount} 元` : ''
-  sendCodeForm.code = ''
   sendCodeDialogVisible.value = true
 }
 
@@ -229,15 +224,11 @@ async function confirmSendCode() {
     ElMessage.error('手机号不能为空')
     return
   }
-  if (!sendCodeForm.code) {
-    ElMessage.error('请填写激活码')
-    return
-  }
 
   sendCodeSending.value = true
   try {
-    await sendRechargeActivationCode(order.id, { code: sendCodeForm.code })
-    ElMessage.success('激活码短信已发送')
+    const res: any = await sendRechargeActivationCode(order.id)
+    ElMessage.success(res?.code ? `激活码已生成并发送：${res.code}` : '激活码短信已发送')
     sendCodeDialogVisible.value = false
     loadOrders()
   } finally {

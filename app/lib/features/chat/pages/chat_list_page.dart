@@ -672,7 +672,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                       onTap: () {
                         Navigator.of(context, rootNavigator: true)
                             .push(MaterialPageRoute(
-                          builder: (_) => const _DigitalHumanPage(),
+                          builder: (_) => const _DigitalHumanPageV2(),
                         ));
                       },
                     );
@@ -949,28 +949,410 @@ class _MessageSearchDelegate extends SearchDelegate<String> {
   }
 }
 
-/// Digital human page - not open yet.
-class _DigitalHumanPage extends StatelessWidget {
-  const _DigitalHumanPage();
+class _DigitalHumanPageV2 extends StatefulWidget {
+  const _DigitalHumanPageV2();
+
+  @override
+  State<_DigitalHumanPageV2> createState() => _DigitalHumanPageV2State();
+}
+
+class _DigitalHumanPageV2State extends State<_DigitalHumanPageV2> {
+  String _mode = '极速模式';
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('数字人')),
-      body: const Center(
+      backgroundColor: const Color(0xFFF6F7FB),
+      body: SafeArea(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.face, size: 80, color: Colors.purple),
-            SizedBox(height: 24),
-            Text(
-              '测试中，暂未开放',
-              style: TextStyle(
-                  fontSize: 18,
-                  color: Colors.grey,
-                  fontWeight: FontWeight.w500),
+            _DigitalHumanHeader(
+              mode: _mode,
+              onBack: () => Navigator.of(context).pop(),
+              onModeSelected: (value) {
+                setState(() => _mode = value);
+              },
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
+                children: const [
+                  _DigitalHumanSectionTitle(number: '1.', title: '上传形象'),
+                  SizedBox(height: 12),
+                  _UploadTrainingCard(),
+                  SizedBox(height: 36),
+                  _DigitalHumanSectionTitle(number: '2.', title: '授权形象'),
+                  SizedBox(height: 12),
+                  _AuthorizationCard(),
+                  SizedBox(height: 36),
+                  _DigitalHumanSectionTitle(number: '3.', title: '选择声音'),
+                  SizedBox(height: 12),
+                  _VoiceSelector(),
+                  SizedBox(height: 170),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(22, 8, 22, 26),
+              child: _StartCustomizeButton(),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DigitalHumanHeader extends StatelessWidget {
+  final String mode;
+  final VoidCallback onBack;
+  final ValueChanged<String> onModeSelected;
+
+  const _DigitalHumanHeader({
+    required this.mode,
+    required this.onBack,
+    required this.onModeSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 58,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned(
+            left: 14,
+            child: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 28),
+              onPressed: onBack,
+              color: Colors.black,
+              splashRadius: 24,
+            ),
+          ),
+          PopupMenuButton<String>(
+            initialValue: mode,
+            color: Colors.white,
+            elevation: 8,
+            offset: const Offset(0, 36),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            onSelected: onModeSelected,
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: '极速模式', child: Text('极速模式')),
+              PopupMenuItem(value: '标准模式', child: Text('标准模式')),
+            ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  mode,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(width: 5),
+                const Icon(
+                  Icons.arrow_drop_down_rounded,
+                  size: 22,
+                  color: Colors.black,
+                ),
+              ],
+            ),
+          ),
+          const Positioned(
+            right: 14,
+            child: IconButton(
+              icon: Icon(Icons.help_outline_rounded, size: 27),
+              onPressed: null,
+              color: Color(0xFFA5ADBA),
+              disabledColor: Color(0xFFA5ADBA),
+              splashRadius: 24,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DigitalHumanSectionTitle extends StatelessWidget {
+  final String number;
+  final String title;
+
+  const _DigitalHumanSectionTitle({
+    required this.number,
+    required this.title,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: 1,
+              right: 0,
+              bottom: 2,
+              child: Container(
+                height: 8,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF59E6A9),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Text(
+              number,
+              style: const TextStyle(
+                fontSize: 20,
+                height: 1,
+                fontStyle: FontStyle.italic,
+                fontWeight: FontWeight.w900,
+                color: Colors.black,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 18,
+            height: 1,
+            fontWeight: FontWeight.w800,
+            color: Colors.black,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UploadTrainingCard extends StatelessWidget {
+  const _UploadTrainingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 284,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.add_rounded, size: 52, color: Color(0xFFC8CDD5)),
+          SizedBox(height: 12),
+          Text(
+            '上传训练视频',
+            style: TextStyle(
+              fontSize: 15,
+              color: Color(0xFFA8AFBC),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AuthorizationCard extends StatelessWidget {
+  const _AuthorizationCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 84,
+      padding: const EdgeInsets.fromLTRB(22, 14, 24, 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.shield_outlined,
+            size: 34,
+            color: Color(0xFFC1C7D2),
+          ),
+          const SizedBox(width: 18),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '待授权',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black,
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  '授权你的形象定制数字人',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFFA0A7B4),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: 96,
+            height: 48,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFF101114),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: const Text(
+              '去授权',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoiceSelector extends StatelessWidget {
+  const _VoiceSelector();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 106,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
+        children: const [
+          _VoiceCard(isCustom: true, label: '定制声音'),
+          SizedBox(width: 18),
+          _VoiceCard(label: '萌娃音', showVip: true),
+          SizedBox(width: 18),
+          _VoiceCard(label: '御姐音', showVip: true),
+          SizedBox(width: 18),
+          _VoiceCard(label: '男青年', showVip: true),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoiceCard extends StatelessWidget {
+  final String label;
+  final bool isCustom;
+  final bool showVip;
+
+  const _VoiceCard({
+    required this.label,
+    this.isCustom = false,
+    this.showVip = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 84,
+          height: 106,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (isCustom) ...[
+                const Icon(Icons.add_rounded, size: 42, color: Colors.black),
+                const SizedBox(height: 8),
+              ],
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: isCustom ? 12 : 15,
+                    fontWeight: isCustom ? FontWeight.w500 : FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (showVip)
+          Positioned(
+            right: 0,
+            top: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: const BoxDecoration(
+                color: Color(0xFFE8C18F),
+                borderRadius: BorderRadius.only(
+                  topRight: Radius.circular(8),
+                  bottomLeft: Radius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'VIP',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _StartCustomizeButton extends StatelessWidget {
+  const _StartCustomizeButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 58,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFF101114),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Text(
+        '开始定制',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 18,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );

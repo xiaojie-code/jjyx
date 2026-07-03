@@ -18,7 +18,7 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { ServiceNotificationService } from '../notification/service-notification.service';
 import * as bcrypt from 'bcryptjs';
 
-type CurrencyType = 'points' | 'gold' | 'silver' | 'special' | 'reward' | 'invite';
+type CurrencyType = 'points' | 'gold' | 'silver' | 'copper' | 'special' | 'reward' | 'invite';
 
 const WEEKLY_POINT_RETURN_SWITCH_KEY = 'weekly_point_return';
 const WEEKLY_POINT_RETURN_MULTIPLIER_KEY = 'weekly_point_return_multiplier';
@@ -214,6 +214,7 @@ export class CurrencyService {
 
   private async ensureCurrencyPrecisionForWeeklyReturn() {
     const statements = [
+      `ALTER TABLE user_currencies ADD COLUMN copper DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER silver`,
       `ALTER TABLE user_currencies MODIFY COLUMN points DECIMAL(18, 6) NOT NULL DEFAULT 0 COMMENT '普通积分余额，支持每周返还的小数积分'`,
       `ALTER TABLE currency_logs MODIFY COLUMN amount DECIMAL(18, 6) NOT NULL COMMENT '变动数量（正为收入，负为支出）'`,
       `ALTER TABLE currency_logs MODIFY COLUMN before_balance DECIMAL(18, 6) NOT NULL COMMENT '变动前余额'`,
@@ -250,6 +251,16 @@ export class CurrencyService {
       WHERE c.user_id IS NULL
     `);
     return Number(result?.affectedRows ?? result?.[0]?.affectedRows ?? 0);
+  }
+
+  private async migrateRewardSynthesisToCopper() {
+    try {
+      await this.dataSource.query(
+        `UPDATE point_synthesis SET target_currency = 'copper' WHERE target_currency = 'reward'`,
+      );
+    } catch (_) {
+      // 兼容尚未创建积分合成表的数据库。
+    }
   }
 
   private async ensureDefaultSwitches() {
@@ -441,6 +452,7 @@ export class CurrencyService {
       points: Number(c.points),
       gold: Number(c.gold),
       silver: Number(c.silver),
+      copper: Number(c.copper),
       specialPointsTier1: Number(c.specialPointsTier1),
       specialPointsTier2: Number(c.specialPointsTier2),
       specialPointsTier3: Number(c.specialPointsTier3),
@@ -468,6 +480,7 @@ export class CurrencyService {
       case 'points': fieldName = 'points'; break;
       case 'gold': fieldName = 'gold'; break;
       case 'silver': fieldName = 'silver'; break;
+      case 'copper': fieldName = 'copper'; break;
       case 'reward': fieldName = 'rewardPoints'; break;
       case 'invite': fieldName = 'invitePoints'; break;
       default: throw new BadRequestException('不支持的货币类型');
@@ -871,7 +884,7 @@ export class CurrencyService {
     return { tier: count, amount };
   }
 
-  /** 奖励积分每日产出（定时任务调用） */
+  /** 铜币每日产出（定时任务调用） */
   async dailyRewardProduction() {
     const currencies = await this.currencyRepo.find();
     for (const c of currencies) {
@@ -882,7 +895,7 @@ export class CurrencyService {
 
       if (daily > 0) {
         await this.dataSource.transaction(async (mgr) => {
-          await this.changeCurrency(c.userId, 'reward', daily, 'daily_reward', '每日奖励积分产出', mgr);
+          await this.changeCurrency(c.userId, 'copper', daily, 'daily_reward', '每日铜币产出', mgr);
         });
       }
     }
@@ -900,7 +913,8 @@ export class CurrencyService {
 
     await this.dataSource.transaction(async (mgr) => {
       await this.changeCurrency(userId, 'points', -Number(config.consumePoints), 'synthesize', '积分合成消耗', mgr);
-      await this.changeCurrency(userId, config.targetCurrency as CurrencyType, Number(config.targetAmount), 'synthesize', '积分合成获得', mgr);
+      const targetCurrency = config.targetCurrency === 'reward' ? 'copper' : config.targetCurrency;
+      await this.changeCurrency(userId, targetCurrency as CurrencyType, Number(config.targetAmount), 'synthesize', '积分合成获得', mgr);
     });
 
     return { message: '合成成功' };
@@ -1185,6 +1199,7 @@ export class CurrencyService {
     await this.ensureDirectGameRewardTables();
     await this.ensureDefaultSwitches();
     await this.ensureCurrencyAccountsForExistingUsers();
+    await this.migrateRewardSynthesisToCopper();
     const defaults = [
       { configKey: 'daily_deduction_rate', configName: '每日积分扣除比例', configValue: '0.01', description: '每天扣除用户积分的百分比，0.01表示1%' },
       { configKey: 'weekly_return_multiplier', configName: '每周返还倍率', configValue: '1.5', description: '旧版每周返还逻辑使用的倍率，与新的积分返还功能无关' },
@@ -2052,6 +2067,7 @@ export class CurrencyService {
     let activeUsers = 0;
     let eligibleConsumed = 0;
     let excludedConsumed = 0;
+    let blockedReason = '';
     const periods: Array<{
       weekStartDate: string;
       weekEndDate: string;
@@ -2157,13 +2173,19 @@ export class CurrencyService {
         0,
       );
 
+      let periodStatus = dryRun ? 'preview' : 'created';
       if (!dryRun) {
         const result = await this.setupWeeklyPointReturnPeriod(sunday, {
           allowBeforeFeatureStart: true,
           forceWeekStartAt: effectiveStartAt,
         });
-        if (result.created) createdPeriods += 1;
-        else skippedPeriods += 1;
+        if (result.created) {
+          createdPeriods += 1;
+        } else {
+          skippedPeriods += 1;
+          periodStatus = result.reason || 'skipped';
+          if (!blockedReason && result.reason) blockedReason = result.reason;
+        }
       } else {
         createdPeriods += 1;
       }
@@ -2177,7 +2199,7 @@ export class CurrencyService {
         activeUsers: weekActiveUsers,
         eligibleConsumed: weekEligible,
         excludedConsumed: weekExcluded,
-        status: dryRun ? 'preview' : 'created',
+        status: periodStatus,
       });
 
       cursorMonday = this.addDays(cursorMonday, 7);
@@ -2186,6 +2208,7 @@ export class CurrencyService {
     const payout = dryRun
       ? { paidRecords: 0, paidPoints: 0 }
       : await this.processWeeklyPointReturnPayouts(new Date());
+    if (!blockedReason && (payout as any).reason) blockedReason = (payout as any).reason;
     const userDetails = await this.withUserDisplayInfo(
       Array.from(weeklyUserSummaryMap.values())
         .map((item: any) => ({
@@ -2206,6 +2229,7 @@ export class CurrencyService {
       excludedConsumed,
       paidRecords: payout.paidRecords || 0,
       paidPoints: payout.paidPoints || 0,
+      reason: blockedReason || undefined,
       userDetails,
       periods,
     };

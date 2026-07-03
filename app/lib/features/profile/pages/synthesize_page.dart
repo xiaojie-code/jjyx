@@ -61,8 +61,10 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
         return '金币';
       case 'silver':
         return '银币';
+      case 'copper':
+        return '铜币';
       case 'reward':
-        return '奖励积分';
+        return '铜币';
       default:
         return type;
     }
@@ -226,6 +228,11 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
                   title: '合成银币',
                   icon: Icons.paid_rounded,
                   color: const Color(0xFF667085),
+                ),
+                _buildDisabledSynthesisCard(
+                  title: '合成铜币',
+                  icon: Icons.savings_rounded,
+                  color: const Color(0xFFB45309),
                 ),
                 if (_configs.isNotEmpty) ...[
                   const SizedBox(height: 4),

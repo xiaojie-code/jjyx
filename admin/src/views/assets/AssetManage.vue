@@ -1,5 +1,31 @@
 <template>
   <div class="asset-page">
+    <el-row :gutter="16" class="asset-stats">
+      <el-col :span="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-value">{{ assetStats.totalAccounts }}</div>
+          <div class="stat-label">资产账户数</div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-value" style="color:#67c23a">¥{{ money(assetStats.totalRecharged) }}</div>
+          <div class="stat-label">累计充值</div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-value" style="color:#e6a23c">¥{{ money(assetStats.totalWithdrawn) }}</div>
+          <div class="stat-label">累计提现</div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="hover" class="stat-card">
+          <div class="stat-value" style="color:#409eff">¥{{ money(assetStats.totalReferralReward, 6) }}</div>
+          <div class="stat-label">推荐收益</div>
+        </el-card>
+      </el-col>
+    </el-row>
     <el-tabs v-model="activeTab" @tab-change="reload">
       <el-tab-pane label="充值审核" name="recharges">
         <div class="toolbar">
@@ -90,6 +116,13 @@
           </el-table-column>
           <el-table-column label="收益金额" width="130">
             <template #default="{ row }">¥{{ money(row.rewardAmount, 6) }}</template>
+          </el-table-column>
+          <el-table-column label="已提现总额" width="130">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openAssetWithdrawals(row.referrerUserId, row.referrerNickname || row.referrerAccount)">
+                ¥{{ money(row.referrerTotalWithdrawn) }}
+              </el-button>
+            </template>
           </el-table-column>
           <el-table-column label="充值信息" min-width="180">
             <template #default="{ row }">{{ row.rechargeRealName || '-' }} / {{ row.rechargePhone || '-' }}</template>
@@ -184,7 +217,11 @@
             <template #default="{ row }">¥{{ money(row.totalRecharged) }}</template>
           </el-table-column>
           <el-table-column label="累计提现" width="130">
-            <template #default="{ row }">¥{{ money(row.totalWithdrawn) }}</template>
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openAssetWithdrawals(row.userId, row.userNickname || row.userAccount)">
+                ¥{{ money(row.totalWithdrawn) }}
+              </el-button>
+            </template>
           </el-table-column>
           <el-table-column label="最后计息" width="170">
             <template #default="{ row }">{{ time(row.lastInterestDate || row.updatedAt) }}</template>
@@ -215,6 +252,24 @@
         <el-button type="primary" @click="confirmRecharge">确认到账</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="withdrawalDetailVisible" :title="`${withdrawalDetailUser || '用户'} 已提现明细`" width="760px">
+      <el-table :data="withdrawalDetails" v-loading="withdrawalDetailLoading" stripe>
+        <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column label="申请/到账" width="150">
+          <template #default="{ row }">¥{{ money(row.amount) }} / ¥{{ money(row.actualAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="手续费" width="100">
+          <template #default="{ row }">¥{{ money(row.fee) }}</template>
+        </el-table-column>
+        <el-table-column label="收款信息" min-width="220">
+          <template #default="{ row }">{{ methodText(row.paymentMethod) }} / {{ row.accountName }} / {{ row.accountNumber }}</template>
+        </el-table-column>
+        <el-table-column label="通过时间" width="170">
+          <template #default="{ row }">{{ time(row.handledAt || row.createdAt) }}</template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -229,6 +284,15 @@ const recharges = ref<any[]>([])
 const withdrawals = ref<any[]>([])
 const accounts = ref<any[]>([])
 const referralRewards = ref<any[]>([])
+const assetStats = ref({
+  totalAccounts: 0,
+  totalRecharged: 0,
+  totalWithdrawn: 0,
+  totalReferralReward: 0,
+  totalPrincipal: 0,
+  totalInterest: 0,
+  pendingWithdrawAmount: 0,
+})
 const rechargeKeyword = ref('')
 const withdrawKeyword = ref('')
 const accountKeyword = ref('')
@@ -239,6 +303,10 @@ const rechargeDialogVisible = ref(false)
 const currentRecharge = ref<any>(null)
 const confirmedAmount = ref(500)
 const reviewRemark = ref('')
+const withdrawalDetailVisible = ref(false)
+const withdrawalDetailLoading = ref(false)
+const withdrawalDetailUser = ref('')
+const withdrawalDetails = ref<any[]>([])
 
 function money(value: any, digits = 2) {
   const n = Number(value || 0)
@@ -273,6 +341,12 @@ function statusType(status: any) {
 
 function methodText(method: string) {
   return method === 'bank' ? '银行卡' : '支付宝'
+}
+
+async function loadAssetStats() {
+  try {
+    assetStats.value = (await request.get('/assets/stats')) as any
+  } catch {}
 }
 
 async function loadRecharges() {
@@ -329,6 +403,21 @@ async function loadReferralRewards() {
   }
 }
 
+async function openAssetWithdrawals(userId: any, userName: any) {
+  if (!userId) return
+  withdrawalDetailUser.value = userName || `用户${userId}`
+  withdrawalDetailVisible.value = true
+  withdrawalDetailLoading.value = true
+  try {
+    const res: any = await request.get('/assets/withdrawals', {
+      params: { userId, status: 1, pageSize: 100 },
+    })
+    withdrawalDetails.value = res.list || []
+  } finally {
+    withdrawalDetailLoading.value = false
+  }
+}
+
 function resetRecharges() {
   rechargeKeyword.value = ''
   rechargeStatus.value = ''
@@ -352,6 +441,7 @@ function resetReferralRewards() {
 }
 
 function reload() {
+  loadAssetStats()
   if (activeTab.value === 'recharges') loadRecharges()
   else if (activeTab.value === 'withdrawals') loadWithdrawals()
   else if (activeTab.value === 'referralRewards') loadReferralRewards()
@@ -377,6 +467,7 @@ async function confirmRecharge() {
   })
   ElMessage.success('已确认到账')
   rechargeDialogVisible.value = false
+  loadAssetStats()
   loadRecharges()
   if (activeTab.value === 'referralRewards') loadReferralRewards()
 }
@@ -396,10 +487,14 @@ async function reviewWithdrawal(row: any, action: 'approve' | 'reject') {
   await ElMessageBox.confirm(`确认${action === 'approve' ? '通过' : '驳回'}这笔资产包提现？`, '提示')
   await request.post(`/assets/withdrawals/${row.id}/review`, { action })
   ElMessage.success('处理成功')
+  loadAssetStats()
   loadWithdrawals()
 }
 
-onMounted(loadRecharges)
+onMounted(() => {
+  loadAssetStats()
+  loadRecharges()
+})
 </script>
 
 <style scoped>
@@ -413,5 +508,22 @@ onMounted(loadRecharges)
   flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 12px;
+}
+.asset-stats {
+  margin-bottom: 16px;
+}
+.stat-card {
+  text-align: center;
+}
+.stat-value {
+  color: #303133;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.stat-label {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 14px;
 }
 </style>

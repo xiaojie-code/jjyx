@@ -60,6 +60,10 @@
           <el-icon><Coin /></el-icon>
           <span>奖励补账</span>
         </el-menu-item>
+        <el-menu-item index="/weekly-point-returns">
+          <el-icon><DataLine /></el-icon>
+          <span>积分返还统计</span>
+        </el-menu-item>
         <el-menu-item index="/social">
           <el-icon><ChatDotRound /></el-icon>
           <span>社交管理</span>
@@ -131,6 +135,7 @@ const menuItems = [
   { path: '/agents', title: '分销管理' },
   { path: '/matrix', title: '推广管理' },
   { path: '/reward-backfill', title: '奖励补账' },
+  { path: '/weekly-point-returns', title: '积分返还统计' },
   { path: '/social', title: '社交管理' },
   { path: '/invite-records', title: '邀请关系' },
   { path: '/configs', title: '系统配置' },

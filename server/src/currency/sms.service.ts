@@ -17,8 +17,8 @@ export class SmsService {
     const mobile = String(input.mobile || '').trim();
     const code = String(input.code || '').trim();
 
-    if (!/^1\d{10}$/.test(mobile)) {
-      throw new BadRequestException('手机号格式不正确');
+    if (!/^1[3-9]\d{9}$/.test(mobile)) {
+      throw new BadRequestException('手机号格式不正确，需为11位且以13-19开头');
     }
     if (!code) {
       throw new BadRequestException('激活码不能为空');
@@ -31,12 +31,12 @@ export class SmsService {
     const appCode = this.env('SMS_APPCODE');
     const templateId = this.env(
       'SMS_TEMPLATE_ID',
-      '908e94ccf08b4476ba6c876d13f084ad',
+      '6f81fbc375f844c9b3084ff65257fe3a',
     );
     const smsSignId =
-      this.env('SMS_SIGN_ID', '2e65b1bb3d054466b82f0c9d125465e2') ||
+      this.env('SMS_SIGN_ID', '8660ad50672642b297296cc7851781c4') ||
       this.env('SMS_SMS_SIGN_ID');
-    const minute = this.env('SMS_CODE_MINUTE', '5');
+    const templateParamKey = this.env('SMS_TEMPLATE_PARAM_KEY', 'yzmCode');
 
     if (!appCode) throw new BadRequestException('短信 AppCode 未配置');
     if (!templateId) throw new BadRequestException('短信 templateId 未配置');
@@ -46,7 +46,7 @@ export class SmsService {
     url.searchParams.set('mobile', mobile);
     url.searchParams.set('templateId', templateId);
     url.searchParams.set('smsSignId', smsSignId);
-    url.searchParams.set('param', `**code**:${code},**minute**:${minute}`);
+    url.searchParams.set('param', `**${templateParamKey}**:${code}`);
 
     let response: Response;
     let text = '';
@@ -56,6 +56,7 @@ export class SmsService {
         headers: {
           Authorization: this.formatAppCode(appCode),
           Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         },
       });
       text = await response.text();
@@ -107,7 +108,7 @@ export class SmsService {
   private isGatewaySuccess(result: SmsGatewayResult, text: string) {
     if (result) {
       if (typeof result.success !== 'undefined') return !!result.success;
-      const keys = ['code', 'status', 'ret', 'respCode', 'error_code', 'errCode'];
+      const keys = ['code', 'status', 'ret', 'respCode', 'error_code', 'errCode', 'return_code', 'returnCode'];
       for (const key of keys) {
         if (typeof result[key] === 'undefined') continue;
         const value = String(result[key]).toLowerCase();

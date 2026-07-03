@@ -89,6 +89,10 @@
     var saveUploadTimer = null;
     var economyPatchInstalled = false;
     var ECONOMY_VERSION = 5;
+    var FISHING_ENTRY_FEE = 100;
+    var fishingEntryState = "idle";
+    var fishingEntryRequestId = "";
+    var fishingEntryOverlay = null;
 
     function fitCocosCanvasToViewport() {
       var width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth || 0;
@@ -182,6 +186,38 @@
       return scaleFishRewardValue(num);
     }
 
+    function shouldPreserveFishingLevelField(key) {
+      var normalized = String(key || "").toLowerCase();
+      return /(^|_)(skill|bait|net|craft|rod|hook|rope).*(_|)(lv|level)$/.test(normalized) ||
+        /(skill|bait|net|craft|rod|hook|rope).*(lv|level)/.test(normalized) ||
+        /^lv(el)?$/.test(normalized);
+    }
+
+    function mergeFishingProgress(prev, next, key) {
+      if (Array.isArray(prev) && Array.isArray(next)) {
+        return next.map(function (item, index) {
+          return mergeFishingProgress(prev[index], item, key);
+        });
+      }
+      if (prev && next && typeof prev === "object" && typeof next === "object" && !Array.isArray(prev) && !Array.isArray(next)) {
+        var merged = Object.assign({}, next);
+        Object.keys(prev).forEach(function (childKey) {
+          if (Object.prototype.hasOwnProperty.call(next, childKey)) {
+            merged[childKey] = mergeFishingProgress(prev[childKey], next[childKey], childKey);
+          }
+        });
+        return merged;
+      }
+      if (shouldPreserveFishingLevelField(key)) {
+        var prevNumber = Number(prev);
+        var nextNumber = Number(next);
+        if (isFinite(prevNumber) && isFinite(nextNumber) && prevNumber > nextNumber) {
+          return prev;
+        }
+      }
+      return next;
+    }
+
     function hasRealAccountData() {
       return !!(appInitData && (appInitData.userId || appInitData.account || appInitData.token));
     }
@@ -247,6 +283,156 @@
       if (typeof data.balance !== "undefined") return data.balance;
       if (typeof data.coin !== "undefined") return data.coin;
       return typeof fallback !== "undefined" ? fallback : 0;
+    }
+
+    function exitFishingGame() {
+      postGameMessage("exitGame", { source: "fishing_entry_fee" });
+    }
+
+    function ensureFishingEntryOverlay() {
+      if (fishingEntryOverlay) return fishingEntryOverlay;
+      var overlay = document.createElement("div");
+      overlay.id = "fishing-entry-fee-overlay";
+      overlay.style.cssText = [
+        "position:fixed",
+        "inset:0",
+        "z-index:2147483647",
+        "display:none",
+        "align-items:center",
+        "justify-content:center",
+        "padding:24px",
+        "background:rgba(8,18,32,.56)",
+        "backdrop-filter:blur(8px)",
+        "-webkit-backdrop-filter:blur(8px)",
+        "box-sizing:border-box"
+      ].join(";");
+      overlay.innerHTML =
+        '<div style="width:min(360px,92vw);border-radius:22px;padding:22px 20px 18px;color:#17314a;background:linear-gradient(180deg,#ffffff 0%,#eef8ff 100%);box-shadow:0 18px 48px rgba(4,20,38,.34);font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;text-align:center;">' +
+          '<div data-role="icon" style="width:56px;height:56px;margin:0 auto 12px;border-radius:18px;background:linear-gradient(135deg,#22c1c3,#2f80ed);display:flex;align-items:center;justify-content:center;color:#fff;font-size:30px;font-weight:800;box-shadow:0 10px 22px rgba(47,128,237,.28);">¥</div>' +
+          '<div data-role="title" style="font-size:21px;font-weight:800;line-height:1.2;margin-bottom:8px;">入场费用</div>' +
+          '<div data-role="message" style="font-size:15px;line-height:1.65;color:#52677a;margin:0 auto 18px;"></div>' +
+          '<div data-role="actions" style="display:flex;gap:10px;justify-content:center;"></div>' +
+        '</div>';
+      document.body.appendChild(overlay);
+      fishingEntryOverlay = overlay;
+      return overlay;
+    }
+
+    function showFishingEntryDialog(title, message, actions) {
+      var overlay = ensureFishingEntryOverlay();
+      overlay.querySelector('[data-role="title"]').textContent = title;
+      overlay.querySelector('[data-role="message"]').innerHTML = message;
+      var actionsNode = overlay.querySelector('[data-role="actions"]');
+      actionsNode.innerHTML = "";
+      (actions || []).forEach(function (action) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.textContent = action.text;
+        button.style.cssText = [
+          "min-width:118px",
+          "height:42px",
+          "border:0",
+          "border-radius:999px",
+          "font-size:15px",
+          "font-weight:700",
+          "color:" + (action.primary === false ? "#2f668c" : "#fff"),
+          "background:" + (action.primary === false ? "#dcecf8" : "linear-gradient(135deg,#18b7c8,#2f80ed)"),
+          "box-shadow:" + (action.primary === false ? "none" : "0 10px 22px rgba(47,128,237,.25)")
+        ].join(";");
+        button.onclick = function () {
+          if (typeof action.onClick === "function") action.onClick();
+        };
+        actionsNode.appendChild(button);
+      });
+      overlay.style.display = "flex";
+    }
+
+    function hideFishingEntryDialog() {
+      if (fishingEntryOverlay) fishingEntryOverlay.style.display = "none";
+    }
+
+    function isFishingHomeReady() {
+      if (!hasRealAccountData()) return false;
+      if (fishingEntryState !== "idle") return false;
+      var splash = document.getElementById("splash");
+      if (splash) {
+        var style = window.getComputedStyle ? window.getComputedStyle(splash) : splash.style;
+        if (style && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") {
+          return false;
+        }
+      }
+      try {
+        if (!window.cc || !cc.director || !cc.director.getScene || !cc.director.getScene()) return false;
+      } catch (error) {
+        return false;
+      }
+      return pendingGold !== null || lastKnownGold !== null;
+    }
+
+    function requestFishingEntryFee() {
+      var balance = Math.floor(toNumber(pendingGold !== null ? pendingGold : lastKnownGold));
+      if (balance < FISHING_ENTRY_FEE) {
+        fishingEntryState = "blocked";
+        showFishingEntryDialog(
+          "积分不足",
+          "当前积分不足 100，暂时无法进入实况钓鱼。<br>请补足积分后再试。",
+          [{ text: "返回", primary: true, onClick: exitFishingGame }]
+        );
+        return;
+      }
+
+      fishingEntryState = "pending";
+      fishingEntryRequestId = "fishing_entry_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+      showFishingEntryDialog(
+        "入场费用",
+        "进入实况钓鱼将扣除 <b style=\"color:#0d86d8;\">100 积分</b>。<br>当前积分：" + balance,
+        [
+          { text: "返回", primary: false, onClick: exitFishingGame },
+          {
+            text: "确认进入",
+            primary: true,
+            onClick: function () {
+              showFishingEntryDialog("处理中", "正在扣除入场费用，请稍等。", []);
+              postGameMessage("changePoints", {
+                amount: -FISHING_ENTRY_FEE,
+                reason: "fishing_entry",
+                requestId: fishingEntryRequestId,
+                module: "fishing"
+              });
+            }
+          }
+        ]
+      );
+    }
+
+    function maybeShowFishingEntryFee() {
+      if (!isFishingHomeReady()) return;
+      requestFishingEntryFee();
+    }
+
+    function handleFishingEntryFeeResult(data) {
+      if (!data || !fishingEntryRequestId || data.requestId !== fishingEntryRequestId) return false;
+      var balance = balanceFromData(data, pendingGold || lastKnownGold || 0);
+      refreshFishingGold(balance);
+      if (data.success === false) {
+        fishingEntryState = "failed";
+        showFishingEntryDialog(
+          "扣除失败",
+          (data.message || "入场费用扣除失败，请稍后再试。") + "<br>当前积分：" + Math.floor(toNumber(balance)),
+          [
+            { text: "返回", primary: false, onClick: exitFishingGame },
+            { text: "重试", primary: true, onClick: requestFishingEntryFee }
+          ]
+        );
+        return true;
+      }
+      fishingEntryState = "charged";
+      showFishingEntryDialog(
+        "入场成功",
+        "已扣除 <b style=\"color:#0d86d8;\">100 积分</b> 入场费用。<br>当前积分：" + Math.floor(toNumber(balance)),
+        [{ text: "开始游戏", primary: true, onClick: hideFishingEntryDialog }]
+      );
+      return true;
     }
 
     function getQueryParam(name) {
@@ -515,6 +701,9 @@
         return;
       }
       if (!saveData || typeof saveData !== "object") return;
+      if (remoteSaveData) {
+        saveData = mergeFishingProgress(remoteSaveData, saveData);
+      }
 
       if (saveUploadTimer) clearTimeout(saveUploadTimer);
       saveUploadTimer = setTimeout(function () {
@@ -557,6 +746,7 @@
     function normalizeGameText(value) {
       if (typeof value !== "string") return value;
       return value
+        .replace(/游客用户/g, "用户")
         .replace(/游戏币|金币|金幣|钻石|鑽石|蓝钻|藍鑽|好运币|好運幣|劳动力星|劳动星/g, "积分")
         .replace(/获取积分/g, "获取积分");
     }
@@ -1094,9 +1284,14 @@
           applySaveToGame(loadedSave);
         }
         refreshFishingGold(pendingGold !== null ? pendingGold : balanceFromData(data, 0));
+        setTimeout(maybeShowFishingEntryFee, 300);
       } else if (action === "balanceUpdate" || action === "pointsChangeResult") {
+        if (action === "pointsChangeResult" && handleFishingEntryFeeResult(data)) {
+          return;
+        }
         if (data.success === false || typeof data.points !== "undefined" || typeof data.balance !== "undefined") {
           refreshFishingGold(balanceFromData(data, pendingGold || 0));
+          setTimeout(maybeShowFishingEntryFee, 120);
         }
       }
     };
@@ -1120,6 +1315,7 @@
       installUserGoldBridge();
       normalizeSceneTextAndAdButtons();
       patchFishingGarbageDialog();
+      maybeShowFishingEntryFee();
       if (!suppressGoldSync) syncCurrentGold();
     }, 300);
   })();

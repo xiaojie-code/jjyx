@@ -15,6 +15,7 @@ import '../chat/providers/chat_provider.dart';
 import '../chat/pages/chat_page.dart';
 import '../chat/pages/service_notification_page.dart';
 import '../auth/providers/auth_provider.dart';
+import '../profile/widgets/daily_sign_in_dialog.dart';
 
 /// 主页面框架 - 底部 TabBar（消息、联系人、游戏、我的）
 class MainShell extends ConsumerStatefulWidget {
@@ -53,6 +54,10 @@ class _MainShellState extends ConsumerState<MainShell>
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _loadBadgesForCurrentUser();
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted && _isChatListVisible) {
+        await maybeShowDailySignInPrompt(context, ref);
+      }
       final settings = await _loadNotificationSettings();
       await _ensureMessageAlertPermission(settings: settings);
       await PushRegistrationService.instance.register(

@@ -17,7 +17,9 @@ import 'promotion_reward_page.dart';
 import 'recharge_page.dart';
 import 'settings_page.dart';
 import 'synthesize_page.dart';
+import 'weekly_point_return_page.dart';
 import 'withdraw_page.dart';
+import '../widgets/daily_sign_in_dialog.dart';
 
 class ProfilePage extends ConsumerStatefulWidget {
   const ProfilePage({super.key});
@@ -145,6 +147,16 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                       () => _push(const RechargePage()),
                     ),
                     _buildMenuItem(
+                      Icons.event_available,
+                      '签到',
+                      () => showDailySignInDialog(context, ref),
+                    ),
+                    _buildMenuItem(
+                      Icons.account_balance_wallet_outlined,
+                      '积分返还',
+                      () => _push(const WeeklyPointReturnPage()),
+                    ),
+                    _buildMenuItem(
                       Icons.group_add,
                       '推广奖励',
                       () => _push(const PromotionRewardPage()),
@@ -192,16 +204,16 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         children: [
           Row(
             children: [
+              _currencyItem('持股数', shares.toDouble()),
               _currencyItem('积分', currency.points, onTap: _showPointLogs),
-              _currencyItem('金币', currency.gold),
-              _currencyItem('银币', currency.silver),
             ],
           ),
           const SizedBox(height: 8),
           Row(
             children: [
-              _currencyItem('奖励积分', currency.rewardPoints),
-              _currencyItem('持股数', shares.toDouble()),
+              _currencyItem('金币', currency.gold),
+              _currencyItem('银币', currency.silver),
+              _currencyItem('铜币', currency.copper),
             ],
           ),
         ],
@@ -465,6 +477,7 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
     if (text.contains('lottery_win')) return '幸运转盘中奖';
     if (text.contains('direct_game_reward')) return '直推游戏流水奖励';
     if (text.contains('weekly_point_return')) return '每周积分返还';
+    if (text.contains('daily_sign_in')) return '每日签到奖励';
     if (text.contains('daily_deduction')) return '每日积分扣除';
     if (text.contains('recharge')) return '充值到账';
     if (description.trim().isNotEmpty) return description.trim();
@@ -535,6 +548,8 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
         return '直推流水奖励';
       case 'weekly_point_return':
         return '每周积分返还';
+      case 'daily_sign_in':
+        return '每日签到奖励';
       case 'daily_deduction':
         return '每日积分扣除';
       case 'recharge':

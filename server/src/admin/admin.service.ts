@@ -616,6 +616,396 @@ export class AdminService {
     return this.currencyService.backfillLegacyRewardMechanisms(data || {});
   }
 
+  private safePositiveInt(value: any, fallback: number, max: number) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(Math.floor(parsed), max);
+  }
+
+  private roundAdminPoints(value: number) {
+    return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
+  }
+
+  private calculateWeeklyReturnProjection(row: any) {
+    const status = Number(row.status || 0);
+    const paidDays = Math.max(0, Math.min(7, Number(row.paidDays ?? row.paid_days ?? 0)));
+    const multiplier = Number(row.multiplier || 0);
+    const dailyRate = Number(row.dailyRate ?? row.daily_rate ?? 0);
+    let base = this.roundAdminPoints(
+      Math.max(0, Number(row.remainingBasePoints ?? row.remaining_base_points ?? 0)),
+    );
+
+    if (status !== 0 || paidDays >= 7 || multiplier <= 0 || dailyRate <= 0 || base <= 0) {
+      return { unpaidDays: 0, nextReturnAmount: 0, pendingReturnPoints: 0 };
+    }
+
+    let pendingReturnPoints = 0;
+    let nextReturnAmount = 0;
+    for (let day = paidDays + 1; day <= 7; day += 1) {
+      const amount = this.roundAdminPoints(base * multiplier * dailyRate);
+      if (amount <= 0) break;
+      if (nextReturnAmount <= 0) nextReturnAmount = amount;
+      pendingReturnPoints = this.roundAdminPoints(pendingReturnPoints + amount);
+      base = this.roundAdminPoints(Math.max(0, base - amount));
+    }
+
+    return {
+      unpaidDays: Math.max(0, 7 - paidDays),
+      nextReturnAmount,
+      pendingReturnPoints,
+    };
+  }
+
+  private async getLatestWeeklyPointReturnPeriodId() {
+    const rows = await this.dataSource.query(
+      `SELECT id FROM weekly_point_return_periods ORDER BY week_start_date DESC LIMIT 1`,
+    );
+    return Number(rows?.[0]?.id || 0);
+  }
+
+  async getWeeklyPointReturnOverview(query: any) {
+    await this.currencyService.ensureDefaultConfigs();
+    const page = this.safePositiveInt(query.page, 1, 100000);
+    const pageSize = this.safePositiveInt(query.pageSize, 20, 100);
+    const offset = (page - 1) * pageSize;
+
+    const totalRows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total FROM weekly_point_return_periods`,
+    );
+    const total = Number(totalRows?.[0]?.total || 0);
+
+    const periods = await this.dataSource.query(
+      `SELECT
+         p.id,
+         DATE_FORMAT(p.week_start_date, '%Y-%m-%d') AS weekStartDate,
+         DATE_FORMAT(p.week_end_date, '%Y-%m-%d') AS weekEndDate,
+         DATE_FORMAT(p.week_start_at, '%Y-%m-%d %H:%i:%s') AS weekStartAt,
+         DATE_FORMAT(p.week_end_at, '%Y-%m-%d %H:%i:%s') AS weekEndAt,
+         DATE_FORMAT(p.settlement_started_at, '%Y-%m-%d %H:%i:%s') AS settlementStartedAt,
+         p.multiplier,
+         p.daily_rate AS dailyRate,
+         p.excluded_log_types AS excludedLogTypes,
+         p.status,
+         COUNT(a.id) AS accountCount,
+         SUM(CASE WHEN a.eligible_consumed_points > 0 THEN 1 ELSE 0 END) AS activeUsers,
+         SUM(CASE WHEN a.status = 0 THEN 1 ELSE 0 END) AS pendingUsers,
+         ROUND(COALESCE(SUM(a.eligible_consumed_points), 0), 6) AS eligibleConsumedPoints,
+         ROUND(COALESCE(SUM(a.excluded_consumed_points), 0), 6) AS excludedConsumedPoints,
+         ROUND(COALESCE(SUM(a.total_returned_points), 0), 6) AS returnedPoints,
+         ROUND(COALESCE(SUM(a.remaining_base_points), 0), 6) AS remainingBasePoints,
+         COALESCE(d.dailyRecordCount, 0) AS dailyRecordCount,
+         ROUND(COALESCE(d.dailyReturnedPoints, 0), 6) AS dailyReturnedPoints,
+         DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+         DATE_FORMAT(p.updated_at, '%Y-%m-%d %H:%i:%s') AS updatedAt
+       FROM weekly_point_return_periods p
+       LEFT JOIN weekly_point_return_accounts a ON a.period_id = p.id
+       LEFT JOIN (
+         SELECT period_id, COUNT(*) AS dailyRecordCount, SUM(return_amount) AS dailyReturnedPoints
+         FROM weekly_point_return_daily_records
+         GROUP BY period_id
+       ) d ON d.period_id = p.id
+       GROUP BY
+         p.id, p.week_start_date, p.week_end_date, p.week_start_at, p.week_end_at,
+         p.settlement_started_at, p.multiplier, p.daily_rate, p.excluded_log_types,
+         p.status, p.created_at, p.updated_at, d.dailyRecordCount, d.dailyReturnedPoints
+       ORDER BY p.week_start_date DESC
+       LIMIT ${offset}, ${pageSize}`,
+    );
+
+    const periodIds = periods.map((item: any) => Number(item.id)).filter(Boolean);
+    const pendingByPeriod = new Map<number, number>();
+    if (periodIds.length > 0) {
+      const accountRows = await this.dataSource.query(
+        `SELECT period_id AS periodId, remaining_base_points AS remainingBasePoints,
+                paid_days AS paidDays, multiplier, daily_rate AS dailyRate, status
+         FROM weekly_point_return_accounts
+         WHERE period_id IN (${periodIds.map(() => '?').join(',')})`,
+        periodIds,
+      );
+      for (const row of accountRows) {
+        const periodId = Number(row.periodId);
+        const projection = this.calculateWeeklyReturnProjection(row);
+        pendingByPeriod.set(
+          periodId,
+          this.roundAdminPoints((pendingByPeriod.get(periodId) || 0) + projection.pendingReturnPoints),
+        );
+      }
+    }
+
+    const summaryRows = await this.dataSource.query(
+      `SELECT
+         COUNT(*) AS accountCount,
+         SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS pendingUsers,
+         ROUND(COALESCE(SUM(eligible_consumed_points), 0), 6) AS eligibleConsumedPoints,
+         ROUND(COALESCE(SUM(excluded_consumed_points), 0), 6) AS excludedConsumedPoints,
+         ROUND(COALESCE(SUM(total_returned_points), 0), 6) AS returnedPoints,
+         ROUND(COALESCE(SUM(CASE
+           WHEN status = 0 AND paid_days < 7 THEN
+             remaining_base_points * (1 - POW(1 - (multiplier * daily_rate), 7 - paid_days))
+           ELSE 0
+         END), 0), 6) AS pendingReturnPoints
+       FROM weekly_point_return_accounts`,
+    );
+    const summaryRow = summaryRows?.[0] || {};
+
+    const mappedPeriods = periods.map((row: any) => {
+      const eligible = this.roundAdminPoints(Number(row.eligibleConsumedPoints || 0));
+      const excluded = this.roundAdminPoints(Number(row.excludedConsumedPoints || 0));
+      const returned = this.roundAdminPoints(Number(row.returnedPoints || 0));
+      const pending = this.roundAdminPoints(pendingByPeriod.get(Number(row.id)) || 0);
+      return {
+        ...row,
+        id: Number(row.id),
+        status: Number(row.status),
+        accountCount: Number(row.accountCount || 0),
+        activeUsers: Number(row.activeUsers || 0),
+        pendingUsers: Number(row.pendingUsers || 0),
+        eligibleConsumedPoints: eligible,
+        excludedConsumedPoints: excluded,
+        totalConsumedPoints: this.roundAdminPoints(eligible + excluded),
+        returnedPoints: returned,
+        remainingBasePoints: this.roundAdminPoints(Number(row.remainingBasePoints || 0)),
+        pendingReturnPoints: pending,
+        expectedReturnPoints: this.roundAdminPoints(returned + pending),
+        dailyRecordCount: Number(row.dailyRecordCount || 0),
+        dailyReturnedPoints: this.roundAdminPoints(Number(row.dailyReturnedPoints || 0)),
+      };
+    });
+
+    const totalEligible = this.roundAdminPoints(Number(summaryRow.eligibleConsumedPoints || 0));
+    const totalExcluded = this.roundAdminPoints(Number(summaryRow.excludedConsumedPoints || 0));
+    const totalReturned = this.roundAdminPoints(Number(summaryRow.returnedPoints || 0));
+    const totalPending = this.roundAdminPoints(Number(summaryRow.pendingReturnPoints || 0));
+
+    return {
+      summary: {
+        periodCount: total,
+        accountCount: Number(summaryRow.accountCount || 0),
+        pendingUsers: Number(summaryRow.pendingUsers || 0),
+        eligibleConsumedPoints: totalEligible,
+        excludedConsumedPoints: totalExcluded,
+        totalConsumedPoints: this.roundAdminPoints(totalEligible + totalExcluded),
+        returnedPoints: totalReturned,
+        pendingReturnPoints: totalPending,
+        expectedReturnPoints: this.roundAdminPoints(totalReturned + totalPending),
+        latestPeriodId: mappedPeriods[0]?.id || 0,
+      },
+      periods: mappedPeriods,
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async getWeeklyPointReturnAccounts(query: any) {
+    await this.currencyService.ensureDefaultConfigs();
+    const page = this.safePositiveInt(query.page, 1, 100000);
+    const pageSize = this.safePositiveInt(query.pageSize, 20, 100);
+    const offset = (page - 1) * pageSize;
+    const periodId = Number(query.periodId || 0) || await this.getLatestWeeklyPointReturnPeriodId();
+    if (!periodId) {
+      return { list: [], total: 0, page, pageSize, period: null };
+    }
+
+    const where = ['a.period_id = ?'];
+    const params: any[] = [periodId];
+    const keyword = String(query.keyword || '').trim();
+    if (keyword) {
+      where.push('(u.id = ? OR u.account LIKE ? OR u.nickname LIKE ?)');
+      params.push(Number(keyword) || 0, `%${keyword}%`, `%${keyword}%`);
+    }
+    if (query.status !== undefined && query.status !== '') {
+      where.push('a.status = ?');
+      params.push(Number(query.status));
+    }
+
+    const whereSql = where.join(' AND ');
+    const totalRows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total
+       FROM weekly_point_return_accounts a
+       LEFT JOIN users u ON u.id = a.user_id
+       WHERE ${whereSql}`,
+      params,
+    );
+    const total = Number(totalRows?.[0]?.total || 0);
+
+    const listRows = await this.dataSource.query(
+      `SELECT
+         a.id,
+         a.period_id AS periodId,
+         a.user_id AS userId,
+         u.account,
+         u.nickname,
+         u.is_activated AS isActivated,
+         u.activation_amount AS activationAmount,
+         DATE_FORMAT(p.week_start_date, '%Y-%m-%d') AS weekStartDate,
+         DATE_FORMAT(p.week_end_date, '%Y-%m-%d') AS weekEndDate,
+         a.eligible_consumed_points AS eligibleConsumedPoints,
+         a.excluded_consumed_points AS excludedConsumedPoints,
+         a.remaining_base_points AS remainingBasePoints,
+         a.total_returned_points AS returnedPoints,
+         a.paid_days AS paidDays,
+         a.multiplier,
+         a.daily_rate AS dailyRate,
+         a.status,
+         DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+         DATE_FORMAT(a.updated_at, '%Y-%m-%d %H:%i:%s') AS updatedAt
+       FROM weekly_point_return_accounts a
+       LEFT JOIN weekly_point_return_periods p ON p.id = a.period_id
+       LEFT JOIN users u ON u.id = a.user_id
+       WHERE ${whereSql}
+       ORDER BY a.id DESC
+       LIMIT ${offset}, ${pageSize}`,
+      params,
+    );
+
+    const periodRows = await this.dataSource.query(
+      `SELECT id, DATE_FORMAT(week_start_date, '%Y-%m-%d') AS weekStartDate,
+              DATE_FORMAT(week_end_date, '%Y-%m-%d') AS weekEndDate,
+              multiplier, daily_rate AS dailyRate, status
+       FROM weekly_point_return_periods
+       WHERE id = ?
+       LIMIT 1`,
+      [periodId],
+    );
+
+    const list = listRows.map((row: any) => {
+      const eligible = this.roundAdminPoints(Number(row.eligibleConsumedPoints || 0));
+      const excluded = this.roundAdminPoints(Number(row.excludedConsumedPoints || 0));
+      const returned = this.roundAdminPoints(Number(row.returnedPoints || 0));
+      const projection = this.calculateWeeklyReturnProjection(row);
+      return {
+        ...row,
+        id: Number(row.id),
+        periodId: Number(row.periodId),
+        userId: Number(row.userId),
+        isActivated: Boolean(row.isActivated),
+        activationAmount: row.activationAmount === null ? null : Number(row.activationAmount),
+        status: Number(row.status),
+        paidDays: Number(row.paidDays || 0),
+        multiplier: Number(row.multiplier || 0),
+        dailyRate: Number(row.dailyRate || 0),
+        eligibleConsumedPoints: eligible,
+        excludedConsumedPoints: excluded,
+        totalConsumedPoints: this.roundAdminPoints(eligible + excluded),
+        lastWeekConsumedPoints: this.roundAdminPoints(eligible + excluded),
+        remainingBasePoints: this.roundAdminPoints(Number(row.remainingBasePoints || 0)),
+        returnedPoints: returned,
+        pendingReturnPoints: projection.pendingReturnPoints,
+        currentWeekPendingReturnPoints: projection.pendingReturnPoints,
+        expectedReturnPoints: this.roundAdminPoints(returned + projection.pendingReturnPoints),
+        nextReturnAmount: projection.nextReturnAmount,
+        unpaidDays: projection.unpaidDays,
+      };
+    });
+
+    return {
+      list,
+      total,
+      page,
+      pageSize,
+      period: periodRows?.[0]
+        ? {
+            ...periodRows[0],
+            id: Number(periodRows[0].id),
+            status: Number(periodRows[0].status),
+            multiplier: Number(periodRows[0].multiplier || 0),
+            dailyRate: Number(periodRows[0].dailyRate || 0),
+          }
+        : null,
+    };
+  }
+
+  async getWeeklyPointReturnAccountDaily(accountId: number) {
+    await this.currencyService.ensureDefaultConfigs();
+    const accountRows = await this.dataSource.query(
+      `SELECT
+         a.id,
+         a.period_id AS periodId,
+         a.user_id AS userId,
+         u.account,
+         u.nickname,
+         DATE_FORMAT(p.week_start_date, '%Y-%m-%d') AS weekStartDate,
+         DATE_FORMAT(p.week_end_date, '%Y-%m-%d') AS weekEndDate,
+         a.eligible_consumed_points AS eligibleConsumedPoints,
+         a.excluded_consumed_points AS excludedConsumedPoints,
+         a.remaining_base_points AS remainingBasePoints,
+         a.total_returned_points AS returnedPoints,
+         a.paid_days AS paidDays,
+         a.multiplier,
+         a.daily_rate AS dailyRate,
+         a.status
+       FROM weekly_point_return_accounts a
+       LEFT JOIN weekly_point_return_periods p ON p.id = a.period_id
+       LEFT JOIN users u ON u.id = a.user_id
+       WHERE a.id = ?
+       LIMIT 1`,
+      [accountId],
+    );
+    const account = accountRows?.[0];
+    if (!account) throw new NotFoundException('返还账户不存在');
+
+    const records = await this.dataSource.query(
+      `SELECT
+         r.id,
+         DATE_FORMAT(r.return_date, '%Y-%m-%d') AS returnDate,
+         r.day_index AS dayIndex,
+         r.base_before_return AS baseBeforeReturn,
+         r.multiplier,
+         r.daily_rate AS dailyRate,
+         r.return_amount AS returnAmount,
+         r.base_after_return AS baseAfterReturn,
+         r.currency_log_id AS currencyLogId,
+         r.status,
+         l.sn AS currencyLogSn,
+         DATE_FORMAT(r.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt
+       FROM weekly_point_return_daily_records r
+       LEFT JOIN currency_logs l ON l.id = r.currency_log_id
+       WHERE r.account_id = ?
+       ORDER BY r.day_index ASC, r.id ASC`,
+      [accountId],
+    );
+
+    const projection = this.calculateWeeklyReturnProjection(account);
+    const eligible = this.roundAdminPoints(Number(account.eligibleConsumedPoints || 0));
+    const excluded = this.roundAdminPoints(Number(account.excludedConsumedPoints || 0));
+    const returned = this.roundAdminPoints(Number(account.returnedPoints || 0));
+
+    return {
+      account: {
+        ...account,
+        id: Number(account.id),
+        periodId: Number(account.periodId),
+        userId: Number(account.userId),
+        status: Number(account.status),
+        paidDays: Number(account.paidDays || 0),
+        multiplier: Number(account.multiplier || 0),
+        dailyRate: Number(account.dailyRate || 0),
+        eligibleConsumedPoints: eligible,
+        excludedConsumedPoints: excluded,
+        totalConsumedPoints: this.roundAdminPoints(eligible + excluded),
+        remainingBasePoints: this.roundAdminPoints(Number(account.remainingBasePoints || 0)),
+        returnedPoints: returned,
+        pendingReturnPoints: projection.pendingReturnPoints,
+        expectedReturnPoints: this.roundAdminPoints(returned + projection.pendingReturnPoints),
+        nextReturnAmount: projection.nextReturnAmount,
+        unpaidDays: projection.unpaidDays,
+      },
+      records: records.map((row: any) => ({
+        ...row,
+        id: Number(row.id),
+        dayIndex: Number(row.dayIndex),
+        status: Number(row.status),
+        baseBeforeReturn: this.roundAdminPoints(Number(row.baseBeforeReturn || 0)),
+        multiplier: Number(row.multiplier || 0),
+        dailyRate: Number(row.dailyRate || 0),
+        returnAmount: this.roundAdminPoints(Number(row.returnAmount || 0)),
+        baseAfterReturn: this.roundAdminPoints(Number(row.baseAfterReturn || 0)),
+        currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
+      })),
+    };
+  }
+
   // ===== 分销 =====
   async getAgents(query: any) {
     if (query.id) return this.agentRepo.find({ where: { id: query.id } });
@@ -722,16 +1112,118 @@ export class AdminService {
             .getMany()
         : [];
     const userMap = new Map(users.map((u) => [Number(u.id), u]));
+    const withdrawalTotalMap = await this.getWithdrawalTotalMap(ownerIds);
+    const directStatsMap = await this.getDirectInviteStatsMap(ownerIds);
 
     return {
       list: list.map((m) => ({
         ...m,
         ownerNickname: userMap.get(Number(m.ownerId))?.nickname || '',
         ownerAccount: userMap.get(Number(m.ownerId))?.account || '',
+        totalWithdrawn: withdrawalTotalMap.get(Number(m.ownerId)) || 0,
+        directUserCount: directStatsMap.get(Number(m.ownerId))?.total || 0,
+        activatedDirectUserCount: directStatsMap.get(Number(m.ownerId))?.activated || 0,
       })),
       total,
       page: pagination.page,
       pageSize: pagination.pageSize,
+    };
+  }
+
+  private async getDirectInviteStatsMap(userIds: number[]) {
+    const ids = [...new Set((userIds || []).map((id) => Number(id)).filter((id) => id > 0))];
+    const result = new Map<number, { total: number; activated: number }>();
+    if (!ids.length) return result;
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await this.dataSource.query(
+      `SELECT invited_by AS inviterId,
+              COUNT(1) AS total,
+              SUM(CASE WHEN is_activated = 1 THEN 1 ELSE 0 END) AS activated
+       FROM users
+       WHERE invited_by IN (${placeholders})
+       GROUP BY invited_by`,
+      ids,
+    );
+    for (const row of rows || []) {
+      result.set(Number(row.inviterId), {
+        total: Number(row.total || 0),
+        activated: Number(row.activated || 0),
+      });
+    }
+    return result;
+  }
+
+  private async getWithdrawalTotalMap(userIds: number[]) {
+    const ids = [...new Set((userIds || []).map((id) => Number(id)).filter((id) => id > 0))];
+    const result = new Map<number, number>();
+    if (!ids.length) return result;
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await this.dataSource.query(
+      `SELECT user_id AS userId, COALESCE(SUM(amount), 0) AS total
+       FROM withdrawals
+       WHERE status = 1 AND user_id IN (${placeholders})
+       GROUP BY user_id`,
+      ids,
+    );
+    for (const row of rows || []) {
+      result.set(Number(row.userId), Number(row.total || 0));
+    }
+    return result;
+  }
+
+  async getMatrixWithdrawals(userId: number) {
+    const user = await this.userRepo.findOne({ where: { id: Number(userId) } });
+    if (!user) throw new NotFoundException('用户不存在');
+    const list = await this.withdrawalRepo.find({
+      where: { userId: Number(userId), status: 1 },
+      order: { reviewTime: 'DESC', createdAt: 'DESC' },
+    });
+    return {
+      user: {
+        id: user.id,
+        account: user.account,
+        nickname: user.nickname,
+      },
+      totalWithdrawn: list.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      list,
+    };
+  }
+
+  async getMatrixDirectUsers(userId: number) {
+    const user = await this.userRepo.findOne({ where: { id: Number(userId) } });
+    if (!user) throw new NotFoundException('用户不存在');
+
+    const list = await this.userRepo
+      .createQueryBuilder('u')
+      .where('u.invited_by = :userId', { userId: Number(userId) })
+      .orderBy('u.register_time', 'DESC')
+      .addOrderBy('u.id', 'DESC')
+      .getMany();
+
+    const activatedCount = list.filter((item) => item.isActivated === true || Number(item.isActivated) === 1).length;
+    return {
+      user: {
+        id: user.id,
+        account: user.account,
+        nickname: user.nickname,
+        inviteCode: user.inviteCode,
+        isActivated: user.isActivated,
+        activationAmount: user.activationAmount,
+      },
+      total: list.length,
+      activatedCount,
+      inactiveCount: list.length - activatedCount,
+      list: list.map((item) => ({
+        id: item.id,
+        account: item.account,
+        nickname: item.nickname,
+        inviteCode: item.inviteCode,
+        status: item.status,
+        isActivated: item.isActivated,
+        activationAmount: item.activationAmount,
+        registerTime: item.registerTime,
+        loginTime: item.loginTime,
+      })),
     };
   }
 
@@ -802,6 +1294,7 @@ export class AdminService {
             .getMany()
         : [];
     const userMap = new Map(users.map((u) => [Number(u.id), u]));
+    const withdrawalTotalMap = await this.getWithdrawalTotalMap(allUserIds);
 
     return {
       list: list.map((i) => ({
@@ -810,6 +1303,7 @@ export class AdminService {
         ownerActivationAmount: i.ownerActivationAmount || userMap.get(Number(i.ownerId))?.activationAmount || null,
         fromUserNickname: userMap.get(Number(i.fromUserId))?.nickname || '',
         fromUserActivationAmount: i.sourceActivationAmount || userMap.get(Number(i.fromUserId))?.activationAmount || null,
+        ownerTotalWithdrawn: withdrawalTotalMap.get(Number(i.ownerId)) || 0,
       })),
       total,
       page: pagination.page,

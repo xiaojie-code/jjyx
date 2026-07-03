@@ -17,6 +17,9 @@ class ApiEndpoints {
   static const String currencyLogs = '/api/currency/logs';
   static const String currencySynthesize = '/api/currency/synthesize';
   static const String currencyWithdraw = '/api/currency/withdraw';
+  static const String weeklyPointReturn = '/api/auth/weekly-point-return';
+  static const String signInStatus = '/api/sign-in/status';
+  static const String signInClaim = '/api/sign-in/claim';
 
   // ==================== 社交服务 ====================
   static const String contacts = '/api/social/contacts';
@@ -32,8 +35,10 @@ class ApiEndpoints {
 
   // ==================== 服务通知 ====================
   static const String serviceNotifications = '/api/notifications';
-  static const String serviceNotificationsUnread = '/api/notifications/unread-count';
-  static const String serviceNotificationsReadAll = '/api/notifications/read-all';
+  static const String serviceNotificationsUnread =
+      '/api/notifications/unread-count';
+  static const String serviceNotificationsReadAll =
+      '/api/notifications/read-all';
 
   // ==================== Vendor push ====================
   static const String pushDevice = '/api/push/device';
@@ -93,7 +98,8 @@ class ApiEndpoints {
   static String clearConversation(int id) =>
       '/api/social/conversations/$id/messages';
   static String pinConversation(int id) => '/api/social/conversations/$id/pin';
-  static String hideConversation(int id) => '/api/social/conversations/$id/hide';
+  static String hideConversation(int id) =>
+      '/api/social/conversations/$id/hide';
   static String deleteConversation(int id) => '/api/social/conversations/$id';
   static String meetingJoin(int id) => '/api/social/meetings/$id/join';
   static String meetingLeave(int id) => '/api/social/meetings/$id/leave';
@@ -104,8 +110,8 @@ class ApiEndpoints {
       '/api/social/meetings/$id/media-control';
   static String meetingParticipants(int id) =>
       '/api/social/meetings/$id/participants';
-    static String meetingMediaConfig(int id) =>
-            '/api/social/meetings/$id/media-config';
+  static String meetingMediaConfig(int id) =>
+      '/api/social/meetings/$id/media-config';
   static String horseRoom(int id) => '/api/game/horse/room/$id';
   static String backpackItemDetail(int id) => '/api/backpack/items/$id';
 }

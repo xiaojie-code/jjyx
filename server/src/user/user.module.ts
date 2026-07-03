@@ -13,11 +13,13 @@ import { UserController } from './user.controller';
 import { UserService } from './user.service';
 import { AuthModule } from '../auth/auth.module';
 import { MatrixModule } from '../matrix/matrix.module';
+import { CurrencyModule } from '../currency/currency.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, UserCurrency, Cdk, CdkType, SystemSwitch, Conversation, ConversationMember, Friendship, Message]),
     AuthModule,
+    CurrencyModule,
     forwardRef(() => MatrixModule),
   ],
   controllers: [UserController],
