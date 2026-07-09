@@ -1,0 +1,12 @@
+module.exports = {
+    MAHJONG_MYSQL_HOST: "127.0.0.1",
+    MAHJONG_MYSQL_PORT: "3306",
+    MAHJONG_MYSQL_USER: "root",
+    MAHJONG_MYSQL_PASSWORD: "",
+    MAHJONG_MYSQL_DATABASE: "xsmj_dev",
+    MAHJONG_REDIS_HOST: "127.0.0.1",
+    MAHJONG_REDIS_PORT: "6379",
+    MAHJONG_REDIS_PASSWORD: "",
+    MAHJONG_REDIS_DB: "10",
+    MAHJONG_WS_PUBLIC_URL: "http://your-domain-or-ip:42001"
+};

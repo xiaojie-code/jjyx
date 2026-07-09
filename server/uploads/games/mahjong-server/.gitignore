@@ -1,0 +1,8 @@
+node_modules/
+logs/
+*.log
+.env
+.vscode/
+config/local.secrets.js
+ws_server/**/ycyGameLogs/
+new_farm/

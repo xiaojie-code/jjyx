@@ -16,7 +16,7 @@ $RedisConf = 'D:\myApp\redis\redis.windows.conf'
 $PhpDir = 'D:\myApp\php'
 $NginxExe = 'D:\myApp\nginx\nginx.exe'
 $NginxRoot = 'D:\myApp\nginx'
-$MahjongServerRoot = 'D:\myApp\work_ycykj\jjyx\哈灵棋牌\mj\clinet\Ragty-haling-client-\server\Ragty-haling-server-'
+$MahjongServerRoot = Join-Path $RepoRoot 'server\uploads\games\mahjong-server'
 
 . $NetworkProfileScript
 
