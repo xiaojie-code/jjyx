@@ -34,6 +34,16 @@ const DIRECT_GAME_REWARD_SWITCH_KEY = 'direct_game_reward';
 const DIRECT_GAME_REWARD_RATE_KEY = 'direct_game_reward_rate';
 const DIRECT_GAME_REWARD_DEFAULT_RATE = 0.0015;
 const DIRECT_GAME_REWARD_MAX_GENERATION = 20;
+const WITHDRAW_COPPER_GOLD_UNIT_KEY = 'withdraw_copper_gold_unit';
+const WITHDRAW_COPPER_COST_PER_UNIT_KEY = 'withdraw_copper_cost_per_unit';
+const GAME_COPPER_MINUTES_PER_COIN_KEY = 'game_copper_minutes_per_coin';
+const GAME_COPPER_DAILY_MAX_KEY = 'game_copper_daily_max';
+const GAME_DURATION_REPORT_MAX_SECONDS = 6 * 60 * 60;
+const SILVER_SYNTHESIS_POINTS = 50000;
+const GOLD_EXCHANGE_RATE_KEY = 'gold_exchange_rate';
+const GOLD_TRADE_DEPOSIT = 100;
+const GOLD_TRADE_FEE_RATE = 0.05;
+const COPPER_TRADE_DEPOSIT_RATE = 1;
 
 type GameTurnoverInput = {
   userId: number;
@@ -57,6 +67,9 @@ type LegacyRewardBackfillOptions = {
 
 @Injectable()
 export class CurrencyService {
+  private goldModuleTablesReady = false;
+  private legacyMatrixGoldMigrationChecked = false;
+
   constructor(
     @InjectRepository(UserCurrency)
     private readonly currencyRepo: Repository<UserCurrency>,
@@ -215,6 +228,8 @@ export class CurrencyService {
   private async ensureCurrencyPrecisionForWeeklyReturn() {
     const statements = [
       `ALTER TABLE user_currencies ADD COLUMN copper DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER silver`,
+      `ALTER TABLE user_currencies ADD COLUMN total_gold_earned DECIMAL(18,6) NOT NULL DEFAULT 0 AFTER gold`,
+      `ALTER TABLE user_currencies MODIFY COLUMN gold DECIMAL(18, 6) NOT NULL DEFAULT 0`,
       `ALTER TABLE user_currencies MODIFY COLUMN points DECIMAL(18, 6) NOT NULL DEFAULT 0 COMMENT '普通积分余额，支持每周返还的小数积分'`,
       `ALTER TABLE currency_logs MODIFY COLUMN amount DECIMAL(18, 6) NOT NULL COMMENT '变动数量（正为收入，负为支出）'`,
       `ALTER TABLE currency_logs MODIFY COLUMN before_balance DECIMAL(18, 6) NOT NULL COMMENT '变动前余额'`,
@@ -227,6 +242,218 @@ export class CurrencyService {
         // 兼容已调整过的库或不同 MySQL 版本。
       }
     }
+  }
+
+  private shouldCountOriginalGold(logType: string, amount: number) {
+    if (amount <= 0) return false;
+    const type = String(logType || '').toLowerCase();
+    return ![
+      'gold_trade_cancel_refund',
+      'gold_trade_deposit_refund',
+      'gold_trade_lock_refund',
+      'matrix_gold_withdraw_reject_refund',
+    ].includes(type);
+  }
+
+  private async ensureGoldModuleTables() {
+    if (this.goldModuleTablesReady) return;
+    await this.ensureCurrencyPrecisionForWeeklyReturn();
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS gold_withdraw_credits (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        gold_amount DECIMAL(18,6) NOT NULL,
+        exchange_rate DECIMAL(10,4) NOT NULL DEFAULT 1,
+        cash_amount DECIMAL(18,2) NOT NULL,
+        currency_log_id BIGINT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_gold_withdraw_user (user_id),
+        INDEX idx_gold_withdraw_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='金币转入提现模块记录';
+    `);
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS gold_trade_orders (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        order_sn VARCHAR(40) NOT NULL,
+        seller_user_id INT NOT NULL,
+        buyer_user_id INT NULL,
+        quantity DECIMAL(18,6) NOT NULL,
+        total_price DECIMAL(18,2) NOT NULL,
+        fee_gold DECIMAL(18,6) NOT NULL,
+        deposit_gold DECIMAL(18,6) NOT NULL DEFAULT 100,
+        alipay_name VARCHAR(50) NOT NULL,
+        alipay_qrcode VARCHAR(255) NOT NULL,
+        status TINYINT NOT NULL DEFAULT 0 COMMENT '0出售中 1买家已确认支付 2已完成 3已取消',
+        seller_lock_log_id BIGINT NULL,
+        seller_refund_log_id BIGINT NULL,
+        buyer_receive_log_id BIGINT NULL,
+        buyer_confirmed_at DATETIME NULL,
+        seller_confirmed_at DATETIME NULL,
+        seller_viewed_at DATETIME NULL,
+        cancelled_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_gold_trade_order_sn (order_sn),
+        INDEX idx_gold_trade_status_time (status, created_at),
+        INDEX idx_gold_trade_seller_status (seller_user_id, status),
+        INDEX idx_gold_trade_buyer_status (buyer_user_id, status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='金币出售交易订单';
+    `);
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS copper_trade_orders (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        order_sn VARCHAR(40) NOT NULL,
+        seller_user_id INT NOT NULL,
+        buyer_user_id INT NULL,
+        quantity DECIMAL(18,6) NOT NULL,
+        total_price DECIMAL(18,2) NOT NULL,
+        deposit_copper DECIMAL(18,6) NOT NULL DEFAULT 100,
+        alipay_name VARCHAR(50) NOT NULL,
+        alipay_qrcode VARCHAR(255) NOT NULL,
+        status TINYINT NOT NULL DEFAULT 0 COMMENT '0出售中 1买家已确认支付 2已完成 3已取消',
+        seller_lock_log_id BIGINT NULL,
+        seller_refund_log_id BIGINT NULL,
+        buyer_receive_log_id BIGINT NULL,
+        buyer_confirmed_at DATETIME NULL,
+        seller_confirmed_at DATETIME NULL,
+        seller_viewed_at DATETIME NULL,
+        cancelled_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_copper_trade_order_sn (order_sn),
+        INDEX idx_copper_trade_status_time (status, created_at),
+        INDEX idx_copper_trade_seller_status (seller_user_id, status),
+        INDEX idx_copper_trade_buyer_status (buyer_user_id, status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='铜币出售交易订单';
+    `);
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS matrix_gold_migration_records (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        migrated_amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+        currency_log_id BIGINT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_matrix_gold_migration_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='历史矩阵可提现余额转金币记录';
+    `);
+    try {
+      await this.dataSource.query(
+        `ALTER TABLE matrix_incomes ADD COLUMN gold_currency_log_id BIGINT NULL COMMENT '转金币对应currency_logs.id' AFTER claimed_at`,
+      );
+    } catch (_) {}
+    try {
+      await this.dataSource.query(
+        `ALTER TABLE matrix_incomes ADD INDEX idx_matrix_incomes_gold_log (gold_currency_log_id)`,
+      );
+    } catch (_) {}
+    const goldTradeAlterSql = [
+      `ALTER TABLE gold_trade_orders ADD COLUMN seller_refund_log_id BIGINT NULL AFTER seller_lock_log_id`,
+      `ALTER TABLE gold_trade_orders ADD COLUMN buyer_receive_log_id BIGINT NULL AFTER seller_refund_log_id`,
+      `ALTER TABLE gold_trade_orders ADD COLUMN buyer_confirmed_at DATETIME NULL AFTER buyer_receive_log_id`,
+      `ALTER TABLE gold_trade_orders ADD COLUMN seller_confirmed_at DATETIME NULL AFTER buyer_confirmed_at`,
+      `ALTER TABLE gold_trade_orders ADD COLUMN seller_viewed_at DATETIME NULL AFTER seller_confirmed_at`,
+      `ALTER TABLE gold_trade_orders ADD COLUMN cancelled_at DATETIME NULL AFTER seller_viewed_at`,
+    ];
+    for (const sql of goldTradeAlterSql) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {}
+    }
+    const copperTradeAlterSql = [
+      `ALTER TABLE copper_trade_orders ADD COLUMN seller_refund_log_id BIGINT NULL AFTER seller_lock_log_id`,
+      `ALTER TABLE copper_trade_orders ADD COLUMN buyer_receive_log_id BIGINT NULL AFTER seller_refund_log_id`,
+      `ALTER TABLE copper_trade_orders ADD COLUMN buyer_confirmed_at DATETIME NULL AFTER buyer_receive_log_id`,
+      `ALTER TABLE copper_trade_orders ADD COLUMN seller_confirmed_at DATETIME NULL AFTER buyer_confirmed_at`,
+      `ALTER TABLE copper_trade_orders ADD COLUMN seller_viewed_at DATETIME NULL AFTER seller_confirmed_at`,
+      `ALTER TABLE copper_trade_orders ADD COLUMN cancelled_at DATETIME NULL AFTER seller_viewed_at`,
+    ];
+    for (const sql of copperTradeAlterSql) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {}
+    }
+    this.goldModuleTablesReady = true;
+  }
+
+  private async getGoldExchangeRate(manager?: EntityManager) {
+    const rows = await (manager || this.dataSource.manager).query(
+      `SELECT config_value AS value FROM system_configs WHERE config_key = ? LIMIT 1`,
+      [GOLD_EXCHANGE_RATE_KEY],
+    );
+    const rate = Number(rows?.[0]?.value ?? 1);
+    return Number.isFinite(rate) && rate > 0 ? rate : 1;
+  }
+
+  private roundGold(value: number) {
+    return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
+  }
+
+  private roundMoney(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private async migrateLegacyMatrixWithdrawableToGold() {
+    if (this.legacyMatrixGoldMigrationChecked) return;
+    await this.ensureGoldModuleTables();
+    const users = await this.dataSource.query(`
+      SELECT owner_id AS userId
+      FROM matrix_incomes
+      WHERE slot_number BETWEEN 1 AND 4 OR slot_number = 0
+      GROUP BY owner_id
+    `);
+    for (const row of users || []) {
+      const userId = Number(row.userId);
+      if (!userId) continue;
+      await this.dataSource.transaction(async (mgr) => {
+        const existed = await mgr.query(
+          `SELECT id FROM matrix_gold_migration_records WHERE user_id = ? LIMIT 1`,
+          [userId],
+        );
+        if (existed.length > 0) return;
+
+        const incomeRows = await mgr.query(
+          `SELECT COALESCE(SUM(amount), 0) AS total
+           FROM matrix_incomes
+           WHERE owner_id = ? AND (slot_number BETWEEN 1 AND 4 OR slot_number = 0)`,
+          [userId],
+        );
+        const withdrawalRows = await mgr.query(
+          `SELECT COALESCE(SUM(amount), 0) AS total
+           FROM withdrawals
+           WHERE user_id = ? AND status IN (0, 1)`,
+          [userId],
+        );
+        const available = this.roundGold(
+          Math.max(
+            0,
+            Number(incomeRows?.[0]?.total || 0) - Number(withdrawalRows?.[0]?.total || 0),
+          ),
+        );
+        if (available <= 0) {
+          await mgr.query(
+            `INSERT INTO matrix_gold_migration_records (user_id, migrated_amount)
+             VALUES (?, 0)`,
+            [userId],
+          );
+          return;
+        }
+        const changed = await this.changeCurrency(
+          userId,
+          'gold',
+          available,
+          'matrix_gold_migration',
+          `历史推广矩阵可提现余额转金币：${available}金币`,
+          mgr,
+        );
+        await mgr.query(
+          `INSERT INTO matrix_gold_migration_records
+             (user_id, migrated_amount, currency_log_id)
+           VALUES (?, ?, ?)`,
+          [userId, available, changed.logId],
+        );
+      });
+    }
+    this.legacyMatrixGoldMigrationChecked = true;
   }
 
   private async ensureSystemSwitchTable() {
@@ -259,8 +486,142 @@ export class CurrencyService {
         `UPDATE point_synthesis SET target_currency = 'copper' WHERE target_currency = 'reward'`,
       );
     } catch (_) {
-      // 兼容尚未创建积分合成表的数据库。
+      // 兼容尚未创建交易合成表的数据库。
     }
+  }
+
+  private async ensureSynthesisConfigTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS point_synthesis (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        consume_points DECIMAL(12,2) NOT NULL,
+        target_currency VARCHAR(20) NOT NULL,
+        target_amount DECIMAL(12,2) NOT NULL,
+        status TINYINT NOT NULL DEFAULT 1 COMMENT '1启用 0禁用',
+        INDEX idx_point_synthesis_target (target_currency),
+        INDEX idx_point_synthesis_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='交易合成配置';
+    `);
+  }
+
+  private async ensureDefaultSynthesisConfigs() {
+    await this.ensureSynthesisConfigTable();
+    await this.dataSource.query(
+      `INSERT INTO point_synthesis (consume_points, target_currency, target_amount, status)
+       SELECT ?, 'silver', 1, 1
+       FROM DUAL
+       WHERE NOT EXISTS (
+         SELECT 1 FROM point_synthesis
+         WHERE target_currency = 'silver' AND target_amount = 1 AND status = 1
+       )`,
+      [SILVER_SYNTHESIS_POINTS],
+    );
+    await this.dataSource.query(
+      `UPDATE point_synthesis
+       SET consume_points = ?, target_amount = 1, status = 1
+       WHERE target_currency = 'silver'`,
+      [SILVER_SYNTHESIS_POINTS],
+    );
+  }
+
+  private async ensureWithdrawalCopperColumns() {
+    const statements = [
+      `ALTER TABLE withdrawals ADD COLUMN copper_cost DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT '提现消耗铜币数量' AFTER content`,
+      `ALTER TABLE withdrawals ADD COLUMN copper_log_id BIGINT NULL COMMENT '提现消耗铜币流水ID' AFTER copper_cost`,
+      `ALTER TABLE withdrawals ADD COLUMN copper_refund_log_id BIGINT NULL COMMENT '提现驳回退回铜币流水ID' AFTER copper_log_id`,
+      `ALTER TABLE withdrawals ADD INDEX idx_withdrawal_copper_log (copper_log_id)`,
+      `ALTER TABLE withdrawals ADD INDEX idx_withdrawal_copper_refund_log (copper_refund_log_id)`,
+    ];
+    for (const sql of statements) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {
+        // Compatible with databases where the column/index already exists.
+      }
+    }
+  }
+
+  private async ensureGameDurationCopperTables() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS game_play_time_daily (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        play_date DATE NOT NULL,
+        total_seconds INT NOT NULL DEFAULT 0,
+        rewarded_copper DECIMAL(12,2) NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_game_play_daily_user_date (user_id, play_date),
+        INDEX idx_game_play_daily_user (user_id),
+        INDEX idx_game_play_daily_date (play_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏时长铜币每日累计';
+    `);
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS game_play_sessions (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        game_id INT NULL,
+        session_id VARCHAR(100) NOT NULL,
+        play_date DATE NOT NULL,
+        duration_seconds INT NOT NULL DEFAULT 0,
+        copper_reward DECIMAL(12,2) NOT NULL DEFAULT 0,
+        currency_log_id BIGINT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_game_play_session_user_session (user_id, session_id),
+        INDEX idx_game_play_session_user_time (user_id, created_at),
+        INDEX idx_game_play_session_game_time (game_id, created_at),
+        INDEX idx_game_play_session_date (play_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏时长上报会话';
+    `);
+  }
+
+  private async getPositiveIntegerConfig(
+    key: string,
+    defaultValue: number,
+    manager?: EntityManager,
+  ) {
+    const rows = await (manager || this.dataSource.manager).query(
+      `SELECT config_value AS value FROM system_configs WHERE config_key = ? LIMIT 1`,
+      [key],
+    );
+    const parsed = Number(rows?.[0]?.value ?? defaultValue);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
+  }
+
+  private async getWithdrawCopperConfig(manager?: EntityManager) {
+    const goldUnit = await this.getPositiveIntegerConfig(
+      WITHDRAW_COPPER_GOLD_UNIT_KEY,
+      100,
+      manager,
+    );
+    const copperPerUnit = await this.getPositiveIntegerConfig(
+      WITHDRAW_COPPER_COST_PER_UNIT_KEY,
+      1,
+      manager,
+    );
+    return { goldUnit, copperPerUnit };
+  }
+
+  private calculateWithdrawCopperCost(
+    amount: number,
+    config: { goldUnit: number; copperPerUnit: number },
+  ) {
+    if (amount <= 0 || config.goldUnit <= 0 || config.copperPerUnit <= 0) return 0;
+    return Math.ceil(amount / config.goldUnit) * config.copperPerUnit;
+  }
+
+  private async getGameCopperConfig(manager?: EntityManager) {
+    const minutesPerCoin = await this.getPositiveIntegerConfig(
+      GAME_COPPER_MINUTES_PER_COIN_KEY,
+      15,
+      manager,
+    );
+    const dailyMax = await this.getPositiveIntegerConfig(
+      GAME_COPPER_DAILY_MAX_KEY,
+      2,
+      manager,
+    );
+    return { minutesPerCoin, dailyMax };
   }
 
   private async ensureDefaultSwitches() {
@@ -451,6 +812,7 @@ export class CurrencyService {
     return {
       points: Number(c.points),
       gold: Number(c.gold),
+      totalGoldEarned: Number(c.totalGoldEarned || 0),
       silver: Number(c.silver),
       copper: Number(c.copper),
       specialPointsTier1: Number(c.specialPointsTier1),
@@ -491,6 +853,9 @@ export class CurrencyService {
     if (after < 0) throw new BadRequestException('余额不足');
 
     (currency as any)[fieldName] = after;
+    if (type === 'gold' && this.shouldCountOriginalGold(logType, amount)) {
+      currency.totalGoldEarned = this.roundGold(Number(currency.totalGoldEarned || 0) + amount);
+    }
     await mgr.save(UserCurrency, currency);
 
     // 记录流水
@@ -525,7 +890,164 @@ export class CurrencyService {
       .take(pagination.pageSize)
       .getMany();
 
-    return { list, total, page: pagination.page, pageSize: pagination.pageSize };
+    const logIds = list.map((item) => Number(item.id)).filter((id) => id > 0);
+    const extraByLogId = new Map<number, any>();
+    if (logIds.length > 0) {
+      try {
+        const turnoverRows = await this.dataSource.query(
+          `SELECT currency_log_id AS currencyLogId,
+                  source_type AS sourceType,
+                  game_id AS gameId
+           FROM game_turnover_records
+           WHERE currency_log_id IN (${logIds.map(() => '?').join(',')})`,
+          logIds,
+        );
+        for (const row of turnoverRows || []) {
+          const id = Number(row.currencyLogId);
+          if (!id) continue;
+          extraByLogId.set(id, {
+            ...(extraByLogId.get(id) || {}),
+            sourceType: row.sourceType,
+            source_type: row.sourceType,
+            gameId: row.gameId,
+            game_id: row.gameId,
+          });
+        }
+      } catch (_) {}
+
+      try {
+        const requestRows = await this.dataSource.query(
+          `SELECT currency_log_id AS currencyLogId,
+                  reason AS requestReason
+           FROM game_points_change_requests
+           WHERE currency_log_id IN (${logIds.map(() => '?').join(',')})`,
+          logIds,
+        );
+        for (const row of requestRows || []) {
+          const id = Number(row.currencyLogId);
+          if (!id) continue;
+          extraByLogId.set(id, {
+            ...(extraByLogId.get(id) || {}),
+            requestReason: row.requestReason,
+            request_reason: row.requestReason,
+          });
+        }
+      } catch (_) {}
+    }
+
+    const enrichedList = list.map((item) => ({
+      ...item,
+      ...(extraByLogId.get(Number(item.id)) || {}),
+    }));
+
+    return { list: enrichedList, total, page: pagination.page, pageSize: pagination.pageSize };
+  }
+
+  async recordGamePlayDuration(
+    userId: number,
+    gameId: number | null,
+    data: { sessionId?: string; durationSeconds?: number },
+  ) {
+    await this.ensureGameDurationCopperTables();
+    const sessionId = String(data.sessionId || '').trim().slice(0, 100);
+    if (!sessionId) throw new BadRequestException('缺少游戏会话ID');
+
+    const durationSeconds = Math.floor(Number(data.durationSeconds || 0));
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return {
+        counted: false,
+        duplicate: false,
+        copperReward: 0,
+        durationSeconds: 0,
+      };
+    }
+    const safeDurationSeconds = Math.min(durationSeconds, GAME_DURATION_REPORT_MAX_SECONDS);
+    const playDate = this.formatLocalDate(new Date());
+
+    return this.dataSource.transaction(async (mgr) => {
+      const insertResult = await mgr.query(
+        `INSERT IGNORE INTO game_play_sessions
+          (user_id, game_id, session_id, play_date, duration_seconds, copper_reward, currency_log_id, created_at)
+         VALUES (?, ?, ?, ?, 0, 0, NULL, NOW())`,
+        [userId, gameId || null, sessionId, playDate],
+      );
+      const affectedRows = Number(insertResult?.affectedRows ?? insertResult?.[0]?.affectedRows ?? 0);
+      if (affectedRows === 0) {
+        const rows = await mgr.query(
+          `SELECT duration_seconds AS durationSeconds, copper_reward AS copperReward
+           FROM game_play_sessions
+           WHERE user_id = ? AND session_id = ? LIMIT 1`,
+          [userId, sessionId],
+        );
+        return {
+          counted: false,
+          duplicate: true,
+          durationSeconds: Number(rows?.[0]?.durationSeconds || 0),
+          copperReward: Number(rows?.[0]?.copperReward || 0),
+        };
+      }
+
+      await mgr.query(
+        `INSERT IGNORE INTO game_play_time_daily
+          (user_id, play_date, total_seconds, rewarded_copper, created_at, updated_at)
+         VALUES (?, ?, 0, 0, NOW(), NOW())`,
+        [userId, playDate],
+      );
+      const dailyRows = await mgr.query(
+        `SELECT id, total_seconds AS totalSeconds, rewarded_copper AS rewardedCopper
+         FROM game_play_time_daily
+         WHERE user_id = ? AND play_date = ?
+         FOR UPDATE`,
+        [userId, playDate],
+      );
+      const daily = dailyRows?.[0] || {};
+      const totalBefore = Number(daily.totalSeconds || 0);
+      const rewardedBefore = Number(daily.rewardedCopper || 0);
+      const totalAfter = totalBefore + safeDurationSeconds;
+      const config = await this.getGameCopperConfig(mgr);
+      const eligibleCopper = Math.min(
+        Math.floor(totalAfter / (config.minutesPerCoin * 60)),
+        config.dailyMax,
+      );
+      const copperReward = Math.max(0, eligibleCopper - rewardedBefore);
+      let currencyLogId: number | null = null;
+      if (copperReward > 0) {
+        const changed = await this.changeCurrency(
+          userId,
+          'copper',
+          copperReward,
+          'game_duration_copper',
+          `游戏时长奖励：今日累计${Math.floor(totalAfter / 60)}分钟`,
+          mgr,
+        );
+        currencyLogId = changed.logId;
+      }
+      const rewardedAfter = rewardedBefore + copperReward;
+
+      await mgr.query(
+        `UPDATE game_play_time_daily
+         SET total_seconds = ?, rewarded_copper = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [totalAfter, rewardedAfter, daily.id],
+      );
+      await mgr.query(
+        `UPDATE game_play_sessions
+         SET duration_seconds = ?, copper_reward = ?, currency_log_id = ?
+         WHERE user_id = ? AND session_id = ?`,
+        [safeDurationSeconds, copperReward, currencyLogId, userId, sessionId],
+      );
+
+      return {
+        counted: true,
+        duplicate: false,
+        durationSeconds: safeDurationSeconds,
+        totalSecondsToday: totalAfter,
+        copperReward,
+        rewardedCopperToday: rewardedAfter,
+        minutesPerCoin: config.minutesPerCoin,
+        dailyMax: config.dailyMax,
+      };
+    });
   }
 
   private maxDirectRewardGeneration(validDirectCount: number) {
@@ -906,15 +1428,53 @@ export class CurrencyService {
     return this.processWeeklyPointReturnPayouts();
   }
 
-  /** 积分合成 */
-  async synthesize(userId: number, configId: number) {
-    const config = await this.synthesisRepo.findOne({ where: { id: configId, status: 1 } });
+  /** 交易合成 */
+  async synthesize(userId: number, configId: number, quantityRaw = 1) {
+    await this.ensureDefaultSynthesisConfigs();
+    const safeConfigId = Math.floor(Number(configId));
+    if (!Number.isFinite(safeConfigId) || safeConfigId <= 0) {
+      throw new BadRequestException('合成配置不正确');
+    }
+    const config = await this.synthesisRepo.findOne({
+      where: { id: safeConfigId, status: 1 },
+    });
     if (!config) throw new BadRequestException('合成配置不存在或已禁用');
+    const quantity = Math.floor(Number(quantityRaw || 1));
+    if (!Number.isFinite(quantity) || quantity < 1) {
+      throw new BadRequestException('合成数量不正确');
+    }
+    if (quantity > 999) {
+      throw new BadRequestException('单次最多合成999个');
+    }
 
     await this.dataSource.transaction(async (mgr) => {
-      await this.changeCurrency(userId, 'points', -Number(config.consumePoints), 'synthesize', '积分合成消耗', mgr);
+      const consumePoints = Number(config.consumePoints) * quantity;
+      const targetAmount = Number(config.targetAmount) * quantity;
       const targetCurrency = config.targetCurrency === 'reward' ? 'copper' : config.targetCurrency;
-      await this.changeCurrency(userId, targetCurrency as CurrencyType, Number(config.targetAmount), 'synthesize', '积分合成获得', mgr);
+      if (
+        !Number.isFinite(consumePoints) ||
+        consumePoints <= 0 ||
+        !Number.isFinite(targetAmount) ||
+        targetAmount <= 0
+      ) {
+        throw new BadRequestException('合成配置不正确');
+      }
+      await this.changeCurrency(
+        userId,
+        'points',
+        -consumePoints,
+        'synthesize',
+        `交易合成消耗：${consumePoints}积分`,
+        mgr,
+      );
+      await this.changeCurrency(
+        userId,
+        targetCurrency as CurrencyType,
+        targetAmount,
+        'synthesize',
+        `交易合成获得：${targetAmount}${targetCurrency === 'silver' ? '银币' : targetCurrency === 'gold' ? '金币' : '铜币'}`,
+        mgr,
+      );
     });
 
     return { message: '合成成功' };
@@ -922,6 +1482,7 @@ export class CurrencyService {
 
   /** 获取合成配置列表 */
   async getSynthesisConfigs() {
+    await this.ensureDefaultSynthesisConfigs();
     return this.synthesisRepo.find({ where: { status: 1 } });
   }
 
@@ -1041,6 +1602,595 @@ export class CurrencyService {
     }
   }
 
+  private validateGoldQuantity(value: any, label = '金币数量') {
+    const quantity = Number(value);
+    if (!Number.isFinite(quantity) || quantity < 100 || quantity % 100 !== 0) {
+      throw new BadRequestException(`${label}必须是100或者100的整数倍`);
+    }
+    return this.roundGold(quantity);
+  }
+
+  private mapGoldTradeRow(row: any, currentUserId?: number) {
+    const quantity = this.roundGold(Number(row.quantity || 0));
+    const totalPrice = this.roundMoney(Number(row.totalPrice ?? row.total_price ?? 0));
+    const sellerUserId = Number(row.sellerUserId ?? row.seller_user_id ?? 0);
+    const buyerUserId = row.buyerUserId ?? row.buyer_user_id;
+    const status = Number(row.status || 0);
+    return {
+      id: Number(row.id),
+      orderSn: row.orderSn ?? row.order_sn,
+      sellerUserId,
+      sellerAccount: row.sellerAccount ?? row.seller_account ?? '',
+      sellerNickname: row.sellerNickname ?? row.seller_nickname ?? '',
+      buyerUserId: buyerUserId == null ? null : Number(buyerUserId),
+      buyerAccount: row.buyerAccount ?? row.buyer_account ?? '',
+      buyerNickname: row.buyerNickname ?? row.buyer_nickname ?? '',
+      quantity,
+      totalPrice,
+      unitPrice: quantity > 0 ? this.roundMoney(totalPrice / quantity) : 0,
+      feeGold: this.roundGold(Number(row.feeGold ?? row.fee_gold ?? 0)),
+      depositGold: this.roundGold(Number(row.depositGold ?? row.deposit_gold ?? 0)),
+      alipayName: row.alipayName ?? row.alipay_name ?? '',
+      alipayQrcode: row.alipayQrcode ?? row.alipay_qrcode ?? '',
+      status,
+      statusText: status === 0 ? '出售中' : status === 1 ? '待卖家确认' : status === 2 ? '已完成' : '已取消',
+      isSeller: currentUserId ? sellerUserId === Number(currentUserId) : false,
+      isBuyer: currentUserId && buyerUserId != null ? Number(buyerUserId) === Number(currentUserId) : false,
+      canBuy: currentUserId ? status === 0 && sellerUserId !== Number(currentUserId) : status === 0,
+      buyerConfirmedAt: row.buyerConfirmedAt ?? row.buyer_confirmed_at ?? null,
+      sellerConfirmedAt: row.sellerConfirmedAt ?? row.seller_confirmed_at ?? null,
+      createdAt: row.createdAt ?? row.created_at,
+      updatedAt: row.updatedAt ?? row.updated_at,
+    };
+  }
+
+  async getGoldOverview(userId: number) {
+    await this.ensureGoldModuleTables();
+    await this.migrateLegacyMatrixWithdrawableToGold();
+    const balance = await this.getBalance(userId);
+    const exchangeRate = await this.getGoldExchangeRate();
+    const badge = await this.getGoldTradeBadge(userId);
+    return {
+      gold: balance.gold,
+      totalGoldEarned: balance.totalGoldEarned,
+      exchangeRate,
+      estimatedCashValue: this.roundMoney(Number(balance.gold || 0) * exchangeRate),
+      tradeFeeRate: GOLD_TRADE_FEE_RATE,
+      tradeDeposit: GOLD_TRADE_DEPOSIT,
+      pendingTradeCount: badge.count,
+    };
+  }
+
+  async transferGoldToWithdraw(userId: number, data: { quantity: number }) {
+    await this.ensureGoldModuleTables();
+    const quantity = this.validateGoldQuantity(data?.quantity, '提现金币数量');
+    const exchangeRate = await this.getGoldExchangeRate();
+    const cashAmount = this.roundMoney(quantity * exchangeRate);
+
+    await this.dataSource.transaction(async (mgr) => {
+      const changed = await this.changeCurrency(
+        userId,
+        'gold',
+        -quantity,
+        'gold_withdraw_transfer',
+        `${quantity}金币按${exchangeRate}比例转入提现模块，折合${cashAmount}元`,
+        mgr,
+      );
+      await mgr.query(
+        `INSERT INTO gold_withdraw_credits
+           (user_id, gold_amount, exchange_rate, cash_amount, currency_log_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [userId, quantity, exchangeRate, cashAmount, changed.logId],
+      );
+    });
+
+    return { message: '已转入提现模块', quantity, exchangeRate, cashAmount };
+  }
+
+  async createGoldTrade(
+    userId: number,
+    data: { quantity: number; totalPrice: number; alipayName?: string; alipayQrcode?: string },
+  ) {
+    await this.ensureGoldModuleTables();
+    const quantity = this.validateGoldQuantity(data?.quantity, '出售金币数量');
+    const totalPrice = this.roundMoney(Number(data?.totalPrice));
+    if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
+      throw new BadRequestException('请填写正确的出售价格');
+    }
+    const alipayName = String(data?.alipayName || '').trim();
+    const alipayQrcode = String(data?.alipayQrcode || '').trim();
+    if (!alipayName) throw new BadRequestException('请填写支付宝实名姓名');
+    if (!alipayQrcode) throw new BadRequestException('请上传支付宝收款码');
+
+    const feeGold = this.roundGold(quantity * GOLD_TRADE_FEE_RATE);
+    const depositGold = GOLD_TRADE_DEPOSIT;
+    const lockGold = this.roundGold(quantity + feeGold + depositGold);
+    const orderSn = generateSn('GT');
+
+    await this.dataSource.transaction(async (mgr) => {
+      const changed = await this.changeCurrency(
+        userId,
+        'gold',
+        -lockGold,
+        'gold_trade_lock',
+        `发布金币出售：锁定${quantity}金币，手续费${feeGold}金币，担保${depositGold}金币`,
+        mgr,
+      );
+      await mgr.query(
+        `INSERT INTO gold_trade_orders
+          (order_sn, seller_user_id, quantity, total_price, fee_gold, deposit_gold,
+           alipay_name, alipay_qrcode, status, seller_lock_log_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        [
+          orderSn,
+          userId,
+          quantity,
+          totalPrice,
+          feeGold,
+          depositGold,
+          alipayName,
+          alipayQrcode,
+          changed.logId,
+        ],
+      );
+    });
+
+    return { message: '出售订单已发布', orderSn };
+  }
+
+  async listGoldTrades(userId: number) {
+    await this.ensureGoldModuleTables();
+    const rows = await this.dataSource.query(
+      `SELECT o.id, o.order_sn AS orderSn, o.seller_user_id AS sellerUserId,
+              o.buyer_user_id AS buyerUserId, o.quantity, o.total_price AS totalPrice,
+              o.fee_gold AS feeGold, o.deposit_gold AS depositGold,
+              o.alipay_name AS alipayName, o.alipay_qrcode AS alipayQrcode,
+              o.status, o.buyer_confirmed_at AS buyerConfirmedAt,
+              o.seller_confirmed_at AS sellerConfirmedAt,
+              o.created_at AS createdAt, o.updated_at AS updatedAt,
+              su.account AS sellerAccount, su.nickname AS sellerNickname,
+              bu.account AS buyerAccount, bu.nickname AS buyerNickname
+       FROM gold_trade_orders o
+       LEFT JOIN users su ON su.id = o.seller_user_id
+       LEFT JOIN users bu ON bu.id = o.buyer_user_id
+       WHERE o.status = 0
+          OR o.seller_user_id = ?
+          OR o.buyer_user_id = ?
+       ORDER BY
+         CASE WHEN o.status = 1 AND o.seller_user_id = ? THEN 0 ELSE 1 END,
+         o.created_at DESC
+       LIMIT 100`,
+      [userId, userId, userId],
+    );
+    return rows.map((row: any) => this.mapGoldTradeRow(row, userId));
+  }
+
+  async getGoldTradeDetail(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    const rows = await this.dataSource.query(
+      `SELECT o.id, o.order_sn AS orderSn, o.seller_user_id AS sellerUserId,
+              o.buyer_user_id AS buyerUserId, o.quantity, o.total_price AS totalPrice,
+              o.fee_gold AS feeGold, o.deposit_gold AS depositGold,
+              o.alipay_name AS alipayName, o.alipay_qrcode AS alipayQrcode,
+              o.status, o.buyer_confirmed_at AS buyerConfirmedAt,
+              o.seller_confirmed_at AS sellerConfirmedAt,
+              o.created_at AS createdAt, o.updated_at AS updatedAt,
+              su.account AS sellerAccount, su.nickname AS sellerNickname,
+              bu.account AS buyerAccount, bu.nickname AS buyerNickname
+       FROM gold_trade_orders o
+       LEFT JOIN users su ON su.id = o.seller_user_id
+       LEFT JOIN users bu ON bu.id = o.buyer_user_id
+       WHERE o.id = ?
+       LIMIT 1`,
+      [id],
+    );
+    if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+    const item = this.mapGoldTradeRow(rows[0], userId);
+    if (item.status !== 0 && !item.isSeller && !item.isBuyer) {
+      throw new BadRequestException('无权查看该订单');
+    }
+    return item;
+  }
+
+  async cancelGoldTrade(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.transaction(async (mgr) => {
+      const rows = await mgr.query(
+        `SELECT * FROM gold_trade_orders WHERE id = ? AND seller_user_id = ? FOR UPDATE`,
+        [id, userId],
+      );
+      if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+      const order = rows[0];
+      if (Number(order.status) !== 0) throw new BadRequestException('当前订单不能取消');
+      const refundGold = this.roundGold(
+        Number(order.quantity || 0) + Number(order.fee_gold || 0) + Number(order.deposit_gold || 0),
+      );
+      const changed = await this.changeCurrency(
+        userId,
+        'gold',
+        refundGold,
+        'gold_trade_cancel_refund',
+        `取消金币出售，退回锁定金币、手续费和担保金币`,
+        mgr,
+      );
+      await mgr.query(
+        `UPDATE gold_trade_orders
+         SET status = 3, seller_refund_log_id = ?, cancelled_at = NOW()
+         WHERE id = ?`,
+        [changed.logId, id],
+      );
+    });
+    return { message: '已取消出售，金币已退回' };
+  }
+
+  async confirmGoldTradePaid(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.transaction(async (mgr) => {
+      const rows = await mgr.query(
+        `SELECT * FROM gold_trade_orders WHERE id = ? FOR UPDATE`,
+        [id],
+      );
+      if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+      const order = rows[0];
+      if (Number(order.status) !== 0 || order.buyer_receive_log_id) {
+        throw new BadRequestException('该订单已被购买或不可购买');
+      }
+      if (Number(order.seller_user_id) === Number(userId)) {
+        throw new BadRequestException('不能购买自己发布的金币');
+      }
+      await mgr.query(
+        `UPDATE gold_trade_orders
+         SET buyer_user_id = ?, status = 1, buyer_confirmed_at = NOW(), seller_viewed_at = NULL
+         WHERE id = ?`,
+        [userId, id],
+      );
+    });
+    return { message: '已确认支付，请等待卖家确认到账后放币', released: false };
+  }
+
+  async confirmGoldTradeReceived(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.transaction(async (mgr) => {
+      const rows = await mgr.query(
+        `SELECT * FROM gold_trade_orders WHERE id = ? AND seller_user_id = ? FOR UPDATE`,
+        [id, userId],
+      );
+      if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+      const order = rows[0];
+      if (Number(order.status) !== 1 || !order.buyer_user_id || order.buyer_receive_log_id) {
+        throw new BadRequestException('当前订单还不能确认到账');
+      }
+      const quantity = this.roundGold(Number(order.quantity || 0));
+      const depositGold = this.roundGold(Number(order.deposit_gold || GOLD_TRADE_DEPOSIT));
+      const buyerChanged = await this.changeCurrency(
+        Number(order.buyer_user_id),
+        'gold',
+        quantity,
+        'gold_trade_buy_receive',
+        `购买金币到账：订单${order.order_sn}`,
+        mgr,
+      );
+      const refundChanged = await this.changeCurrency(
+        userId,
+        'gold',
+        depositGold,
+        'gold_trade_deposit_refund',
+        `金币出售完成，退回担保金币：订单${order.order_sn}`,
+        mgr,
+      );
+      await mgr.query(
+        `UPDATE gold_trade_orders
+         SET status = 2, buyer_receive_log_id = ?, seller_refund_log_id = ?,
+             seller_confirmed_at = NOW(), seller_viewed_at = NOW()
+         WHERE id = ?`,
+        [buyerChanged.logId, refundChanged.logId, id],
+      );
+    });
+    return { message: '已确认到账，金币已转给买家' };
+  }
+
+  async getGoldTradeBadge(userId: number) {
+    await this.ensureGoldModuleTables();
+    const rows = await this.dataSource.query(
+      `SELECT COUNT(*) AS count
+       FROM gold_trade_orders
+       WHERE seller_user_id = ?
+         AND status = 1
+         AND (seller_viewed_at IS NULL OR seller_viewed_at < buyer_confirmed_at)`,
+      [userId],
+    );
+    return { count: Number(rows?.[0]?.count || 0) };
+  }
+
+  async clearGoldTradeBadge(userId: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.query(
+      `UPDATE gold_trade_orders
+       SET seller_viewed_at = NOW()
+       WHERE seller_user_id = ? AND status = 1`,
+      [userId],
+    );
+    return { message: '已读' };
+  }
+
+  private validateCopperQuantity(value: any, label = '铜币数量') {
+    const quantity = Number(value);
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
+      throw new BadRequestException(`${label}必须是大于0的整数`);
+    }
+    return this.roundGold(quantity);
+  }
+
+  private mapCopperTradeRow(row: any, currentUserId?: number) {
+    const quantity = this.roundGold(Number(row.quantity || 0));
+    const totalPrice = this.roundMoney(Number(row.totalPrice ?? row.total_price ?? 0));
+    const sellerUserId = Number(row.sellerUserId ?? row.seller_user_id ?? 0);
+    const buyerUserId = row.buyerUserId ?? row.buyer_user_id;
+    const status = Number(row.status || 0);
+    return {
+      id: Number(row.id),
+      orderSn: row.orderSn ?? row.order_sn,
+      sellerUserId,
+      sellerAccount: row.sellerAccount ?? row.seller_account ?? '',
+      sellerNickname: row.sellerNickname ?? row.seller_nickname ?? '',
+      buyerUserId: buyerUserId == null ? null : Number(buyerUserId),
+      buyerAccount: row.buyerAccount ?? row.buyer_account ?? '',
+      buyerNickname: row.buyerNickname ?? row.buyer_nickname ?? '',
+      quantity,
+      totalPrice,
+      unitPrice: quantity > 0 ? this.roundMoney(totalPrice / quantity) : 0,
+      feeCopper: 0,
+      depositCopper: this.roundGold(Number(row.depositCopper ?? row.deposit_copper ?? 0)),
+      alipayName: row.alipayName ?? row.alipay_name ?? '',
+      alipayQrcode: row.alipayQrcode ?? row.alipay_qrcode ?? '',
+      status,
+      statusText: status === 0 ? '出售中' : status === 1 ? '待卖家确认' : status === 2 ? '已完成' : '已取消',
+      isSeller: currentUserId ? sellerUserId === Number(currentUserId) : false,
+      isBuyer: currentUserId && buyerUserId != null ? Number(buyerUserId) === Number(currentUserId) : false,
+      canBuy: currentUserId ? status === 0 && sellerUserId !== Number(currentUserId) : status === 0,
+      buyerConfirmedAt: row.buyerConfirmedAt ?? row.buyer_confirmed_at ?? null,
+      sellerConfirmedAt: row.sellerConfirmedAt ?? row.seller_confirmed_at ?? null,
+      createdAt: row.createdAt ?? row.created_at,
+      updatedAt: row.updatedAt ?? row.updated_at,
+    };
+  }
+
+  async getCopperOverview(userId: number) {
+    await this.ensureGoldModuleTables();
+    const balance = await this.getBalance(userId);
+    const badge = await this.getCopperTradeBadge(userId);
+    return {
+      copper: balance.copper,
+      tradeFeeRate: 0,
+      tradeDepositRate: COPPER_TRADE_DEPOSIT_RATE,
+      pendingTradeCount: badge.count,
+    };
+  }
+
+  async createCopperTrade(
+    userId: number,
+    data: { quantity: number; totalPrice: number; alipayName?: string; alipayQrcode?: string },
+  ) {
+    await this.ensureGoldModuleTables();
+    const quantity = this.validateCopperQuantity(data?.quantity, '出售铜币数量');
+    const totalPrice = this.roundMoney(Number(data?.totalPrice));
+    if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
+      throw new BadRequestException('请填写正确的出售价格');
+    }
+    const alipayName = String(data?.alipayName || '').trim();
+    const alipayQrcode = String(data?.alipayQrcode || '').trim();
+    if (!alipayName) throw new BadRequestException('请填写支付宝实名姓名');
+    if (!alipayQrcode) throw new BadRequestException('请上传支付宝收款码');
+
+    const depositCopper = this.roundGold(quantity * COPPER_TRADE_DEPOSIT_RATE);
+    const lockCopper = this.roundGold(quantity + depositCopper);
+    const orderSn = generateSn('CT');
+
+    await this.dataSource.transaction(async (mgr) => {
+      const changed = await this.changeCurrency(
+        userId,
+        'copper',
+        -lockCopper,
+        'copper_trade_lock',
+        `发布铜币出售：锁定${quantity}铜币，担保${depositCopper}铜币`,
+        mgr,
+      );
+      await mgr.query(
+        `INSERT INTO copper_trade_orders
+          (order_sn, seller_user_id, quantity, total_price, deposit_copper,
+           alipay_name, alipay_qrcode, status, seller_lock_log_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        [
+          orderSn,
+          userId,
+          quantity,
+          totalPrice,
+          depositCopper,
+          alipayName,
+          alipayQrcode,
+          changed.logId,
+        ],
+      );
+    });
+
+    return { message: '出售订单已发布', orderSn };
+  }
+
+  async listCopperTrades(userId: number) {
+    await this.ensureGoldModuleTables();
+    const rows = await this.dataSource.query(
+      `SELECT o.id, o.order_sn AS orderSn, o.seller_user_id AS sellerUserId,
+              o.buyer_user_id AS buyerUserId, o.quantity, o.total_price AS totalPrice,
+              o.deposit_copper AS depositCopper,
+              o.alipay_name AS alipayName, o.alipay_qrcode AS alipayQrcode,
+              o.status, o.buyer_confirmed_at AS buyerConfirmedAt,
+              o.seller_confirmed_at AS sellerConfirmedAt,
+              o.created_at AS createdAt, o.updated_at AS updatedAt,
+              su.account AS sellerAccount, su.nickname AS sellerNickname,
+              bu.account AS buyerAccount, bu.nickname AS buyerNickname
+       FROM copper_trade_orders o
+       LEFT JOIN users su ON su.id = o.seller_user_id
+       LEFT JOIN users bu ON bu.id = o.buyer_user_id
+       WHERE o.status = 0
+          OR o.seller_user_id = ?
+          OR o.buyer_user_id = ?
+       ORDER BY
+         CASE WHEN o.status = 1 AND o.seller_user_id = ? THEN 0 ELSE 1 END,
+         o.created_at DESC
+       LIMIT 100`,
+      [userId, userId, userId],
+    );
+    return rows.map((row: any) => this.mapCopperTradeRow(row, userId));
+  }
+
+  async getCopperTradeDetail(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    const rows = await this.dataSource.query(
+      `SELECT o.id, o.order_sn AS orderSn, o.seller_user_id AS sellerUserId,
+              o.buyer_user_id AS buyerUserId, o.quantity, o.total_price AS totalPrice,
+              o.deposit_copper AS depositCopper,
+              o.alipay_name AS alipayName, o.alipay_qrcode AS alipayQrcode,
+              o.status, o.buyer_confirmed_at AS buyerConfirmedAt,
+              o.seller_confirmed_at AS sellerConfirmedAt,
+              o.created_at AS createdAt, o.updated_at AS updatedAt,
+              su.account AS sellerAccount, su.nickname AS sellerNickname,
+              bu.account AS buyerAccount, bu.nickname AS buyerNickname
+       FROM copper_trade_orders o
+       LEFT JOIN users su ON su.id = o.seller_user_id
+       LEFT JOIN users bu ON bu.id = o.buyer_user_id
+       WHERE o.id = ?
+       LIMIT 1`,
+      [id],
+    );
+    if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+    const item = this.mapCopperTradeRow(rows[0], userId);
+    if (item.status !== 0 && !item.isSeller && !item.isBuyer) {
+      throw new BadRequestException('无权查看该订单');
+    }
+    return item;
+  }
+
+  async cancelCopperTrade(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.transaction(async (mgr) => {
+      const rows = await mgr.query(
+        `SELECT * FROM copper_trade_orders WHERE id = ? AND seller_user_id = ? FOR UPDATE`,
+        [id, userId],
+      );
+      if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+      const order = rows[0];
+      if (Number(order.status) !== 0) throw new BadRequestException('当前订单不能取消');
+      const refundCopper = this.roundGold(
+        Number(order.quantity || 0) + Number(order.deposit_copper || 0),
+      );
+      const changed = await this.changeCurrency(
+        userId,
+        'copper',
+        refundCopper,
+        'copper_trade_cancel_refund',
+        `取消铜币出售，退回锁定铜币和担保铜币`,
+        mgr,
+      );
+      await mgr.query(
+        `UPDATE copper_trade_orders
+         SET status = 3, seller_refund_log_id = ?, cancelled_at = NOW()
+         WHERE id = ?`,
+        [changed.logId, id],
+      );
+    });
+    return { message: '已取消出售，铜币已退回' };
+  }
+
+  async confirmCopperTradePaid(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.transaction(async (mgr) => {
+      const rows = await mgr.query(
+        `SELECT * FROM copper_trade_orders WHERE id = ? FOR UPDATE`,
+        [id],
+      );
+      if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+      const order = rows[0];
+      if (Number(order.status) !== 0 || order.buyer_receive_log_id) {
+        throw new BadRequestException('该订单已被购买或不可购买');
+      }
+      if (Number(order.seller_user_id) === Number(userId)) {
+        throw new BadRequestException('不能购买自己发布的铜币');
+      }
+      await mgr.query(
+        `UPDATE copper_trade_orders
+         SET buyer_user_id = ?, status = 1, buyer_confirmed_at = NOW(), seller_viewed_at = NULL
+         WHERE id = ?`,
+        [userId, id],
+      );
+    });
+    return { message: '已确认支付，请等待卖家确认到账后放币', released: false };
+  }
+
+  async confirmCopperTradeReceived(userId: number, id: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.transaction(async (mgr) => {
+      const rows = await mgr.query(
+        `SELECT * FROM copper_trade_orders WHERE id = ? AND seller_user_id = ? FOR UPDATE`,
+        [id, userId],
+      );
+      if (rows.length === 0) throw new NotFoundException('出售订单不存在');
+      const order = rows[0];
+      if (Number(order.status) !== 1 || !order.buyer_user_id || order.buyer_receive_log_id) {
+        throw new BadRequestException('当前订单还不能确认到账');
+      }
+      const quantity = this.roundGold(Number(order.quantity || 0));
+      const depositCopper = this.roundGold(Number(order.deposit_copper || 0));
+      const buyerChanged = await this.changeCurrency(
+        Number(order.buyer_user_id),
+        'copper',
+        quantity,
+        'copper_trade_buy_receive',
+        `购买铜币到账：订单${order.order_sn}`,
+        mgr,
+      );
+      const refundChanged = await this.changeCurrency(
+        userId,
+        'copper',
+        depositCopper,
+        'copper_trade_deposit_refund',
+        `铜币出售完成，退回担保铜币：订单${order.order_sn}`,
+        mgr,
+      );
+      await mgr.query(
+        `UPDATE copper_trade_orders
+         SET status = 2, buyer_receive_log_id = ?, seller_refund_log_id = ?,
+             seller_confirmed_at = NOW(), seller_viewed_at = NOW()
+         WHERE id = ?`,
+        [buyerChanged.logId, refundChanged.logId, id],
+      );
+    });
+    return { message: '已确认到账，铜币已转给买家' };
+  }
+
+  async getCopperTradeBadge(userId: number) {
+    await this.ensureGoldModuleTables();
+    const rows = await this.dataSource.query(
+      `SELECT COUNT(*) AS count
+       FROM copper_trade_orders
+       WHERE seller_user_id = ?
+         AND status = 1
+         AND (seller_viewed_at IS NULL OR seller_viewed_at < buyer_confirmed_at)`,
+      [userId],
+    );
+    return { count: Number(rows?.[0]?.count || 0) };
+  }
+
+  async clearCopperTradeBadge(userId: number) {
+    await this.ensureGoldModuleTables();
+    await this.dataSource.query(
+      `UPDATE copper_trade_orders
+       SET seller_viewed_at = NOW()
+       WHERE seller_user_id = ? AND status = 1`,
+      [userId],
+    );
+    return { message: '已读' };
+  }
+
   /** 提现申请 */
   async withdraw(userId: number, data: { amount: number; paymentMethod: string; accountName: string; accountNumber: string; content?: string; withdrawPassword?: string }) {
     const { amount, paymentMethod, accountName, accountNumber, content, withdrawPassword } = data;
@@ -1052,90 +2202,134 @@ export class CurrencyService {
     if (!accountName || !accountName.trim()) throw new BadRequestException('请填写收款人姓名');
     if (!accountNumber || !accountNumber.trim()) throw new BadRequestException('请填写收款账号');
     await this.verifyWithdrawPassword(userId, withdrawPassword);
+    await this.ensureWithdrawalCopperColumns();
 
-    // 校验可提现余额 = 实时可提现推广收益 - 待审核/已通过提现总额。
-    const { totalEarned, totalWithdrawn } = await this.getWithdrawableBalance(userId);
+    // 校验可提现余额 = 金币转入提现模块额度 - 迁移后的待审核/已通过提现总额。
+    const { totalEarned, totalWithdrawn, copper } = await this.getWithdrawableBalance(userId);
     const available = totalEarned - totalWithdrawn;
     if (amount > available) {
       throw new BadRequestException(`可提现余额不足，当前可提现 ${available.toFixed(0)} 元`);
     }
+    const copperConfig = await this.getWithdrawCopperConfig();
+    const copperCost = this.calculateWithdrawCopperCost(amount, copperConfig);
+    if (copperCost > copper) {
+      throw new BadRequestException(`铜币不足，本次提现需消耗 ${copperCost} 个铜币`);
+    }
 
-    // 创建提现记录（不扣积分，直接记录）
     const fee = Math.floor(amount * 0.2);
     const actualAmount = amount - fee;
-    const withdrawal = this.withdrawalRepo.create({
-      userId,
-      amount,
-      paymentMethod,
-      accountName: accountName.trim(),
-      accountNumber: accountNumber.trim(),
-      content: `提现${amount}元，手续费${fee}元（20%），实际到账${actualAmount}元` + (content?.trim() ? `；备注：${content.trim()}` : ''),
-      status: 0,
+    const withdrawal = await this.dataSource.transaction(async (mgr) => {
+      const changed = copperCost > 0
+        ? await this.changeCurrency(
+            userId,
+            'copper',
+            -copperCost,
+            'withdraw_copper_cost',
+            `提现${amount}金币消耗铜币`,
+            mgr,
+          )
+        : null;
+
+      const record = mgr.create(Withdrawal, {
+        userId,
+        amount,
+        paymentMethod,
+        accountName: accountName.trim(),
+        accountNumber: accountNumber.trim(),
+        content: `提现${amount}元，手续费${fee}元（20%），实际到账${actualAmount}元` + (content?.trim() ? `；备注：${content.trim()}` : ''),
+        copperCost,
+        copperLogId: changed?.logId ?? null,
+        copperRefundLogId: null,
+        status: 0,
+      });
+      return mgr.save(Withdrawal, record);
     });
-    await this.withdrawalRepo.save(withdrawal);
 
     // 给管理员发送服务通知
     await this.serviceNotificationService.notifyAdmin({
       type: 'withdrawal',
       title: '新的提现申请',
-      content: `${accountName.trim()} 申请提现 ${amount} 元（实际到账 ${actualAmount} 元），收款方式：${paymentMethod}`,
+      content: `${accountName.trim()} 申请提现 ${amount} 元（实际到账 ${actualAmount} 元，消耗铜币 ${copperCost}），收款方式：${paymentMethod}`,
       fromUserId: userId,
-      payload: { withdrawalId: withdrawal.id, amount, actualAmount },
+      payload: { withdrawalId: withdrawal.id, amount, actualAmount, copperCost },
     });
 
-    return { message: '提现申请已提交，请等待审核' };
+    return { message: '提现申请已提交，请等待审核', copperCost };
   }
 
   /** 获取用户可提现余额 */
   async getWithdrawableBalance(userId: number) {
-    // 1-4号位与特殊奖励产生后即可提现，不等待矩阵完成。
+    await this.ensureWithdrawalCopperColumns();
+    await this.ensureGoldModuleTables();
+    await this.migrateLegacyMatrixWithdrawableToGold();
+
     const earnedResult = await this.dataSource.query(
-      `SELECT COALESCE(SUM(i.amount), 0) as total FROM matrix_incomes i
-       INNER JOIN matrices m ON i.matrix_id = m.id
-       WHERE i.owner_id = ?
-         AND (i.slot_number BETWEEN 1 AND 4 OR i.slot_number = 0)
-         AND m.owner_id = ?`,
-      [userId, userId],
+      `SELECT COALESCE(SUM(cash_amount), 0) as total
+       FROM gold_withdraw_credits
+       WHERE user_id = ?`,
+      [userId],
     );
     const totalEarned = Number(earnedResult?.[0]?.total || 0);
 
-    // 已提现总额（待审核 + 已通过）
-    const withdrawnResult = await this.dataSource.query(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM withdrawals WHERE user_id = ? AND status IN (0, 1)`,
+    const migrationRows = await this.dataSource.query(
+      `SELECT created_at AS createdAt
+       FROM matrix_gold_migration_records
+       WHERE user_id = ?
+       LIMIT 1`,
       [userId],
     );
-    const totalWithdrawn = Number(withdrawnResult?.[0]?.total || 0);
+    const migrationAt = migrationRows?.[0]?.createdAt || null;
 
-    return { totalEarned, totalWithdrawn };
+    // 已提现总额（待审核 + 已通过）。旧矩阵可提现余额迁移前的提现已在迁移时扣过，避免重复扣减。
+    const withdrawParams: any[] = [userId];
+    let migrationFilter = '';
+    if (migrationAt) {
+      migrationFilter = ' AND created_at >= ?';
+      withdrawParams.push(migrationAt);
+    }
+    const withdrawnResult = await this.dataSource.query(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM withdrawals
+       WHERE user_id = ? AND status IN (0, 1)${migrationFilter}`,
+      withdrawParams,
+    );
+    const totalWithdrawn = Number(withdrawnResult?.[0]?.total || 0);
+    const currency = await this.currencyRepo.findOne({ where: { userId } });
+    const copperConfig = await this.getWithdrawCopperConfig();
+
+    return {
+      totalEarned,
+      totalWithdrawn,
+      copper: Number(currency?.copper || 0),
+      withdrawCopperConfig: copperConfig,
+    };
   }
 
   /** 获取用户交易记录：推广收益入账 + 提现申请。 */
   async getWithdrawRecords(userId: number) {
+    await this.ensureGoldModuleTables();
     const withdrawals = await this.withdrawalRepo.find({
       where: { userId },
       order: { createdAt: 'DESC' },
     });
-    const incomes = await this.dataSource.query(
-      `SELECT i.id, i.amount, i.slot_number, i.description, i.created_at,
-              u.account AS source_account, u.nickname AS source_nickname
-       FROM matrix_incomes i
-       LEFT JOIN users u ON u.id = i.from_user_id
-       WHERE i.owner_id = ?
-         AND (i.slot_number BETWEEN 1 AND 4 OR i.slot_number = 0)
-       ORDER BY i.created_at DESC`,
+    const credits = await this.dataSource.query(
+      `SELECT id, gold_amount AS goldAmount, exchange_rate AS exchangeRate,
+              cash_amount AS cashAmount, created_at AS createdAt
+       FROM gold_withdraw_credits
+       WHERE user_id = ?
+       ORDER BY created_at DESC`,
       [userId],
     );
 
-    const incomeRecords = incomes.map((r: any) => ({
-      id: `income-${r.id}`,
+    const creditRecords = credits.map((r: any) => ({
+      id: `gold-credit-${r.id}`,
       transactionType: 'income',
-      amount: Number(r.amount),
-      isSpecialReward: Number(r.slot_number) === 0,
-      title: Number(r.slot_number) === 0 ? '特殊奖励' : '推广收益',
-      description: r.description,
-      sourceAccount: r.source_account || '',
-      sourceNickname: r.source_nickname || '',
-      createdAt: r.created_at,
+      amount: Number(r.cashAmount || 0),
+      title: '金币转入提现',
+      description: `${this.roundGold(Number(r.goldAmount || 0))}金币 × ${Number(r.exchangeRate || 1)} = ${this.roundMoney(Number(r.cashAmount || 0))}元`,
+      sourceAccount: '',
+      sourceNickname: '',
+      createdAt: r.createdAt,
     }));
     const withdrawalRecords = withdrawals.map(r => ({
       id: `withdrawal-${r.id}`,
@@ -1146,13 +2340,15 @@ export class CurrencyService {
       paymentMethod: r.paymentMethod,
       accountName: r.accountName,
       accountNumber: r.accountNumber,
+      copperCost: Number(r.copperCost || 0),
+      copperRefunded: !!r.copperRefundLogId,
       status: r.status, // 0待审核 1已打款 2驳回
       statusText: r.status === 0 ? '审核中' : r.status === 1 ? '已打款' : '已驳回',
       createdAt: r.createdAt,
       reviewTime: r.reviewTime,
     }));
 
-    return [...incomeRecords, ...withdrawalRecords].sort(
+    return [...creditRecords, ...withdrawalRecords].sort(
       (a, b) =>
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
@@ -1160,16 +2356,54 @@ export class CurrencyService {
 
   /** 提现审核（管理端） */
   async reviewWithdrawal(id: number, approve: boolean) {
-    const w = await this.withdrawalRepo.findOne({ where: { id } });
-    if (!w) throw new NotFoundException('提现记录不存在');
-    if (w.status !== 0) throw new BadRequestException('该申请已处理');
+    await this.ensureWithdrawalCopperColumns();
+    await this.dataSource.transaction(async (mgr) => {
+      const w = await mgr.findOne(Withdrawal, { where: { id } });
+      if (!w) throw new NotFoundException('提现记录不存在');
+      if (w.status !== 0) throw new BadRequestException('该申请已处理');
 
-    if (approve) {
-      await this.withdrawalRepo.update(id, { status: 1, reviewTime: new Date() });
-    } else {
-      // 驳回：直接更新状态（不需要返还，因为提现不扣积分）
-      await this.withdrawalRepo.update(id, { status: 2, reviewTime: new Date() });
-    }
+      w.status = approve ? 1 : 2;
+      w.reviewTime = new Date();
+
+      const copperCost = Number(w.copperCost || 0);
+      if (!approve && copperCost > 0 && !w.copperRefundLogId) {
+        const changed = await this.changeCurrency(
+          w.userId,
+          'copper',
+          copperCost,
+          'withdraw_copper_refund',
+          `提现驳回退回铜币`,
+          mgr,
+        );
+        w.copperRefundLogId = changed.logId;
+      }
+
+      if (!approve) {
+        const migrationRows = await mgr.query(
+          `SELECT created_at AS createdAt
+           FROM matrix_gold_migration_records
+           WHERE user_id = ?
+           LIMIT 1`,
+          [w.userId],
+        );
+        const migrationAt = migrationRows?.[0]?.createdAt
+          ? new Date(migrationRows[0].createdAt).getTime()
+          : 0;
+        const withdrawalAt = w.createdAt ? new Date(w.createdAt).getTime() : Date.now();
+        if (migrationAt > 0 && withdrawalAt <= migrationAt) {
+          await this.changeCurrency(
+            w.userId,
+            'gold',
+            Number(w.amount || 0),
+            'matrix_gold_withdraw_reject_refund',
+            `历史推广提现驳回，退回金币`,
+            mgr,
+          );
+        }
+      }
+
+      await mgr.save(Withdrawal, w);
+    });
 
     return { message: approve ? '已通过' : '已驳回' };
   }
@@ -1189,6 +2423,24 @@ export class CurrencyService {
 
   /** 更新配置 */
   async updateConfig(key: string, value: string) {
+    const positiveIntegerKeys = new Set([
+      WITHDRAW_COPPER_GOLD_UNIT_KEY,
+      WITHDRAW_COPPER_COST_PER_UNIT_KEY,
+      GAME_COPPER_MINUTES_PER_COIN_KEY,
+      GAME_COPPER_DAILY_MAX_KEY,
+    ]);
+    if (positiveIntegerKeys.has(key)) {
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new BadRequestException('该配置只能填写大于0的整数');
+      }
+    }
+    if (key === GOLD_EXCHANGE_RATE_KEY) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new BadRequestException('金币兑换比例必须是大于0的数字');
+      }
+    }
     await this.configRepo.update({ configKey: key }, { configValue: value });
     return { message: '配置已更新' };
   }
@@ -1199,7 +2451,12 @@ export class CurrencyService {
     await this.ensureDirectGameRewardTables();
     await this.ensureDefaultSwitches();
     await this.ensureCurrencyAccountsForExistingUsers();
+    await this.ensureDefaultSynthesisConfigs();
     await this.migrateRewardSynthesisToCopper();
+    await this.ensureWithdrawalCopperColumns();
+    await this.ensureGameDurationCopperTables();
+    await this.ensureGoldModuleTables();
+    await this.migrateLegacyMatrixWithdrawableToGold();
     const defaults = [
       { configKey: 'daily_deduction_rate', configName: '每日积分扣除比例', configValue: '0.01', description: '每天扣除用户积分的百分比，0.01表示1%' },
       { configKey: 'weekly_return_multiplier', configName: '每周返还倍率', configValue: '1.5', description: '旧版每周返还逻辑使用的倍率，与新的积分返还功能无关' },
@@ -1207,6 +2464,11 @@ export class CurrencyService {
       { configKey: WEEKLY_POINT_RETURN_DAILY_RATE_KEY, configName: '积分返还每日比例', configValue: '0.01', description: '每周积分返还每天使用的比例，0.01表示1%' },
       { configKey: WEEKLY_POINT_RETURN_STARTED_AT_KEY, configName: '积分返还开始时间', configValue: this.formatLocalDateTime(new Date()), description: '功能首次初始化时间；只结算结束时间不早于该时间的消费周，避免上线时追溯发放历史周' },
       { configKey: DIRECT_GAME_REWARD_RATE_KEY, configName: '直推流水奖励比例', configValue: String(DIRECT_GAME_REWARD_DEFAULT_RATE), description: '下级有效游戏流水给符合条件上级的普通积分收益比例，0.0015表示千分之1.5' },
+      { configKey: WITHDRAW_COPPER_GOLD_UNIT_KEY, configName: '提现金币单位', configValue: '100', description: '提现金币与铜币消耗比例的金币单位，例如100表示每100金币计算一次铜币消耗' },
+      { configKey: WITHDRAW_COPPER_COST_PER_UNIT_KEY, configName: '每单位提现消耗铜币', configValue: '1', description: '提现每个金币单位需要消耗的铜币数量，例如100:1填1，100:2填2' },
+      { configKey: GAME_COPPER_MINUTES_PER_COIN_KEY, configName: '游戏时长铜币分钟数', configValue: '15', description: '用户当天所有游戏时长累计每满多少分钟获得1个铜币' },
+      { configKey: GAME_COPPER_DAILY_MAX_KEY, configName: '游戏时长每日铜币上限', configValue: '2', description: '用户每天最多可通过游戏时长获得的铜币数量' },
+      { configKey: GOLD_EXCHANGE_RATE_KEY, configName: '金币兑换现金比例', configValue: '1', description: '1金币可兑换多少元，默认1，可填0.9或1.1' },
       { configKey: 'meeting_start_cost', configName: '普通成员发起会议消耗', configValue: '10000', description: '普通群成员发起群会议需要扣除的积分，群主和管理员免费' },
       { configKey: 'data_retention_days', configName: '聊天/会议数据保留天数', configValue: '7', description: '后台清理聊天记录和已结束会议时使用的保留天数' },
       { configKey: 'meeting_media_mode', configName: '会议媒体模式', configValue: 'p2p', description: 'p2p 或 sfu；SFU 服务接入稳定后可切换为 sfu' },

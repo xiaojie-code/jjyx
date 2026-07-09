@@ -16,7 +16,24 @@ class ApiEndpoints {
   static const String currencyBalance = '/api/currency/balance';
   static const String currencyLogs = '/api/currency/logs';
   static const String currencySynthesize = '/api/currency/synthesize';
+  static const String currencySynthesisConfigs =
+      '/api/currency/synthesis-configs';
   static const String currencyWithdraw = '/api/currency/withdraw';
+  static const String goldOverview = '/api/currency/gold/overview';
+  static const String goldWithdrawTransfer =
+      '/api/currency/gold/withdraw-transfer';
+  static const String goldTradeList = '/api/currency/gold/trades';
+  static const String goldTradeCreate = '/api/currency/gold/trades';
+  static const String goldTradeQrcode = '/api/currency/gold/trades/qrcode';
+  static const String goldTradeBadge = '/api/currency/gold/trades/badge';
+  static const String goldTradeBadgeRead =
+      '/api/currency/gold/trades/badge/read';
+  static const String copperOverview = '/api/currency/copper/overview';
+  static const String copperTradeList = '/api/currency/copper/trades';
+  static const String copperTradeCreate = '/api/currency/copper/trades';
+  static const String copperTradeBadge = '/api/currency/copper/trades/badge';
+  static const String copperTradeBadgeRead =
+      '/api/currency/copper/trades/badge/read';
   static const String weeklyPointReturn = '/api/auth/weekly-point-return';
   static const String signInStatus = '/api/sign-in/status';
   static const String signInClaim = '/api/sign-in/claim';
@@ -50,6 +67,11 @@ class ApiEndpoints {
   static const String rechargeSubmit = '/api/recharge/submit';
   static const String rechargeOrders = '/api/recharge/orders';
 
+  // ==================== 商城 ====================
+  static const String shopPaymentInfo = '/api/shop/payment-info';
+  static const String shopAddress = '/api/shop/address';
+  static const String shopOrders = '/api/shop/orders';
+
   // ==================== 资产包 ====================
   static const String assetOverview = '/api/asset/overview';
   static const String assetRecharge = '/api/asset/recharge';
@@ -78,6 +100,7 @@ class ApiEndpoints {
   static String gameStart(int id) => '/api/game/$id/start';
   static String gameSettle(int id) => '/api/game/$id/settle';
   static String gamePointsChange(int id) => '/api/game/$id/points/change';
+  static String gamePlayDuration(int id) => '/api/game/$id/play-duration';
   static String contactRequestHandle(int id) =>
       '/api/social/contacts/request/$id';
   static String contactRemark(int id) => '/api/social/contacts/$id/remark';
@@ -114,4 +137,18 @@ class ApiEndpoints {
       '/api/social/meetings/$id/media-config';
   static String horseRoom(int id) => '/api/game/horse/room/$id';
   static String backpackItemDetail(int id) => '/api/backpack/items/$id';
+  static String goldTradeDetail(int id) => '/api/currency/gold/trades/$id';
+  static String goldTradeCancel(int id) =>
+      '/api/currency/gold/trades/$id/cancel';
+  static String goldTradeConfirmPaid(int id) =>
+      '/api/currency/gold/trades/$id/confirm-paid';
+  static String goldTradeConfirmReceived(int id) =>
+      '/api/currency/gold/trades/$id/confirm-received';
+  static String copperTradeDetail(int id) => '/api/currency/copper/trades/$id';
+  static String copperTradeCancel(int id) =>
+      '/api/currency/copper/trades/$id/cancel';
+  static String copperTradeConfirmPaid(int id) =>
+      '/api/currency/copper/trades/$id/confirm-paid';
+  static String copperTradeConfirmReceived(int id) =>
+      '/api/currency/copper/trades/$id/confirm-received';
 }

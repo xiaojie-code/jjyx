@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import * as bcrypt from 'bcryptjs';
 import { User } from '../entities/user.entity';
@@ -86,8 +86,33 @@ export class AdminService {
       .take(pagination.pageSize)
       .orderBy('u.id', 'DESC')
       .getMany();
+    const userIds = list.map((user) => user.id);
+    const currencies = userIds.length
+      ? await this.currencyRepo.find({ where: { userId: In(userIds) } })
+      : [];
+    const currencyMap = new Map(currencies.map((item) => [item.userId, item]));
     return {
-      list,
+      list: list.map((user) => {
+        const currency = currencyMap.get(user.id);
+        return {
+          ...user,
+          currency: currency
+            ? {
+                points: Number(currency.points || 0),
+                gold: Number(currency.gold || 0),
+                totalGoldEarned: Number(currency.totalGoldEarned || 0),
+                silver: Number(currency.silver || 0),
+                copper: Number(currency.copper || 0),
+              }
+            : {
+                points: 0,
+                gold: 0,
+                totalGoldEarned: 0,
+                silver: 0,
+                copper: 0,
+              },
+        };
+      }),
       total,
       page: pagination.page,
       pageSize: pagination.pageSize,
@@ -585,7 +610,126 @@ export class AdminService {
 
   // ===== 提现 =====
   async getWithdrawals(query: any) {
-    return this.withdrawalRepo.find({ order: { createdAt: 'DESC' } });
+    const params: any[] = [];
+    const where: string[] = [];
+    const keyword = String(query.keyword || '').trim();
+    const statusRaw = query.status === undefined ? '' : String(query.status);
+    const startDate = String(query.startDate || '').trim();
+    const endDate = String(query.endDate || '').trim();
+
+    if (keyword) {
+      const keywordLike = `%${keyword}%`;
+      const keywordNumber = Number(keyword);
+      if (Number.isFinite(keywordNumber) && keywordNumber > 0) {
+        where.push(
+          '(w.user_id = ? OR u.account LIKE ? OR u.nickname LIKE ? OR w.account_name LIKE ? OR w.account_number LIKE ?)',
+        );
+        params.push(keywordNumber, keywordLike, keywordLike, keywordLike, keywordLike);
+      } else {
+        where.push(
+          '(u.account LIKE ? OR u.nickname LIKE ? OR w.account_name LIKE ? OR w.account_number LIKE ?)',
+        );
+        params.push(keywordLike, keywordLike, keywordLike, keywordLike);
+      }
+    }
+
+    if (statusRaw !== '') {
+      const status = Number(statusRaw);
+      if (Number.isFinite(status)) {
+        where.push('w.status = ?');
+        params.push(status);
+      }
+    }
+
+    if (startDate) {
+      where.push('w.created_at >= ?');
+      params.push(`${startDate} 00:00:00`);
+    }
+    if (endDate) {
+      where.push('w.created_at <= ?');
+      params.push(`${endDate} 23:59:59`);
+    }
+
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const list = await this.dataSource.query(
+      `SELECT
+         w.id,
+         w.user_id AS userId,
+         u.account AS userAccount,
+         u.nickname AS userNickname,
+         w.amount,
+         w.payment_method AS paymentMethod,
+         w.account_name AS accountName,
+         w.account_number AS accountNumber,
+         w.content,
+         w.copper_cost AS copperCost,
+         w.copper_log_id AS copperLogId,
+         w.copper_refund_log_id AS copperRefundLogId,
+         w.status,
+         w.review_time AS reviewTime,
+         w.created_at AS createdAt,
+         COALESCE(ut.successTotal, 0) AS userSuccessWithdrawn
+       FROM withdrawals w
+       LEFT JOIN users u ON u.id = w.user_id
+       LEFT JOIN (
+         SELECT user_id, SUM(amount) AS successTotal
+         FROM withdrawals
+         WHERE status = 1
+         GROUP BY user_id
+       ) ut ON ut.user_id = w.user_id
+       ${whereSql}
+       ORDER BY w.created_at DESC, w.id DESC
+       LIMIT 500`,
+      params,
+    );
+
+    const successTotalRows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM withdrawals WHERE status = 1`,
+    );
+    const filteredSuccessRows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(w.amount), 0) AS total
+       FROM withdrawals w
+       LEFT JOIN users u ON u.id = w.user_id
+       ${whereSql ? `${whereSql} AND w.status = 1` : 'WHERE w.status = 1'}`,
+      params,
+    );
+    const matchedUserRows = keyword
+      ? await this.dataSource.query(
+          `SELECT COALESCE(SUM(t.successTotal), 0) AS total, COUNT(*) AS userCount
+           FROM (
+             SELECT mu.id, COALESCE(s.successTotal, 0) AS successTotal
+             FROM (
+               SELECT DISTINCT u.id
+               FROM users u
+               LEFT JOIN withdrawals wx ON wx.user_id = u.id
+               WHERE ${
+                 Number.isFinite(Number(keyword)) && Number(keyword) > 0
+                   ? 'u.id = ? OR u.account LIKE ? OR u.nickname LIKE ? OR wx.account_name LIKE ? OR wx.account_number LIKE ?'
+                   : 'u.account LIKE ? OR u.nickname LIKE ? OR wx.account_name LIKE ? OR wx.account_number LIKE ?'
+               }
+             ) mu
+             LEFT JOIN (
+               SELECT user_id, SUM(amount) AS successTotal
+               FROM withdrawals
+               WHERE status = 1
+               GROUP BY user_id
+             ) s ON s.user_id = mu.id
+           ) t`,
+          Number.isFinite(Number(keyword)) && Number(keyword) > 0
+            ? [Number(keyword), `%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`]
+            : [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`],
+        )
+      : [{ total: 0, userCount: 0 }];
+
+    return {
+      list,
+      stats: {
+        successTotal: Number(successTotalRows?.[0]?.total || 0),
+        filteredSuccessTotal: Number(filteredSuccessRows?.[0]?.total || 0),
+        matchedUserSuccessTotal: Number(matchedUserRows?.[0]?.total || 0),
+        matchedUserCount: Number(matchedUserRows?.[0]?.userCount || 0),
+      },
+    };
   }
   async reviewWithdrawal(id: number, approve: boolean) {
     return this.currencyService.reviewWithdrawal(id, approve);

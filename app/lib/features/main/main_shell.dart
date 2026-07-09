@@ -215,12 +215,13 @@ class _MainShellState extends ConsumerState<MainShell>
     // 点击通知跳转到对应会话
     if (!mounted) return;
     if (conversationId == -1) {
+      ref.read(badgeProvider.notifier).clearServiceNotifications();
       Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
         builder: (_) => const ServiceNotificationPage(),
       ));
-      ref.read(badgeProvider.notifier).clearServiceNotifications();
       return;
     }
+    ref.read(badgeProvider.notifier).clearUnread();
     Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
       builder: (_) => ChatPage(
         conversationId: conversationId,
@@ -318,6 +319,8 @@ class _MainShellState extends ConsumerState<MainShell>
   void _onTap(BuildContext context, int index) {
     switch (index) {
       case 0:
+        ref.read(badgeProvider.notifier).clearUnread();
+        ref.read(badgeProvider.notifier).clearServiceNotifications();
         context.go(RoutePaths.chatList);
         break;
       case 1:
@@ -345,6 +348,8 @@ class _MainShellState extends ConsumerState<MainShell>
   Widget build(BuildContext context) {
     final badges = ref.watch(badgeProvider);
     final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
+    final profileHasDot =
+        hasUpdate || badges.goldTradeCount > 0 || badges.copperTradeCount > 0;
 
     return PopScope(
       canPop: false,
@@ -387,8 +392,8 @@ class _MainShellState extends ConsumerState<MainShell>
               label: '商城',
             ),
             BottomNavigationBarItem(
-              icon: _buildDotIcon(Icons.person_outline, hasUpdate),
-              activeIcon: _buildDotIcon(Icons.person, hasUpdate),
+              icon: _buildDotIcon(Icons.person_outline, profileHasDot),
+              activeIcon: _buildDotIcon(Icons.person, profileHasDot),
               label: '我的',
             ),
           ],

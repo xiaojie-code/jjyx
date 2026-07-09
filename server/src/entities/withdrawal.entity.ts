@@ -30,6 +30,15 @@ export class Withdrawal {
   @Column({ type: 'text', nullable: true, comment: '备注信息' })
   content: string;
 
+  @Column({ type: 'decimal', precision: 12, scale: 2, name: 'copper_cost', default: 0, comment: '提现消耗铜币数量' })
+  copperCost: number;
+
+  @Column({ type: 'bigint', nullable: true, name: 'copper_log_id', comment: '提现消耗铜币流水ID' })
+  copperLogId: number | null;
+
+  @Column({ type: 'bigint', nullable: true, name: 'copper_refund_log_id', comment: '提现驳回退回铜币流水ID' })
+  copperRefundLogId: number | null;
+
   @Column({ type: 'tinyint', default: 0, comment: '0待审核 1通过 2驳回' })
   status: number;
 

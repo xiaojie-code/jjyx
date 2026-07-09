@@ -46,11 +46,11 @@ class _ServiceNotificationPageState
   }
 
   Future<void> _markAllRead() async {
+    ref.read(badgeProvider.notifier).clearServiceNotifications();
     try {
       await ref
           .read(apiClientProvider)
           .put(ApiEndpoints.serviceNotificationsReadAll);
-      ref.read(badgeProvider.notifier).clearServiceNotifications();
     } catch (_) {}
   }
 
@@ -64,6 +64,9 @@ class _ServiceNotificationPageState
         return Icons.qr_code;
       case 'recharge_result':
         return Icons.verified;
+      case 'shop_order':
+      case 'shop_order_result':
+        return Icons.shopping_bag;
       default:
         return Icons.notifications;
     }
@@ -79,6 +82,9 @@ class _ServiceNotificationPageState
         return Colors.green;
       case 'recharge_result':
         return Colors.teal;
+      case 'shop_order':
+      case 'shop_order_result':
+        return Colors.deepOrange;
       default:
         return Colors.grey;
     }

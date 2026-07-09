@@ -9,6 +9,7 @@ import '../../../core/update/app_update_service.dart';
 import '../../../core/update/update_state.dart';
 import '../../../core/utils/activation_guard.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../main/providers/badge_provider.dart';
 import 'activate_page.dart';
 import 'asset_package_page.dart';
 import 'edit_avatar_page.dart';
@@ -51,6 +52,45 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     );
   }
 
+  void _showCopperLogs() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => const _PointLogSheet(
+        currencyType: 'copper',
+        title: '铜币明细',
+        fallbackTypeName: '铜币变动',
+      ),
+    );
+  }
+
+  void _showSilverLogs() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => const _PointLogSheet(
+        currencyType: 'silver',
+        title: '银币明细',
+        fallbackTypeName: '银币变动',
+      ),
+    );
+  }
+
+  void _showGoldLogs() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => const _PointLogSheet(
+        currencyType: 'gold',
+        title: '金币明细',
+        fallbackTypeName: '金币变动',
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
@@ -58,6 +98,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     final profile = authState.profile;
     final currency = profile?.currency;
     final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
+    final badges = ref.watch(badgeProvider);
+    final tradeCount = badges.goldTradeCount + badges.copperTradeCount;
 
     return Scaffold(
       appBar: AppBar(
@@ -163,8 +205,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     ),
                     _buildMenuItem(
                       Icons.sync,
-                      '积分合成',
+                      '交易合成',
                       () => _push(const SynthesizePage()),
+                      showDot: tradeCount > 0,
                     ),
                     _buildMenuItem(
                       Icons.account_balance_wallet,
@@ -211,9 +254,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _currencyItem('金币', currency.gold),
-              _currencyItem('银币', currency.silver),
-              _currencyItem('铜币', currency.copper),
+              _currencyItem('金币', currency.gold, onTap: _showGoldLogs),
+              _currencyItem('银币', currency.silver, onTap: _showSilverLogs),
+              _currencyItem('铜币', currency.copper, onTap: _showCopperLogs),
             ],
           ),
         ],
@@ -231,9 +274,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
           child: Column(
             children: [
               Text(
-                value % 1 == 0
-                    ? value.toInt().toString()
-                    : value.toStringAsFixed(2),
+                value.truncate().toString(),
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -251,9 +292,14 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     );
   }
 
-  Widget _buildMenuItem(IconData icon, String title, VoidCallback onTap) {
+  Widget _buildMenuItem(
+    IconData icon,
+    String title,
+    VoidCallback onTap, {
+    bool showDot = false,
+  }) {
     return ListTile(
-      leading: Icon(icon),
+      leading: _buildDotIcon(icon, showDot),
       title: Text(title),
       trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
@@ -286,7 +332,15 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
 }
 
 class _PointLogSheet extends ConsumerStatefulWidget {
-  const _PointLogSheet();
+  const _PointLogSheet({
+    this.currencyType = 'points',
+    this.title = '积分明细',
+    this.fallbackTypeName = '积分变动',
+  });
+
+  final String currencyType;
+  final String title;
+  final String fallbackTypeName;
 
   @override
   ConsumerState<_PointLogSheet> createState() => _PointLogSheetState();
@@ -313,7 +367,7 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
         ApiEndpoints.currencyLogs,
         queryParameters: {
-          'currencyType': 'points',
+          'currencyType': widget.currencyType,
           'page': 1,
           'pageSize': 80,
         },
@@ -333,7 +387,7 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = apiErrorMessage(e, fallback: '积分明细加载失败');
+        _error = apiErrorMessage(e, fallback: '${widget.title}加载失败');
         _loading = false;
       });
     }
@@ -351,10 +405,10 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
               padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
               child: Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      '积分明细',
-                      style: TextStyle(
+                      widget.title,
+                      style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
@@ -415,11 +469,9 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
         final before =
             _numValue(item['beforeBalance'] ?? item['before_balance']);
         final after = _numValue(item['afterBalance'] ?? item['after_balance']);
-        final description = (item['description'] ?? '').toString();
-        final logType = (item['logType'] ?? item['log_type'] ?? '').toString();
         final createdAt =
             _formatDateTime(item['createdAt'] ?? item['created_at']);
-        final title = _displayLogTitle(description, logType);
+        final title = _displayLogTitle(item);
         final typeText = _displayLogType(item);
 
         return ListTile(
@@ -455,8 +507,35 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
     return double.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  String _displayLogTitle(String description, String logType) {
-    final text = '$description $logType'.toLowerCase();
+  String _displayLogTitle(Map<String, dynamic> item) {
+    final description = (item['description'] ?? '').toString();
+    final logType = (item['logType'] ?? item['log_type'] ?? '').toString();
+    final amount = _numValue(item['amount']);
+    final text = [
+      description,
+      logType,
+      item['sourceType'],
+      item['source_type'],
+      item['requestReason'],
+      item['request_reason'],
+    ].whereType<Object>().map((e) => e.toString().toLowerCase()).join(' ');
+    if (text.contains('mahjong') ||
+        text.contains('majiang') ||
+        text.contains('麻将')) {
+      if (text.contains('bet') ||
+          text.contains('stake') ||
+          text.contains('wager')) {
+        return '麻将投注积分';
+      }
+      if (text.contains('entry')) return '麻将入场积分';
+      if (text.contains('settle') ||
+          text.contains('win') ||
+          text.contains('reward') ||
+          text.contains('earn')) {
+        return '麻将结算奖励';
+      }
+      return amount < 0 ? '麻将积分支出' : '麻将积分收入';
+    }
     if (text.contains('fishing_daily_login')) return '实况钓鱼每日奖励';
     if (text.contains('fish_sell') || text.contains('sell_fish')) {
       return '实况钓鱼卖鱼收入';
@@ -477,6 +556,23 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
     if (text.contains('lottery_win')) return '幸运转盘中奖';
     if (text.contains('direct_game_reward')) return '直推游戏流水奖励';
     if (text.contains('weekly_point_return')) return '每周积分返还';
+    if (text.contains('game_duration_copper')) return '游戏时长铜币奖励';
+    if (text.contains('withdraw_copper_cost')) return '提现消耗铜币';
+    if (text.contains('withdraw_copper_refund')) return '提现驳回退回铜币';
+    if (text.contains('matrix_gold_income')) return '推广矩阵收益转金币';
+    if (text.contains('matrix_gold_migration')) return '历史推广收益转金币';
+    if (text.contains('matrix_gold_withdraw_reject_refund')) {
+      return '历史提现驳回退回金币';
+    }
+    if (text.contains('gold_withdraw_transfer')) return '金币转入提现';
+    if (text.contains('gold_trade_lock')) return '发布金币出售';
+    if (text.contains('gold_trade_cancel_refund')) return '取消出售退回金币';
+    if (text.contains('gold_trade_deposit_refund')) return '出售完成退回担保金币';
+    if (text.contains('gold_trade_buy_receive')) return '购买金币到账';
+    if (text.contains('copper_trade_lock')) return '发布铜币出售';
+    if (text.contains('copper_trade_cancel_refund')) return '取消出售退回铜币';
+    if (text.contains('copper_trade_deposit_refund')) return '出售完成退回担保铜币';
+    if (text.contains('copper_trade_buy_receive')) return '购买铜币到账';
     if (text.contains('daily_sign_in')) return '每日签到奖励';
     if (text.contains('daily_deduction')) return '每日积分扣除';
     if (text.contains('recharge')) return '充值到账';
@@ -491,6 +587,8 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
       item['log_type'],
       item['sourceType'],
       item['source_type'],
+      item['requestReason'],
+      item['request_reason'],
     ].whereType<Object>().map((e) => e.toString().toLowerCase()).join(' ');
     final gameName = _gameNameForLog(combined);
     if (gameName != null) return gameName;
@@ -500,6 +598,11 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
   }
 
   String? _gameNameForLog(String text) {
+    if (text.contains('mahjong') ||
+        text.contains('majiang') ||
+        text.contains('麻将')) {
+      return '麻将游戏';
+    }
     if (text.contains('fishing') ||
         text.contains('fish_') ||
         text.contains('钓鱼') ||
@@ -544,10 +647,46 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
         return '赛马';
       case 'horse_bet':
         return '赛马';
+      case 'mahjong_settle':
+      case 'mahjong_earn':
+      case 'mahjong_spend':
+      case 'mahjong_bet':
+      case 'mahjong_entry':
+        return '麻将游戏';
       case 'direct_game_reward':
         return '直推流水奖励';
       case 'weekly_point_return':
         return '每周积分返还';
+      case 'game_duration_copper':
+        return '游戏时长铜币奖励';
+      case 'withdraw_copper_cost':
+        return '提现消耗铜币';
+      case 'withdraw_copper_refund':
+        return '提现驳回退回铜币';
+      case 'matrix_gold_income':
+        return '推广矩阵收益转金币';
+      case 'matrix_gold_migration':
+        return '历史推广收益转金币';
+      case 'matrix_gold_withdraw_reject_refund':
+        return '历史提现驳回退回金币';
+      case 'gold_withdraw_transfer':
+        return '金币转入提现';
+      case 'gold_trade_lock':
+        return '发布金币出售';
+      case 'gold_trade_cancel_refund':
+        return '取消出售退回金币';
+      case 'gold_trade_deposit_refund':
+        return '出售完成退回担保金币';
+      case 'gold_trade_buy_receive':
+        return '购买金币到账';
+      case 'copper_trade_lock':
+        return '发布铜币出售';
+      case 'copper_trade_cancel_refund':
+        return '取消出售退回铜币';
+      case 'copper_trade_deposit_refund':
+        return '出售完成退回担保铜币';
+      case 'copper_trade_buy_receive':
+        return '购买铜币到账';
       case 'daily_sign_in':
         return '每日签到奖励';
       case 'daily_deduction':
@@ -560,9 +699,9 @@ class _PointLogSheetState extends ConsumerState<_PointLogSheet> {
       case 'withdraw':
         return '提现';
       case 'synthesize':
-        return '积分合成';
+        return '交易合成';
       default:
-        return logType.isEmpty ? '积分变动' : logType;
+        return logType.isEmpty ? widget.fallbackTypeName : logType;
     }
   }
 

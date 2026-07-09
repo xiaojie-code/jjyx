@@ -3,8 +3,7 @@
     <el-card class="login-card" shadow="always">
       <div class="login-header">
         <div class="login-logo">🎮</div>
-        <h2>竞技游戏平台</h2>
-        <p>运营管理后台</p>
+        <h2>沧恒云芯管理平台</h2>
       </div>
       <el-form :model="form" :rules="rules" ref="formRef" label-position="top">
         <el-form-item label="账号" prop="account">

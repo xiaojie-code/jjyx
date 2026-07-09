@@ -28,6 +28,15 @@ export class FishingSave {
   @Column({ type: 'varchar', length: 10, nullable: true, name: 'last_daily_reward_date' })
   lastDailyRewardDate: string | null;
 
+  @Column({ type: 'datetime', nullable: true, name: 'level_reset_at' })
+  levelResetAt: Date | null;
+
+  @Column({ type: 'varchar', length: 10, nullable: true, name: 'daily_cast_date' })
+  dailyCastDate: string | null;
+
+  @Column({ type: 'int', default: 0, name: 'daily_cast_count' })
+  dailyCastCount: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

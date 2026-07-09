@@ -15,7 +15,7 @@ import { AssetInterestRecord } from '../entities/asset-interest-record.entity';
 import { AssetReferralRewardRecord } from '../entities/asset-referral-reward-record.entity';
 import { ServiceNotificationService } from '../notification/service-notification.service';
 
-const MONTHLY_RATE = 0.054;
+const MONTHLY_RATE = 0.025;
 const DAILY_RATE = MONTHLY_RATE / 30;
 const REFERRAL_REWARD_RATE = 0.1;
 const WITHDRAW_FEE_RATE = 0.2;
@@ -121,7 +121,7 @@ export class AssetService implements OnModuleInit {
         user_id INT NOT NULL,
         interest_date DATE NOT NULL COMMENT '计息日期',
         base_principal DECIMAL(18,2) NOT NULL COMMENT '当日计息本金',
-        annual_rate DECIMAL(10,6) NOT NULL COMMENT '月利率，默认0.054',
+        annual_rate DECIMAL(10,6) NOT NULL COMMENT '月利率，默认0.025',
         interest_amount DECIMAL(18,6) NOT NULL COMMENT '当日生成利息',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_asset_interest_user_date (user_id, interest_date),

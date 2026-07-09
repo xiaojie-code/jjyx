@@ -236,6 +236,10 @@ class AppUpdateService {
       return;
     }
 
+    if (await _startBackgroundDownload(context, version)) {
+      return;
+    }
+
     final progress = ValueNotifier<double>(0);
     final statusText = ValueNotifier<String>('准备下载...');
     var finished = false;
@@ -608,6 +612,55 @@ class AppUpdateService {
         ),
       ),
     );
+  }
+
+  static Future<bool> _startBackgroundDownload(
+    BuildContext context,
+    AppVersionInfo version,
+  ) async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    try {
+      final result = await _installerChannel
+          .invokeMethod<Map<dynamic, dynamic>>('startBackgroundApkDownload', {
+        'url': version.resolvedDownloadUrl,
+        'versionCode': version.versionCode,
+        'versionName': version.versionName,
+      });
+      if (result == null) return false;
+
+      final status = result['status']?.toString() ?? '';
+      final path = result['path']?.toString() ?? '';
+      if (!context.mounted) return true;
+
+      switch (status) {
+        case 'started':
+          Toast.info(context, '已开始后台下载，可在通知栏查看进度，断网后会自动继续');
+          return true;
+        case 'pending':
+        case 'running':
+        case 'paused':
+          Toast.info(context, '安装包正在后台下载，可在通知栏查看进度');
+          return true;
+        case 'successful':
+        case 'installing':
+          Toast.info(context, '安装包已下载完成，正在打开安装');
+          return true;
+        case 'permission_required':
+          if (path.isNotEmpty) {
+            await _showInstallPermissionGuide(context, path);
+            return true;
+          }
+          return false;
+        default:
+          return false;
+      }
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<void> _installApk(BuildContext context, String apkPath) async {

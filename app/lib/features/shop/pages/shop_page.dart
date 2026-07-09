@@ -1,111 +1,157 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../core/constants/app_constants.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/network/api_endpoints.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/toast.dart';
+import '../../auth/providers/auth_provider.dart';
 
-class ShopPage extends StatefulWidget {
+String _formatShopAmount(int value) {
+  return value.toString().replaceAllMapped(
+        RegExp(r'\B(?=(\d{3})+(?!\d))'),
+        (match) => ',',
+      );
+}
+
+enum _ShopPaymentMethod { silver, cash }
+
+class ShopPage extends ConsumerStatefulWidget {
   const ShopPage({super.key});
 
   @override
-  State<ShopPage> createState() => _ShopPageState();
+  ConsumerState<ShopPage> createState() => _ShopPageState();
 }
 
-class _ShopPageState extends State<ShopPage> {
+class _ShopPageState extends ConsumerState<ShopPage> {
   late final VideoPlayerController _controller;
+  final _receiverNameCtrl = TextEditingController();
+  final _receiverPhoneCtrl = TextEditingController();
+  final _receiverAddressCtrl = TextEditingController();
   bool _hasError = false;
   bool _isMuted = true;
   bool _showControls = true;
+  String _paymentQrcode = '';
+  String _paymentPayeeName = '';
+  static const int _defaultSilverPrice = 1000;
 
   static const List<_ShopProduct> _products = [
     _ShopProduct(
+      key: 'health-ring',
       title: '云芯智能健康指环',
       subtitle: '血压血氧心电、血脂尿酸、睡眠监测',
-      imageName: 'product-health-ring.png',
+      imageName: 'd31a7373-c4e4-4a6a-9d09-c50f5c7fcab6.png',
       imageFit: BoxFit.contain,
+      cashPrice: 925,
     ),
     _ShopProduct(
+      key: 'health-watch',
       title: '云芯健康陪伴手表',
       subtitle: '血压心率监测、SOS 求助、防摔倒提醒',
       imageName: 'product-health-watch.png',
+      cashPrice: 628,
     ),
     _ShopProduct(
+      key: 'health-watch-2',
       title: '云芯健康陪伴手表二代',
       subtitle: '气泵测压、心电监测、AI 中医诊疗',
       imageName: 'product-health-watch-2.jpg',
+      cashPrice: 1598,
     ),
     _ShopProduct(
+      key: 'ai-glasses',
       title: '云芯ai智能眼镜',
       subtitle: '拍照录像录音、AI 识物、实时翻译',
-      imageName: 'product-ai-glasses.png',
+      imageName: '0da22a71-4ed1-42b3-9037-51f839110739.png',
+      cashPrice: 728,
     ),
     _ShopProduct(
-      title: '云芯智能平板',
-      subtitle: '高清大屏、AI 助手、办公娱乐随行',
-      imageName: 'product-tablet.png',
-    ),
-    _ShopProduct(
+      key: 'water-dispenser',
       title: '云芯智能饮水机',
       subtitle: 'RO 反渗透、即热即饮、五重过滤',
       imageName: 'wecom-temp-104741-4729fce3272ce5f72e4c37a95c51e0b4.jpg',
+      cashPrice: 3150,
     ),
     _ShopProduct(
+      key: 'sweeping-robot',
       title: '云芯扫地机器人 R10',
       subtitle: '激光导航、自动集尘、APP 划区清扫',
       imageName: 'wecom-temp-106614-d3636a8da16208935187051b9af7d1b0.jpg',
+      cashPrice: 4050,
     ),
     _ShopProduct(
+      key: 'ai-companion-robot',
       title: '云芯 AI 伴侣机器人',
       subtitle: '可定制专属脸模与声音，支持陪伴互动、日程提醒和情绪交流',
-      imageName: 'bl.png',
-      secondaryImageName: 'bl1.png',
+      imageName: '9da8bf4b-bdb6-4783-8041-ab01ffb146e0.jpg',
       imageFit: BoxFit.contain,
+      cashPrice: 61668,
     ),
     _ShopProduct(
+      key: 'water-heater',
       title: '云芯即热式电热水器',
       subtitle: '即开即热、精准恒温、智能节能',
       imageName: 'wecom-temp-81610-3123efb8a6290ed8802926f63a996ab5.jpg',
+      cashPrice: 7515,
     ),
     _ShopProduct(
+      key: 'range-hood',
       title: '云芯抽油烟机',
       subtitle: '大吸力排烟、低噪运行、智能清洁',
-      imageName: 'product-range-hood.jpg',
+      imageName: '3082d493-56e4-445e-8025-24748e08d55a.png',
+      cashPrice: 4068,
     ),
     _ShopProduct(
+      key: 'dishwasher-dryer',
       title: '云芯洗碗机-带烘干',
       subtitle: '强力洗净、热风烘干、除菌存储',
-      imageName: 'product-dishwasher-dryer.jpg',
+      imageName: '31f8b0f3-454e-4b00-9a4e-29b6dd93abdd.png',
+      cashPrice: 6299,
     ),
     _ShopProduct(
+      key: 'cooking-machine',
       title: '云芯智能炒菜机',
       subtitle: '智能菜谱、精准控温、自动翻炒，少油烟也能稳定出餐',
       imageName: 'wecom-temp-102952-7f383878d5d4ae179ab2335d5ebe12a1.jpg',
+      cashPrice: 4500,
     ),
     _ShopProduct(
+      key: 'air-conditioner',
       title: '云芯空调（上门安装）',
       subtitle: '快速制冷暖、静音节能、上门安装',
-      imageName: 'product-air-conditioner.jpg',
+      imageName: '3ec9c07d-3382-4c4a-9944-c9d4f0789b48.jpg',
+      cashPrice: 5788,
     ),
     _ShopProduct(
+      key: 'three-wheel',
       title: '云芯三轮车',
       subtitle: '灵活出行、稳定承载、智能续航',
       imageName: 'slc-composite.png',
       imageFit: BoxFit.contain,
+      cashPrice: 30000,
     ),
     _ShopProduct(
+      key: 'fridge-605l',
       title: '云芯大屏对开门冰箱 605L',
       subtitle: 'AI 屏显食材、风冷无霜、双循环保鲜',
       imageName: 'wecom-temp-118430-281e0c3401f86df1e1c929e80d621e2b.jpg',
+      cashPrice: 8089,
     ),
     _ShopProduct(
+      key: 'tv-100',
       title: '云芯智慧大屏 100 寸',
       subtitle: '4K HDR、AI 影音、远场语音、全面屏',
       imageName: 'wecom-temp-66807-eeaeb548f43a250372d3c78260367bdf.jpg',
+      cashPrice: 17098,
     ),
   ];
 
   @override
   void initState() {
     super.initState();
+    _loadShopSupportInfo();
     _controller = VideoPlayerController.asset('video/product_intro.mp4')
       ..initialize().then((_) {
         if (!mounted) return;
@@ -125,8 +171,38 @@ class _ShopPageState extends State<ShopPage> {
 
   @override
   void dispose() {
+    _receiverNameCtrl.dispose();
+    _receiverPhoneCtrl.dispose();
+    _receiverAddressCtrl.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadShopSupportInfo() async {
+    final api = ref.read(apiClientProvider);
+    try {
+      final results = await Future.wait([
+        api.get<Map<String, dynamic>>(ApiEndpoints.shopPaymentInfo),
+        api.get<Map<String, dynamic>>(ApiEndpoints.shopAddress),
+      ]);
+      if (!mounted) return;
+      final payment = results[0] ?? <String, dynamic>{};
+      final address = results[1] ?? <String, dynamic>{};
+      setState(() {
+        _paymentQrcode = payment['qrcode']?.toString() ?? '';
+        _paymentPayeeName = payment['payeeName']?.toString() ?? '';
+        if (_receiverNameCtrl.text.trim().isEmpty) {
+          _receiverNameCtrl.text = address['receiverName']?.toString() ?? '';
+        }
+        if (_receiverPhoneCtrl.text.trim().isEmpty) {
+          _receiverPhoneCtrl.text = address['receiverPhone']?.toString() ?? '';
+        }
+        if (_receiverAddressCtrl.text.trim().isEmpty) {
+          _receiverAddressCtrl.text =
+              address['receiverAddress']?.toString() ?? '';
+        }
+      });
+    } catch (_) {}
   }
 
   void _autoHideControls() {
@@ -176,19 +252,35 @@ class _ShopPageState extends State<ShopPage> {
     return 'assets/shangcheng/$imageName';
   }
 
-  Future<void> _showPreSaleDialog(_ShopProduct product) async {
-    final imageAsset = product.imageName == null
-        ? null
-        : _productImageAsset(product.imageName!);
-    final secondaryImageAsset = product.secondaryImageName == null
-        ? null
-        : _productImageAsset(product.secondaryImageName!);
+  String _mediaUrl(String path) {
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    return '${AppConstants.apiBaseUrl}$path';
+  }
 
-    await showDialog<void>(
+  String? _validateAddress() {
+    if (_receiverNameCtrl.text.trim().isEmpty) return '请填写收货人姓名';
+    if (_receiverPhoneCtrl.text.trim().isEmpty) return '请填写收货人手机号';
+    if (_receiverAddressCtrl.text.trim().isEmpty) return '请填写收货地址';
+    return null;
+  }
+
+  Future<double> _loadCurrentSilver() async {
+    final balance = await ref
+        .read(apiClientProvider)
+        .get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
+    return (balance?['silver'] as num?)?.toDouble() ?? 0;
+  }
+
+  Future<bool> _showCashPaymentDialog(String totalText) async {
+    if (_paymentQrcode.isEmpty) {
+      Toast.warning(context, '管理员暂未配置收款码，请稍后再试');
+      return false;
+    }
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
           child: Column(
@@ -197,84 +289,74 @@ class _ShopPageState extends State<ShopPage> {
             children: [
               Row(
                 children: [
-                  Expanded(
+                  const Expanded(
                     child: Text(
-                      product.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      '扫码付款',
+                      style: TextStyle(
                         color: Color(0xFF101828),
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
-                        height: 1.25,
                       ),
                     ),
                   ),
                   IconButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    onPressed: () => Navigator.of(ctx).pop(false),
                     icon: const Icon(Icons.close_rounded),
-                    tooltip: '关闭',
                     visualDensity: VisualDensity.compact,
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
+              Text(
+                '应付金额：$totalText',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFFF4D24),
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 12),
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  height: secondaryImageAsset != null ? 210 : 230,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _buildPreSaleImage(
-                          imageAsset,
-                          fit: product.imageFit,
-                        ),
-                      ),
-                      if (secondaryImageAsset != null) ...[
-                        Container(width: 1, color: const Color(0xFFE6E9EE)),
-                        Expanded(
-                          child: _buildPreSaleImage(
-                            secondaryImageAsset,
-                            fit: product.imageFit,
-                          ),
-                        ),
-                      ],
-                    ],
+                child: Image.network(
+                  _mediaUrl(_paymentQrcode),
+                  height: 240,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Container(
+                    height: 220,
+                    color: const Color(0xFFF3F7FB),
+                    alignment: Alignment.center,
+                    child: const Text('收款码加载失败'),
                   ),
                 ),
               ),
-              const SizedBox(height: 18),
-              Row(
-                children: [
-                  const Text(
-                    '数量',
-                    style: TextStyle(
-                      color: Color(0xFF344054),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
+              if (_paymentPayeeName.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '收款人：$_paymentPayeeName',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF667085),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const Spacer(),
-                  _buildDisabledQuantityStepper(),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Container(
-                height: 42,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF4ED),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFFFD6C2)),
+                ),
+              ],
+              const SizedBox(height: 14),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF4D24),
+                  foregroundColor: Colors.white,
+                  fixedSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 child: const Text(
-                  '预售中',
-                  style: TextStyle(
-                    color: Color(0xFFFF4D24),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
+                  '我已付款，确认购买',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
                 ),
               ),
             ],
@@ -282,9 +364,315 @@ class _ShopPageState extends State<ShopPage> {
         ),
       ),
     );
+    return confirmed == true;
   }
 
-  Widget _buildPreSaleImage(String? asset, {BoxFit fit = BoxFit.cover}) {
+  Future<bool> _submitShopOrder({
+    required _ShopProduct product,
+    required int quantity,
+    required _ShopPaymentMethod paymentMethod,
+    required int silverTotal,
+    required String totalText,
+  }) async {
+    final addressError = _validateAddress();
+    if (addressError != null) {
+      Toast.warning(context, addressError);
+      return false;
+    }
+    if (paymentMethod == _ShopPaymentMethod.silver) {
+      try {
+        final silver = await _loadCurrentSilver();
+        if (silver < silverTotal) {
+          Toast.warning(context, '银币不足，当前银币 ${silver.toStringAsFixed(0)}');
+          return false;
+        }
+      } catch (e) {
+        Toast.error(context, apiErrorMessage(e, fallback: '银币余额校验失败'));
+        return false;
+      }
+    } else {
+      final paid = await _showCashPaymentDialog(totalText);
+      if (!paid) return false;
+    }
+
+    try {
+      await ref.read(apiClientProvider).post(
+        ApiEndpoints.shopOrders,
+        data: {
+          'productKey': product.key,
+          'quantity': quantity,
+          'paymentMethod':
+              paymentMethod == _ShopPaymentMethod.silver ? 'silver' : 'cash',
+          'receiverName': _receiverNameCtrl.text.trim(),
+          'receiverPhone': _receiverPhoneCtrl.text.trim(),
+          'receiverAddress': _receiverAddressCtrl.text.trim(),
+        },
+      );
+      await ref.read(authProvider.notifier).loadProfile();
+      if (!mounted) return true;
+      Toast.success(
+        context,
+        paymentMethod == _ShopPaymentMethod.silver
+            ? '兑换订单已提交，等待管理员审核'
+            : '购买订单已提交，等待管理员审核',
+      );
+      return true;
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context, apiErrorMessage(e, fallback: '订单提交失败'));
+      }
+      return false;
+    }
+  }
+
+  Future<void> _showOrderDialog(_ShopProduct product) async {
+    final imageAsset = product.imageName == null
+        ? null
+        : _productImageAsset(product.imageName!);
+    var quantity = 1;
+    var paymentMethod = _ShopPaymentMethod.cash;
+    var submitting = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (innerContext, setDialogState) {
+          final silverTotal = product.silverPrice * quantity;
+          final cashTotal =
+              product.cashPrice == null ? null : product.cashPrice! * quantity;
+          final isCashSelected = paymentMethod == _ShopPaymentMethod.cash;
+          final canSubmit = !isCashSelected || cashTotal != null;
+          final totalText =
+              cashTotal == null ? '价格待定' : '¥${_formatShopAmount(cashTotal)}';
+          final cashTotalText =
+              cashTotal == null ? '价格待定' : '¥${_formatShopAmount(cashTotal)}';
+
+          return Dialog(
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 690),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            product.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF101828),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              height: 1.25,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: submitting
+                              ? null
+                              : () => Navigator.of(dialogContext).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                          tooltip: '关闭',
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: SizedBox(
+                        height: 210,
+                        child: _buildOrderImage(
+                          imageAsset,
+                          fit: product.imageFit,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      '收货信息',
+                      style: TextStyle(
+                        color: Color(0xFF344054),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _receiverNameCtrl,
+                      textInputAction: TextInputAction.next,
+                      decoration: _shopInputDecoration(
+                        label: '收货人',
+                        hint: '请输入收货人姓名',
+                        icon: Icons.person_outline_rounded,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _receiverPhoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                      decoration: _shopInputDecoration(
+                        label: '手机号',
+                        hint: '请输入收货人手机号',
+                        icon: Icons.phone_iphone_rounded,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _receiverAddressCtrl,
+                      minLines: 2,
+                      maxLines: 3,
+                      textInputAction: TextInputAction.done,
+                      decoration: _shopInputDecoration(
+                        label: '收货地址',
+                        hint: '请输入省市区及详细地址',
+                        icon: Icons.location_on_outlined,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      '支付方式',
+                      style: TextStyle(
+                        color: Color(0xFF344054),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildPaymentOption(
+                            selected: false,
+                            enabled: false,
+                            icon: Icons.toll_rounded,
+                            title: '银币兑换',
+                            price: '暂未开放',
+                            onTap: () {},
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _buildPaymentOption(
+                            selected: isCashSelected,
+                            icon: Icons.payments_rounded,
+                            title: '直接购买',
+                            price: product.cashPrice == null
+                                ? '价格待定'
+                                : '¥${_formatShopAmount(product.cashPrice!)}/件',
+                            onTap: () => setDialogState(
+                              () => paymentMethod = _ShopPaymentMethod.cash,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        const Text(
+                          '数量',
+                          style: TextStyle(
+                            color: Color(0xFF344054),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const Spacer(),
+                        _buildQuantityStepper(
+                          quantity: quantity,
+                          onDecrease: quantity <= 1
+                              ? null
+                              : () => setDialogState(() => quantity -= 1),
+                          onIncrease: () => setDialogState(() => quantity += 1),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7F3),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFFFD6C2)),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildOrderTotalLine(
+                            label: '现金合计',
+                            value: cashTotalText,
+                            active: isCashSelected,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 46,
+                      child: FilledButton(
+                        onPressed: canSubmit && !submitting
+                            ? () async {
+                                setDialogState(() => submitting = true);
+                                final success = await _submitShopOrder(
+                                  product: product,
+                                  quantity: quantity,
+                                  paymentMethod: paymentMethod,
+                                  silverTotal: silverTotal,
+                                  totalText: totalText,
+                                );
+                                if (success && mounted) {
+                                  if (dialogContext.mounted) {
+                                    Navigator.of(dialogContext).pop();
+                                  }
+                                  return;
+                                }
+                                if (mounted && innerContext.mounted) {
+                                  setDialogState(() => submitting = false);
+                                }
+                              }
+                            : null,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF4D24),
+                          disabledBackgroundColor: const Color(0xFFE4E7EC),
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: const Color(0xFF98A2B3),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(
+                          submitting ? '提交中...' : '确认购买',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildOrderImage(String? asset, {BoxFit fit = BoxFit.cover}) {
     if (asset == null) {
       return const ColoredBox(
         color: Color(0xFFF3F7FB),
@@ -317,37 +705,181 @@ class _ShopPageState extends State<ShopPage> {
     );
   }
 
-  Widget _buildDisabledQuantityStepper() {
+  InputDecoration _shopInputDecoration({
+    required String label,
+    required String hint,
+    required IconData icon,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: Icon(icon, size: 20),
+      isDense: true,
+      filled: true,
+      fillColor: const Color(0xFFF8FAFC),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE4E7EC)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE4E7EC)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFFF9B7A), width: 1.4),
+      ),
+    );
+  }
+
+  Widget _buildOrderTotalLine({
+    required String label,
+    required String value,
+    required bool active,
+  }) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: active ? const Color(0xFFFF4D24) : const Color(0xFF667085),
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const Spacer(),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: active ? const Color(0xFFFF4D24) : const Color(0xFF344054),
+              fontSize: active ? 18 : 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPaymentOption({
+    required bool selected,
+    required IconData icon,
+    required String title,
+    required String price,
+    required VoidCallback onTap,
+    bool enabled = true,
+  }) {
+    final color = !enabled
+        ? const Color(0xFF98A2B3)
+        : selected
+            ? const Color(0xFFFF4D24)
+            : const Color(0xFF344054);
+    return Material(
+      color: !enabled
+          ? const Color(0xFFF2F4F7)
+          : selected
+              ? const Color(0xFFFFF4ED)
+              : const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: enabled ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: !enabled
+                  ? const Color(0xFFE4E7EC)
+                  : selected
+                      ? const Color(0xFFFF9B7A)
+                      : const Color(0xFFE4E7EC),
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 18, color: color),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                price,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: !enabled
+                      ? const Color(0xFF98A2B3)
+                      : selected
+                          ? const Color(0xFFFF4D24)
+                          : const Color(0xFF667085),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuantityStepper({
+    required int quantity,
+    required VoidCallback? onDecrease,
+    required VoidCallback onIncrease,
+  }) {
     return Container(
       height: 36,
       decoration: BoxDecoration(
-        color: const Color(0xFFF2F4F7),
+        color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFE4E7EC)),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 38,
-            child: Icon(Icons.remove, color: Color(0xFFB8C0CC), size: 18),
+          _QuantityButton(
+            icon: Icons.remove_rounded,
+            onTap: onDecrease,
           ),
           SizedBox(
-            width: 44,
+            width: 38,
             child: Center(
               child: Text(
-                '0',
-                style: TextStyle(
-                  color: Color(0xFF98A2B3),
+                '$quantity',
+                style: const TextStyle(
+                  color: Color(0xFF344054),
                   fontSize: 15,
                   fontWeight: FontWeight.w800,
                 ),
               ),
             ),
           ),
-          SizedBox(
-            width: 38,
-            child: Icon(Icons.add, color: Color(0xFFB8C0CC), size: 18),
+          _QuantityButton(
+            icon: Icons.add_rounded,
+            onTap: onIncrease,
           ),
         ],
       ),
@@ -364,9 +896,10 @@ class _ShopPageState extends State<ShopPage> {
   Widget build(BuildContext context) {
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     final scaleExtra = (textScale - 1.0).clamp(0.0, 0.45).toDouble();
-    final regularCardExtent =
-        (MediaQuery.sizeOf(context).width >= 420 ? 332.0 : 324.0) +
-            scaleExtra * 56.0;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final cardWidth = (screenWidth - 32.0 - 12.0) / 2;
+    final imageHeight = cardWidth > 0 ? cardWidth / 1.08 : 160.0;
+    final regularCardExtent = imageHeight + 206.0 + scaleExtra * 72.0;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FB),
@@ -607,11 +1140,36 @@ class _ShopPageState extends State<ShopPage> {
       imageAsset: product.imageName == null
           ? null
           : _productImageAsset(product.imageName!),
-      secondaryImageAsset: product.secondaryImageName == null
-          ? null
-          : _productImageAsset(product.secondaryImageName!),
       imageFit: product.imageFit,
-      onTap: () => _showPreSaleDialog(product),
+      onTap: () => _showOrderDialog(product),
+    );
+  }
+}
+
+class _QuantityButton extends StatelessWidget {
+  const _QuantityButton({
+    required this.icon,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 36,
+        height: 36,
+        child: Icon(
+          icon,
+          color: enabled ? const Color(0xFFFF4D24) : const Color(0xFFC6CCD6),
+          size: 18,
+        ),
+      ),
     );
   }
 }
@@ -621,13 +1179,11 @@ class _ProductCard extends StatefulWidget {
     required this.product,
     required this.onTap,
     this.imageAsset,
-    this.secondaryImageAsset,
     this.imageFit = BoxFit.cover,
   });
 
   final _ShopProduct product;
   final String? imageAsset;
-  final String? secondaryImageAsset;
   final BoxFit imageFit;
   final VoidCallback onTap;
 
@@ -699,21 +1255,30 @@ class _ProductCardState extends State<_ProductCard> {
                           ),
                         ),
                         const SizedBox(height: 6),
-                        Expanded(
-                          child: Align(
-                            alignment: Alignment.topLeft,
-                            child: Text(
-                              widget.product.subtitle,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Color(0xFF7A8494),
-                                fontSize: 12,
-                                height: 1.35,
-                              ),
-                            ),
+                        Text(
+                          widget.product.subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF7A8494),
+                            fontSize: 12,
+                            height: 1.35,
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        Text(
+                          widget.product.cashPrice == null
+                              ? '价格待定'
+                              : '¥${_formatShopAmount(widget.product.cashPrice!)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFFF4D24),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const Spacer(),
                         const SizedBox(height: 8),
                         SizedBox(
                           width: double.infinity,
@@ -748,21 +1313,7 @@ class _ProductCardState extends State<_ProductCard> {
   }
 
   Widget _buildProductImageArea() {
-    final secondaryAsset = widget.secondaryImageAsset;
-    if (secondaryAsset == null) {
-      return _buildProductImage(widget.imageAsset);
-    }
-
-    return Ink(
-      color: const Color(0xFFFBFBFC),
-      child: Row(
-        children: [
-          Expanded(child: _buildProductImage(widget.imageAsset)),
-          Container(width: 1, color: const Color(0xFFE6E9EE)),
-          Expanded(child: _buildProductImage(secondaryAsset)),
-        ],
-      ),
-    );
+    return _buildProductImage(widget.imageAsset);
   }
 
   Widget _buildProductImage(String? asset) {
@@ -803,16 +1354,20 @@ class _ProductCardState extends State<_ProductCard> {
 
 class _ShopProduct {
   const _ShopProduct({
+    required this.key,
     required this.title,
     required this.subtitle,
     this.imageName,
-    this.secondaryImageName,
     this.imageFit = BoxFit.cover,
+    this.cashPrice,
+    this.silverPrice = _ShopPageState._defaultSilverPrice,
   });
 
+  final String key;
   final String title;
   final String subtitle;
   final String? imageName;
-  final String? secondaryImageName;
   final BoxFit imageFit;
+  final int? cashPrice;
+  final int silverPrice;
 }

@@ -127,6 +127,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _socketService = ref.read(socketServiceProvider);
     // 标记当前正在查看的会话
     _socketService.activeConversationId = widget.conversationId;
+    // 进入聊天页后本地立即清除消息角标，服务端已读同步只做静默处理。
+    ref.read(badgeProvider.notifier).clearUnread();
     // 确保用户信息已加载
     if (ref.read(authProvider).user == null) {
       ref.read(authProvider.notifier).loadProfile();
@@ -347,17 +349,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
       if (_messages.isNotEmpty) {
         _socketService.markAsRead(widget.conversationId, _messages.last.id);
-        if (mounted) {
-          Future.delayed(const Duration(milliseconds: 300), () {
-            if (mounted) {
-              final authState = ref.read(authProvider);
-              ref.read(badgeProvider.notifier).loadBadges(
-                    includeServiceNotifications:
-                        authState.user != null || authState.profile != null,
-                  );
-            }
-          });
-        }
       }
     } catch (e) {
       debugPrint('_loadMessages error: $e');
@@ -1303,16 +1294,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       backgroundColor: const Color(0xFFF5F5F5),
       body: Column(
         children: [
-          // 网络状态提示
-          if (!ref.read(socketServiceProvider).isConnected)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              color: Colors.orange.shade100,
-              child: const Text('网络连接中...',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: Colors.orange)),
-            ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())

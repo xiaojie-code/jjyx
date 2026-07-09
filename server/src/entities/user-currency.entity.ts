@@ -18,8 +18,11 @@ export class UserCurrency {
   @Column({ type: 'decimal', precision: 18, scale: 6, default: 0 })
   points: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 18, scale: 6, default: 0 })
   gold: number;
+
+  @Column({ type: 'decimal', precision: 18, scale: 6, default: 0, name: 'total_gold_earned' })
+  totalGoldEarned: number;
 
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
   silver: number;

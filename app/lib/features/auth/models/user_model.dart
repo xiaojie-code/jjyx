@@ -35,6 +35,7 @@ class UserModel {
 class CurrencyModel {
   final double points;
   final double gold;
+  final double totalGoldEarned;
   final double silver;
   final double copper;
   final double specialPointsTier1;
@@ -46,6 +47,7 @@ class CurrencyModel {
   CurrencyModel({
     required this.points,
     required this.gold,
+    this.totalGoldEarned = 0,
     required this.silver,
     required this.copper,
     required this.specialPointsTier1,
@@ -59,6 +61,7 @@ class CurrencyModel {
     return CurrencyModel(
       points: (json['points'] as num?)?.toDouble() ?? 0,
       gold: (json['gold'] as num?)?.toDouble() ?? 0,
+      totalGoldEarned: (json['totalGoldEarned'] as num?)?.toDouble() ?? 0,
       silver: (json['silver'] as num?)?.toDouble() ?? 0,
       copper: (json['copper'] as num?)?.toDouble() ?? 0,
       specialPointsTier1: (json['specialPointsTier1'] as num?)?.toDouble() ?? 0,

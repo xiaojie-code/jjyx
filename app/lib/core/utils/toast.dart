@@ -2,13 +2,22 @@ import 'package:flutter/material.dart';
 
 /// 顶部弹幕提示工具
 class Toast {
-  static void show(BuildContext context, String message, {bool isError = false}) {
+  static void show(
+    BuildContext context,
+    String message, {
+    bool isError = false,
+    Duration duration = const Duration(seconds: 3),
+  }) {
     final overlay = Overlay.of(context);
     final entry = OverlayEntry(
-      builder: (context) => _ToastWidget(message: message, isError: isError),
+      builder: (context) => _ToastWidget(
+        message: message,
+        isError: isError,
+        duration: duration,
+      ),
     );
     overlay.insert(entry);
-    Future.delayed(const Duration(seconds: 3), () {
+    Future.delayed(duration, () {
       entry.remove();
     });
   }
@@ -29,15 +38,20 @@ class Toast {
       return msgMatch.group(1)?.trim() ?? raw;
     }
     // 如果包含中文错误信息，直接提取中文部分
-    final cnMatch = RegExp(r'[\u4e00-\u9fa5][\u4e00-\u9fa5\w，。！、：]+').firstMatch(raw);
+    final cnMatch =
+        RegExp(r'[\u4e00-\u9fa5][\u4e00-\u9fa5\w，。！、：]+').firstMatch(raw);
     if (cnMatch != null) {
       return cnMatch.group(0) ?? raw;
     }
     return raw;
   }
 
-  static void info(BuildContext context, String message) {
-    show(context, message, isError: false);
+  static void info(
+    BuildContext context,
+    String message, {
+    Duration duration = const Duration(seconds: 3),
+  }) {
+    show(context, message, isError: false, duration: duration);
   }
 
   static void warning(BuildContext context, String message) {
@@ -48,13 +62,19 @@ class Toast {
 class _ToastWidget extends StatefulWidget {
   final String message;
   final bool isError;
-  const _ToastWidget({required this.message, required this.isError});
+  final Duration duration;
+  const _ToastWidget({
+    required this.message,
+    required this.isError,
+    required this.duration,
+  });
 
   @override
   State<_ToastWidget> createState() => _ToastWidgetState();
 }
 
-class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderStateMixin {
+class _ToastWidgetState extends State<_ToastWidget>
+    with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
   late Animation<Offset> _slideAnim;
   late Animation<double> _fadeAnim;
@@ -62,13 +82,15 @@ class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderSta
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 300));
     _slideAnim = Tween<Offset>(begin: const Offset(0, -1), end: Offset.zero)
         .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
     _fadeAnim = Tween<double>(begin: 0, end: 1)
         .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
     _ctrl.forward();
-    Future.delayed(const Duration(seconds: 2, milliseconds: 500), () {
+    final reverseDelay = widget.duration - const Duration(milliseconds: 500);
+    Future.delayed(reverseDelay.isNegative ? Duration.zero : reverseDelay, () {
       if (mounted) _ctrl.reverse();
     });
   }
@@ -94,7 +116,9 @@ class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderSta
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                color: widget.isError ? const Color(0xFFFF4D4F) : const Color(0xFF52C41A),
+                color: widget.isError
+                    ? const Color(0xFFFF4D4F)
+                    : const Color(0xFF52C41A),
                 borderRadius: BorderRadius.circular(8),
                 boxShadow: [
                   BoxShadow(
@@ -107,7 +131,9 @@ class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderSta
               child: Row(
                 children: [
                   Icon(
-                    widget.isError ? Icons.error_outline : Icons.check_circle_outline,
+                    widget.isError
+                        ? Icons.error_outline
+                        : Icons.check_circle_outline,
                     color: Colors.white,
                     size: 20,
                   ),

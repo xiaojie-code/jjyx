@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/utils/toast.dart';
+import '../../auth/providers/auth_provider.dart';
 
 class WithdrawPage extends ConsumerStatefulWidget {
   const WithdrawPage({super.key});
@@ -21,6 +22,9 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
   bool _hasWithdrawPassword = false;
   String _withdrawPhoneMasked = '';
   double _balance = 0;
+  double _copperBalance = 0;
+  int _withdrawCopperGoldUnit = 100;
+  int _withdrawCopperCostPerUnit = 1;
   int _selectedAmount = 100;
   String _paymentMethod = 'alipay';
   List<Map<String, dynamic>> _records = [];
@@ -42,6 +46,23 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
     super.dispose();
   }
 
+  int _positiveInt(dynamic value, {required int fallback}) {
+    final parsed = int.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed > 0 ? parsed : fallback;
+  }
+
+  int _requiredCopperFor(int amount) {
+    final unit = _withdrawCopperGoldUnit <= 0 ? 100 : _withdrawCopperGoldUnit;
+    final cost =
+        _withdrawCopperCostPerUnit <= 0 ? 1 : _withdrawCopperCostPerUnit;
+    return ((amount + unit - 1) ~/ unit) * cost;
+  }
+
+  String _formatNumber(num value) {
+    final d = value.toDouble();
+    return d % 1 == 0 ? d.toInt().toString() : d.toStringAsFixed(2);
+  }
+
   Future<void> _loadBalance() async {
     try {
       final result =
@@ -54,8 +75,16 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
             double.tryParse(result?['totalEarned']?.toString() ?? '0') ?? 0;
         final totalWithdrawn =
             double.tryParse(result?['totalWithdrawn']?.toString() ?? '0') ?? 0;
+        final configRaw = result?['withdrawCopperConfig'];
+        final config = configRaw is Map ? configRaw : const {};
         _balance = totalEarned - totalWithdrawn;
         if (_balance < 0) _balance = 0;
+        _copperBalance =
+            double.tryParse(result?['copper']?.toString() ?? '0') ?? 0;
+        _withdrawCopperGoldUnit =
+            _positiveInt(config['goldUnit'], fallback: 100);
+        _withdrawCopperCostPerUnit =
+            _positiveInt(config['copperPerUnit'], fallback: 1);
         _balanceLoading = false;
       });
     } catch (_) {
@@ -143,6 +172,11 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
       Toast.warning(context, '余额不足');
       return;
     }
+    final requiredCopper = _requiredCopperFor(_selectedAmount);
+    if (_copperBalance < requiredCopper) {
+      Toast.warning(context, '铜币不足，本次提现需消耗$requiredCopper个铜币');
+      return;
+    }
     if (_nameCtrl.text.trim().isEmpty) {
       Toast.warning(context, '请填写收款人姓名');
       return;
@@ -182,6 +216,8 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
               _confirmRow('手续费（20%）', '-￥$fee'),
               const Divider(height: 20),
               _confirmRow('实际到账', '￥$actualAmount', bold: true),
+              const SizedBox(height: 8),
+              _confirmRow('消耗铜币', '$requiredCopper 个'),
               const SizedBox(height: 12),
               Text(
                 '收款方式：${_paymentMethod == 'alipay' ? '支付宝' : '银行卡'}',
@@ -224,6 +260,7 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
       Toast.success(context, '提现申请已提交，请等待审核');
       _loadBalance();
       _loadRecords();
+      ref.read(authProvider.notifier).loadProfile();
     } catch (e) {
       if (mounted) Toast.error(context, '$e');
     } finally {
@@ -267,6 +304,22 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        Text(
+                          '当前铜币：${_formatNumber(_copperBalance)}  本次需消耗：${_requiredCopperFor(_selectedAmount)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '提现比例：$_withdrawCopperGoldUnit金币 : $_withdrawCopperCostPerUnit铜币',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -286,7 +339,8 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                     runSpacing: 10,
                     children: _amountOptions.map((amount) {
                       final selected = _selectedAmount == amount;
-                      final disabled = amount > _balance;
+                      final disabled = amount > _balance ||
+                          _requiredCopperFor(amount) > _copperBalance;
                       return GestureDetector(
                         onTap: disabled
                             ? null
@@ -325,6 +379,11 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                         ),
                       );
                     }).toList(),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '当前比例：$_withdrawCopperGoldUnit金币消耗$_withdrawCopperCostPerUnit铜币；本次提现需消耗${_requiredCopperFor(_selectedAmount)}个铜币',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                   ),
                   const SizedBox(height: 24),
                   const Text(
@@ -444,6 +503,9 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
     final status = record['status'] as int? ?? 0;
     final statusText = record['statusText']?.toString() ?? '未知';
     final method = record['paymentMethod'] == 'alipay' ? '支付宝' : '银行卡';
+    final copperCost =
+        int.tryParse(record['copperCost']?.toString() ?? '') ?? 0;
+    final copperRefunded = record['copperRefunded'] == true;
     final timeStr = _formatTime(record['createdAt']?.toString() ?? '');
 
     return Container(
@@ -472,6 +534,15 @@ class _WithdrawPageState extends ConsumerState<WithdrawPage> {
                   '$method · $timeStr',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
+                if (copperCost > 0) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    copperRefunded
+                        ? '消耗铜币 $copperCost（已退回）'
+                        : '消耗铜币 $copperCost',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
               ],
             ),
           ),

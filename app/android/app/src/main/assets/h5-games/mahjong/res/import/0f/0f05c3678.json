@@ -1,0 +1,348 @@
+[
+  {
+    "__type__": "cc.SpriteFrame",
+    "content": {
+      "name": "bg_xuanzhong1",
+      "texture": "95N8JUAORD37EyWMSCBlKR",
+      "rect": [
+        0,
+        0,
+        200,
+        70
+      ],
+      "offset": [
+        0,
+        0
+      ],
+      "originalSize": [
+        200,
+        70
+      ],
+      "capInsets": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "__type__": "cc.SpriteFrame",
+    "content": {
+      "name": "bg_moren",
+      "texture": "49TW2yQqlKzZxw6LwvssO6",
+      "rect": [
+        1,
+        0,
+        195,
+        70
+      ],
+      "offset": [
+        0.5,
+        0
+      ],
+      "originalSize": [
+        196,
+        70
+      ],
+      "capInsets": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  [
+    {
+      "__type__": "cc.Prefab",
+      "_name": "select_home_game_play_item",
+      "data": {
+        "__id__": 1
+      }
+    },
+    {
+      "__type__": "cc.Node",
+      "_name": "select_home_game_play_item",
+      "_children": [
+        {
+          "__id__": 2
+        },
+        {
+          "__id__": 3
+        },
+        {
+          "__id__": 5
+        }
+      ],
+      "_components": [
+        {
+          "__id__": 7
+        },
+        {
+          "__type__": "71d01Dmh59IjYNizYTC2Bsp",
+          "node": {
+            "__id__": 1
+          },
+          "toggle": {
+            "__id__": 7
+          },
+          "label_gameName": {
+            "__id__": 6
+          }
+        }
+      ],
+      "_prefab": {
+        "__type__": "cc.PrefabInfo",
+        "root": {
+          "__id__": 1
+        },
+        "asset": {
+          "__uuid__": "8fkt9T6PFJYqvCMiDoa4dx"
+        },
+        "fileId": "7c5H1SyytPTZDLonZ94gLk"
+      },
+      "_contentSize": {
+        "__type__": "cc.Size",
+        "width": 196,
+        "height": 70
+      },
+      "_anchorPoint": {
+        "__type__": "cc.Vec2",
+        "y": 1
+      },
+      "_trs": {
+        "__type__": "TypedArray",
+        "ctor": "Float64Array",
+        "array": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "__type__": "cc.Node",
+      "_name": "Background",
+      "_parent": {
+        "__id__": 1
+      },
+      "_components": [
+        {
+          "__type__": "cc.Sprite",
+          "node": {
+            "__id__": 2
+          },
+          "_materials": [
+            {
+              "__uuid__": "ecpdLyjvZBwrvm+cedCcQy"
+            }
+          ],
+          "_spriteFrame": {
+            "__uuid__": "62cBCvB3xILpUKFxBlOu2O"
+          },
+          "_sizeMode": 0,
+          "_isTrimmedMode": false
+        }
+      ],
+      "_prefab": {
+        "__type__": "cc.PrefabInfo",
+        "root": {
+          "__id__": 1
+        },
+        "asset": {
+          "__uuid__": "8fkt9T6PFJYqvCMiDoa4dx"
+        },
+        "fileId": "abB5NsV1NGv7VVgZ/YCZad"
+      },
+      "_contentSize": {
+        "__type__": "cc.Size",
+        "width": 200,
+        "height": 70
+      },
+      "_anchorPoint": {
+        "__type__": "cc.Vec2",
+        "y": 1
+      },
+      "_trs": {
+        "__type__": "TypedArray",
+        "ctor": "Float64Array",
+        "array": [
+          -1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "__type__": "cc.Node",
+      "_name": "checkmark",
+      "_parent": {
+        "__id__": 1
+      },
+      "_components": [
+        {
+          "__id__": 4
+        }
+      ],
+      "_prefab": {
+        "__type__": "cc.PrefabInfo",
+        "root": {
+          "__id__": 1
+        },
+        "asset": {
+          "__uuid__": "8fkt9T6PFJYqvCMiDoa4dx"
+        },
+        "fileId": "64I0VLrLhLT7xEN277Hy93"
+      },
+      "_contentSize": {
+        "__type__": "cc.Size",
+        "width": 200,
+        "height": 70
+      },
+      "_anchorPoint": {
+        "__type__": "cc.Vec2",
+        "y": 1
+      },
+      "_trs": {
+        "__type__": "TypedArray",
+        "ctor": "Float64Array",
+        "array": [
+          -1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "__type__": "cc.Sprite",
+      "node": {
+        "__id__": 3
+      },
+      "_materials": [
+        {
+          "__uuid__": "ecpdLyjvZBwrvm+cedCcQy"
+        }
+      ],
+      "_spriteFrame": {
+        "__uuid__": "5aZX6107NBOJU1kY9aon8X"
+      },
+      "_sizeMode": 2,
+      "_isTrimmedMode": false
+    },
+    {
+      "__type__": "cc.Node",
+      "_name": "label_gameName",
+      "_parent": {
+        "__id__": 1
+      },
+      "_components": [
+        {
+          "__id__": 6
+        }
+      ],
+      "_prefab": {
+        "__type__": "cc.PrefabInfo",
+        "root": {
+          "__id__": 1
+        },
+        "asset": {
+          "__uuid__": "8fkt9T6PFJYqvCMiDoa4dx"
+        },
+        "fileId": "79ognFdeFGRYaCxqtkKAX2"
+      },
+      "_contentSize": {
+        "__type__": "cc.Size",
+        "width": 108,
+        "height": 37.8
+      },
+      "_anchorPoint": {
+        "__type__": "cc.Vec2",
+        "x": 0.5,
+        "y": 1
+      },
+      "_trs": {
+        "__type__": "TypedArray",
+        "ctor": "Float64Array",
+        "array": [
+          98,
+          -15,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "__type__": "cc.Label",
+      "node": {
+        "__id__": 5
+      },
+      "_materials": [
+        {
+          "__uuid__": "ecpdLyjvZBwrvm+cedCcQy"
+        }
+      ],
+      "_string": "曲阳麻将",
+      "_N$string": "曲阳麻将",
+      "_fontSize": 27,
+      "_lineHeight": 30,
+      "_N$horizontalAlign": 1,
+      "_N$verticalAlign": 1
+    },
+    {
+      "__type__": "cc.Toggle",
+      "node": {
+        "__id__": 1
+      },
+      "_N$normalColor": {
+        "__type__": "cc.Color",
+        "r": 214,
+        "g": 214,
+        "b": 214
+      },
+      "_N$target": {
+        "__id__": 1
+      },
+      "checkMark": {
+        "__id__": 4
+      },
+      "checkEvents": [
+        {
+          "__type__": "cc.ClickEvent",
+          "target": {
+            "__id__": 1
+          },
+          "_componentId": "71d01Dmh59IjYNizYTC2Bsp",
+          "handler": "onToggleClickEvents"
+        }
+      ]
+    }
+  ]
+]

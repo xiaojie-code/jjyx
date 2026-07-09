@@ -5,6 +5,8 @@ import { Matrix } from '../entities/matrix.entity';
 import { MatrixSlot } from '../entities/matrix-slot.entity';
 import { MatrixIncome } from '../entities/matrix-income.entity';
 import { User } from '../entities/user.entity';
+import { CurrencyLog } from '../entities/currency-log.entity';
+import { generateSn } from '../common/utils/sn-generator';
 
 const DEFAULT_ACTIVATION_AMOUNT = 2000;
 const LOW_ACTIVATION_AMOUNT = 500;
@@ -81,6 +83,10 @@ export class MatrixService implements OnModuleInit {
       `ALTER TABLE matrix_incomes ADD COLUMN reward_rate DECIMAL(10,6) NULL COMMENT '收益比例快照' AFTER base_fund`,
       `ALTER TABLE matrix_incomes ADD COLUMN owner_activation_amount DECIMAL(10,2) NULL COMMENT '收益归属用户激活档位' AFTER reward_rate`,
       `ALTER TABLE matrix_incomes ADD COLUMN source_activation_amount DECIMAL(10,2) NULL COMMENT '贡献用户激活档位' AFTER owner_activation_amount`,
+      `ALTER TABLE user_currencies ADD COLUMN total_gold_earned DECIMAL(18,6) NOT NULL DEFAULT 0 AFTER gold`,
+      `ALTER TABLE user_currencies MODIFY COLUMN gold DECIMAL(18,6) NOT NULL DEFAULT 0`,
+      `ALTER TABLE matrix_incomes ADD COLUMN gold_currency_log_id BIGINT NULL COMMENT '转金币对应currency_logs.id' AFTER claimed_at`,
+      `ALTER TABLE matrix_incomes ADD INDEX idx_matrix_incomes_gold_log (gold_currency_log_id)`,
     ];
 
     for (const sql of alters) {
@@ -97,6 +103,69 @@ export class MatrixService implements OnModuleInit {
       `UPDATE cdks SET activation_amount = ? WHERE activation_amount IS NULL`,
       [HIGH_ACTIVATION_AMOUNT],
     );
+  }
+
+  private async ensureMatrixGoldColumns(manager: any) {
+    const alters = [
+      `ALTER TABLE user_currencies ADD COLUMN total_gold_earned DECIMAL(18,6) NOT NULL DEFAULT 0 AFTER gold`,
+      `ALTER TABLE user_currencies MODIFY COLUMN gold DECIMAL(18,6) NOT NULL DEFAULT 0`,
+      `ALTER TABLE matrix_incomes ADD COLUMN gold_currency_log_id BIGINT NULL COMMENT '转金币对应currency_logs.id' AFTER claimed_at`,
+      `ALTER TABLE matrix_incomes ADD INDEX idx_matrix_incomes_gold_log (gold_currency_log_id)`,
+    ];
+    for (const sql of alters) {
+      try {
+        await manager.query(sql);
+      } catch (_) {}
+    }
+  }
+
+  private roundGold(value: number) {
+    return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
+  }
+
+  private async creditClaimableIncomeAsGold(manager: any, income: MatrixIncome) {
+    if (!income || income.incomeType !== 'claimable') return;
+    if (income.goldCurrencyLogId) return;
+    const amount = this.roundGold(Number(income.amount || 0));
+    if (amount <= 0) return;
+
+    await manager.query(
+      `INSERT IGNORE INTO user_currencies (user_id) VALUES (?)`,
+      [income.ownerId],
+    );
+    const rows = await manager.query(
+      `SELECT gold, total_gold_earned AS totalGoldEarned
+       FROM user_currencies
+       WHERE user_id = ?
+       FOR UPDATE`,
+      [income.ownerId],
+    );
+    const before = Number(rows?.[0]?.gold || 0);
+    const after = this.roundGold(before + amount);
+    const totalGoldEarned = this.roundGold(Number(rows?.[0]?.totalGoldEarned || 0) + amount);
+
+    await manager.query(
+      `UPDATE user_currencies
+       SET gold = ?, total_gold_earned = ?
+       WHERE user_id = ?`,
+      [after, totalGoldEarned, income.ownerId],
+    );
+
+    const log = manager.create(CurrencyLog, {
+      userId: income.ownerId,
+      sn: generateSn('CL'),
+      currencyType: 'gold',
+      amount,
+      beforeBalance: before,
+      afterBalance: after,
+      logType: 'matrix_gold_income',
+      description: income.description
+        ? `推广矩阵收益转金币：${income.description}`
+        : '推广矩阵收益转金币',
+    });
+    const savedLog = await manager.save(CurrencyLog, log);
+    income.goldCurrencyLogId = Number(savedLog.id);
+    await manager.save(MatrixIncome, income);
   }
 
   private async getActualFilledCount(matrixId: number, manager: any): Promise<number> {
@@ -404,7 +473,8 @@ export class MatrixService implements OnModuleInit {
         incomeType: 'claimable',
         description: `指定账号深层推广树10%奖励：下级用户${activatedUser.account}激活`,
       });
-      await manager.save(MatrixIncome, income);
+      const savedIncome = await manager.save(MatrixIncome, income);
+      await this.creditClaimableIncomeAsGold(manager, savedIncome);
 
       matrix.claimableIncome =
         Number(matrix.claimableIncome) + specialRewardAmount;
@@ -538,7 +608,8 @@ export class MatrixService implements OnModuleInit {
           ? `新用户入位第${nextSlotNumber}号坑位`
           : `老用户再次入位第${nextSlotNumber}号坑位（${actualReentryCount}次）`,
       });
-      await manager.save(MatrixIncome, income);
+      const savedIncome = await manager.save(MatrixIncome, income);
+      await this.creditClaimableIncomeAsGold(manager, savedIncome);
 
       // 更新矩阵收益汇总
       if (incomeType === 'claimable') {
@@ -838,7 +909,8 @@ export class MatrixService implements OnModuleInit {
               snapshot: incomeSnapshot,
               description: `老用户出局后再次入位第${nextSlot}号坑位`,
             });
-            await manager.save(MatrixIncome, income);
+            const savedIncome = await manager.save(MatrixIncome, income);
+            await this.creditClaimableIncomeAsGold(manager, savedIncome);
 
             if (incomeType === 'claimable') {
               superiorMatrix.claimableIncome = Number(superiorMatrix.claimableIncome) + incomeAmount;
@@ -967,7 +1039,8 @@ export class MatrixService implements OnModuleInit {
         snapshot: incomeSnapshot,
         description: `用户补位入第${targetSlot}号坑位`,
       });
-      await manager.save(MatrixIncome, income);
+      const savedIncome = await manager.save(MatrixIncome, income);
+      await this.creditClaimableIncomeAsGold(manager, savedIncome);
 
       if (incomeType === 'claimable') {
         firstLayerMatrix.claimableIncome = Number(firstLayerMatrix.claimableIncome) + incomeAmount;
@@ -1078,9 +1151,12 @@ export class MatrixService implements OnModuleInit {
         snapshot: incomeSnapshot,
         description: `老用户出局后跟随入位第${nextSlotNumber}号坑位（${actualReentryCount}次）`,
       });
-      await manager.save(MatrixIncome, income);
+      const savedIncome = await manager.save(MatrixIncome, income);
+      await this.creditClaimableIncomeAsGold(manager, savedIncome);
 
-      if (incomeType === 'next_fund') {
+      if (incomeType === 'claimable') {
+        currentMatrix.claimableIncome = Number(currentMatrix.claimableIncome) + actualIncomeAmount;
+      } else if (incomeType === 'next_fund') {
         currentMatrix.nextRoundFund = Number(currentMatrix.nextRoundFund) + actualIncomeAmount;
       }
     }
@@ -1204,7 +1280,7 @@ export class MatrixService implements OnModuleInit {
    * 领取收益
    */
   async claimIncome(userId: number): Promise<number> {
-    throw new BadRequestException('推广收益已实时计入可提现余额，无需领取');
+    throw new BadRequestException('推广收益已实时计入金币账户，无需领取');
   }
 
   /**

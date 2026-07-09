@@ -1,17 +1,23 @@
 package com.example.app
 
+import android.app.Activity
+import android.app.DownloadManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -21,6 +27,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
@@ -29,16 +36,37 @@ class MainActivity: FlutterActivity() {
     private val notifChannelName = "com.example.app/notifications"
     private val pushChannelName = "com.example.app/push"
     private val windowChannelName = "com.example.app/window"
+    private val digitalHumanChannelName = "com.example.app/digital_human"
+    private val PICK_AUDIO_REQUEST_CODE = 5107
     private val NOTIFICATION_CHANNEL_ID = "new_message_alert_v2"
+    private val APK_DOWNLOAD_PREFS = "apk_update_download"
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activeRingtone: Ringtone? = null
     private var notificationChannel: MethodChannel? = null
     private var pendingNotificationTap: HashMap<String, Any?>? = null
+    private var pendingAudioPickResult: MethodChannel.Result? = null
+    private var apkDownloadReceiverRegistered = false
+    private val apkDownloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+            val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            val prefs = getSharedPreferences(APK_DOWNLOAD_PREFS, Context.MODE_PRIVATE)
+            val expectedId = prefs.getLong("downloadId", -1L)
+            if (completedId <= 0 || completedId != expectedId) return
+
+            val status = queryApkDownloadStatus(completedId)
+            if (status?.get("status") == "successful") {
+                val path = prefs.getString("apkPath", null)
+                if (!path.isNullOrBlank()) openApkInstaller(path)
+            }
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         createNotificationChannel()
+        registerApkDownloadReceiver()
 
         // APK 安装器 channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, apkChannelName).setMethodCallHandler { call, result ->
@@ -50,6 +78,9 @@ class MainActivity: FlutterActivity() {
                     } else {
                         installApk(apkPath, result)
                     }
+                }
+                "startBackgroundApkDownload" -> {
+                    startBackgroundApkDownload(call, result)
                 }
                 else -> result.notImplemented()
             }
@@ -78,6 +109,13 @@ class MainActivity: FlutterActivity() {
                     restoreAppWindow()
                     result.success(true)
                 }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, digitalHumanChannelName).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "pickAudioFile" -> pickAudioFile(result)
                 else -> result.notImplemented()
             }
         }
@@ -159,6 +197,17 @@ class MainActivity: FlutterActivity() {
         handleNotificationIntent(intent, deliverNow = false)
     }
 
+    override fun onDestroy() {
+        if (apkDownloadReceiverRegistered) {
+            try {
+                unregisterReceiver(apkDownloadReceiver)
+            } catch (_: Exception) {
+            }
+            apkDownloadReceiverRegistered = false
+        }
+        super.onDestroy()
+    }
+
     private fun configureGameFullscreenWindow() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes = window.attributes.apply {
@@ -205,6 +254,26 @@ class MainActivity: FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleNotificationIntent(intent, deliverNow = true)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != PICK_AUDIO_REQUEST_CODE) return
+
+        val result = pendingAudioPickResult ?: return
+        pendingAudioPickResult = null
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+            result.success(null)
+            return
+        }
+
+        result.success(
+            hashMapOf(
+                "uri" to uri.toString(),
+                "name" to getDisplayName(uri)
+            )
+        )
     }
 
     private val DOWNLOAD_CHANNEL_ID = "app_download"
@@ -505,12 +574,203 @@ class MainActivity: FlutterActivity() {
         intent.removeExtra("title")
     }
 
-    private fun installApk(apkPath: String, result: MethodChannel.Result) {
+    private fun pickAudioFile(result: MethodChannel.Result) {
+        if (pendingAudioPickResult != null) {
+            result.error("busy", "文件选择器正在打开", null)
+            return
+        }
+
+        pendingAudioPickResult = result
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf(
+                    "audio/mpeg",
+                    "audio/mp3",
+                    "audio/wav",
+                    "audio/x-wav",
+                    "audio/mp4",
+                    "audio/aac",
+                    "audio/flac",
+                    "audio/ogg",
+                    "audio/opus",
+                    "audio/amr",
+                    "audio/x-ms-wma",
+                )
+            )
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        try {
+            startActivityForResult(intent, PICK_AUDIO_REQUEST_CODE)
+        } catch (e: Exception) {
+            pendingAudioPickResult = null
+            result.error("open_failed", e.message, null)
+        }
+    }
+
+    private fun getDisplayName(uri: Uri): String {
+        var displayName: String? = null
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0) displayName = cursor.getString(index)
+                }
+            }
+        } catch (_: Exception) {
+        }
+        return displayName ?: uri.lastPathSegment ?: uri.toString()
+    }
+
+    private fun registerApkDownloadReceiver() {
+        if (apkDownloadReceiverRegistered) return
+        try {
+            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(apkDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(apkDownloadReceiver, filter)
+            }
+            apkDownloadReceiverRegistered = true
+        } catch (_: Exception) {
+            apkDownloadReceiverRegistered = false
+        }
+    }
+
+    private fun startBackgroundApkDownload(call: MethodCall, result: MethodChannel.Result) {
+        val downloadUrl = call.argument<String>("url")?.trim().orEmpty()
+        val versionCode = call.argument<Int>("versionCode") ?: 0
+        val versionName = call.argument<String>("versionName")?.trim().orEmpty()
+        val uri = try {
+            Uri.parse(downloadUrl)
+        } catch (_: Exception) {
+            null
+        }
+        if (uri == null || (uri.scheme != "http" && uri.scheme != "https")) {
+            result.error("invalid_url", "APK download url is invalid", null)
+            return
+        }
+        if (versionCode <= 0) {
+            result.error("invalid_version", "Version code is invalid", null)
+            return
+        }
+
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val prefs = getSharedPreferences(APK_DOWNLOAD_PREFS, Context.MODE_PRIVATE)
+        val apkFile = backgroundApkFile(versionCode)
+        val existingId = prefs.getLong("downloadId", -1L)
+        val existingUrl = prefs.getString("downloadUrl", "")
+        val existingVersion = prefs.getInt("versionCode", 0)
+
+        if (existingId > 0 && existingUrl == downloadUrl && existingVersion == versionCode) {
+            val status = queryApkDownloadStatus(existingId)
+            val statusName = status?.get("status")?.toString()
+            if (statusName == "successful" && apkFile.exists()) {
+                val installResult = openApkInstaller(apkFile.absolutePath)
+                installResult["downloadId"] = existingId
+                installResult["path"] = apkFile.absolutePath
+                result.success(installResult)
+                return
+            }
+            if (statusName == "pending" || statusName == "running" || statusName == "paused") {
+                status?.put("downloadId", existingId)
+                status?.put("path", apkFile.absolutePath)
+                result.success(status)
+                return
+            }
+            try {
+                manager.remove(existingId)
+            } catch (_: Exception) {
+            }
+        }
+
+        try {
+            if (apkFile.exists()) apkFile.delete()
+        } catch (_: Exception) {
+        }
+        apkFile.parentFile?.mkdirs()
+
+        val request = DownloadManager.Request(uri)
+            .setTitle("App update ${if (versionName.isBlank()) versionCode else versionName}")
+            .setDescription("Downloading update package")
+            .setMimeType("application/vnd.android.package-archive")
+            .setAllowedNetworkTypes(
+                DownloadManager.Request.NETWORK_WIFI or DownloadManager.Request.NETWORK_MOBILE
+            )
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationUri(Uri.fromFile(apkFile))
+
+        val downloadId = manager.enqueue(request)
+        prefs.edit()
+            .putLong("downloadId", downloadId)
+            .putInt("versionCode", versionCode)
+            .putString("versionName", versionName)
+            .putString("downloadUrl", downloadUrl)
+            .putString("apkPath", apkFile.absolutePath)
+            .apply()
+
+        result.success(
+            hashMapOf<String, Any?>(
+                "status" to "started",
+                "downloadId" to downloadId,
+                "path" to apkFile.absolutePath,
+            )
+        )
+    }
+
+    private fun backgroundApkFile(versionCode: Int): File {
+        val root = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+        return File(root, "jjyx-update-$versionCode.apk")
+    }
+
+    private fun queryApkDownloadStatus(downloadId: Long): HashMap<String, Any?>? {
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val cursor = try {
+            manager.query(DownloadManager.Query().setFilterById(downloadId))
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        cursor.use {
+            if (!it.moveToFirst()) return null
+            val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+            val downloaded = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+            val total = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+            return hashMapOf(
+                "status" to downloadStatusName(status),
+                "reason" to reason,
+                "downloaded" to downloaded,
+                "total" to total,
+            )
+        }
+    }
+
+    private fun downloadStatusName(status: Int): String {
+        return when (status) {
+            DownloadManager.STATUS_PENDING -> "pending"
+            DownloadManager.STATUS_RUNNING -> "running"
+            DownloadManager.STATUS_PAUSED -> "paused"
+            DownloadManager.STATUS_SUCCESSFUL -> "successful"
+            DownloadManager.STATUS_FAILED -> "failed"
+            else -> "unknown"
+        }
+    }
+
+    private fun openApkInstaller(apkPath: String): HashMap<String, Any?> {
         try {
             val apkFile = File(apkPath)
             if (!apkFile.exists()) {
-                result.error("file_not_found", "APK file not found", null)
-                return
+                return hashMapOf(
+                    "status" to "file_not_found",
+                    "message" to "APK file not found",
+                    "path" to apkPath,
+                )
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
@@ -519,8 +779,11 @@ class MainActivity: FlutterActivity() {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 startActivity(intent)
-                result.error("permission_required", "Please allow this app to install unknown apps", null)
-                return
+                return hashMapOf(
+                    "status" to "permission_required",
+                    "message" to "Please allow this app to install unknown apps",
+                    "path" to apkPath,
+                )
             }
 
             val apkUri = FileProvider.getUriForFile(
@@ -534,9 +797,26 @@ class MainActivity: FlutterActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(intent)
-            result.success(true)
+            return hashMapOf(
+                "status" to "installing",
+                "path" to apkPath,
+            )
         } catch (e: Exception) {
-            result.error("install_failed", e.message, null)
+            return hashMapOf(
+                "status" to "install_failed",
+                "message" to e.message,
+                "path" to apkPath,
+            )
+        }
+    }
+
+    private fun installApk(apkPath: String, result: MethodChannel.Result) {
+        val installResult = openApkInstaller(apkPath)
+        val status = installResult["status"]?.toString().orEmpty()
+        if (status == "installing") {
+            result.success(true)
+        } else {
+            result.error(status.ifBlank { "install_failed" }, installResult["message"]?.toString(), null)
         }
     }
 }

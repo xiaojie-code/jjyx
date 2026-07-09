@@ -509,6 +509,7 @@ export class UserService implements OnModuleInit {
         ? {
             points: Number(currency.points),
             gold: Number(currency.gold),
+            totalGoldEarned: Number(currency.totalGoldEarned || 0),
             silver: Number(currency.silver),
             copper: Number(currency.copper),
             specialPointsTier1: Number(currency.specialPointsTier1),

@@ -40,6 +40,8 @@ class GameUserInfo {
         'apiBaseUrl': AppConstants.apiBaseUrl,
         'wsUrl': AppConstants.wsUrl,
         'saimaWsUrl': AppConstants.saimaWsUrl,
+        'mahjongHttpUrl': AppConstants.mahjongHttpUrl,
+        'mahjongWsUrl': AppConstants.mahjongWsUrl,
       };
 }
 
@@ -66,10 +68,55 @@ class JSBridge {
         _gameId = gameId,
         _onExit = onExit;
 
+  double _toDouble(dynamic value, [double fallback = 0]) {
+    if (value is num) return value.toDouble();
+    final parsed = double.tryParse(value?.toString() ?? '');
+    return parsed ?? fallback;
+  }
+
+  double _readBalance(Map<String, dynamic>? data, [double fallback = 0]) {
+    if (data == null) return fallback;
+    if (data.containsKey('balance')) return _toDouble(data['balance'], fallback);
+    if (data.containsKey('points')) return _toDouble(data['points'], fallback);
+    if (data.containsKey('coin')) return _toDouble(data['coin'], fallback);
+    if (data.containsKey('after')) return _toDouble(data['after'], fallback);
+    if (data.containsKey('afterBalance')) {
+      return _toDouble(data['afterBalance'], fallback);
+    }
+    if (data.containsKey('newBalance')) {
+      return _toDouble(data['newBalance'], fallback);
+    }
+    if (data.containsKey('currentPoints')) {
+      return _toDouble(data['currentPoints'], fallback);
+    }
+    if (data.containsKey('pointBalance')) {
+      return _toDouble(data['pointBalance'], fallback);
+    }
+    final currency = data['currency'];
+    if (currency is Map<String, dynamic>) {
+      return _readBalance(currency, fallback);
+    }
+    return fallback;
+  }
+
+  void _scheduleBalanceRefreshes() {
+    Future<void>(() async {
+      for (final delay in const [
+        Duration(milliseconds: 250),
+        Duration(milliseconds: 900),
+        Duration(milliseconds: 1800),
+        Duration(milliseconds: 3200),
+      ]) {
+        await Future.delayed(delay);
+        if (_controller == null) return;
+        await _handleGetBalance();
+      }
+    });
+  }
+
   /// Bind a WebView controller and register all JS handlers.
   void attach(InAppWebViewController controller) {
     _controller = controller;
-    // Web 平台不支持 addJavaScriptHandler，跳过注册
     if (!kIsWeb) {
       _registerHandlers(controller);
     }
@@ -80,7 +127,7 @@ class JSBridge {
     _controller = null;
   }
 
-  // ==================== App → H5 ====================
+  // ==================== App �?H5 ====================
 
   /// Send the `init` message with user info when the game page finishes loading.
   Future<void> sendInit(GameUserInfo userInfo) async {
@@ -162,10 +209,8 @@ class JSBridge {
         ApiEndpoints.gamePointsChange(_gameId),
         data: requestData,
       );
-      final balance = (result?['balance'] as num?)?.toDouble() ??
-          (result?['points'] as num?)?.toDouble() ??
-          (_latestPoints ?? _userInfo?.points ?? 0);
-      final actualAmount = (result?['amount'] as num?)?.toDouble() ?? amount;
+      final balance = _readBalance(result, _latestPoints ?? _userInfo?.points ?? 0);
+      final actualAmount = _toDouble(result?['amount'], amount);
       final duplicate = result?['duplicate'] == true;
       _latestPoints = balance;
       await sendPointsChangeResult(
@@ -177,6 +222,7 @@ class JSBridge {
         message: result?['message']?.toString(),
         requestId: requestId,
       );
+      _scheduleBalanceRefreshes();
       return {
         'success': true,
         'balance': balance,
@@ -213,7 +259,7 @@ class JSBridge {
     });
   }
 
-  // ==================== H5 → App (handlers) ====================
+  // ==================== H5 �?App (handlers) ====================
 
   /// Register all JavaScript handlers that H5 can call.
   void _registerHandlers(InAppWebViewController controller) {
@@ -223,7 +269,7 @@ class JSBridge {
     );
   }
 
-  /// Central router for all H5 → App messages.
+  /// Central router for all H5 �?App messages.
   dynamic _onGameMessage(List<dynamic> args) {
     if (args.isEmpty) return null;
 
@@ -265,9 +311,9 @@ class JSBridge {
     return null;
   }
 
-  /// Handle `deductPoints` — request to deduct points from the user's balance.
+  /// Handle `deductPoints` �?request to deduct points from the user's balance.
   Future<void> _handleDeductPoints(Map<String, dynamic> data) async {
-    final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+    final amount = _toDouble(data['amount']);
     final reason = data['reason'] as String? ?? '';
     if (amount <= 0) {
       await sendDeductPointsResult(
@@ -287,11 +333,10 @@ class JSBridge {
         },
       );
 
-      final balance = (result?['balance'] as num?)?.toDouble() ??
-          (result?['points'] as num?)?.toDouble() ??
-          0;
+      final balance = _readBalance(result);
       _latestPoints = balance;
       await sendDeductPointsResult(success: true, balance: balance);
+      _scheduleBalanceRefreshes();
     } catch (e) {
       debugPrint('[JSBridge] deductPoints failed: $e');
       await sendDeductPointsResult(
@@ -301,9 +346,9 @@ class JSBridge {
     }
   }
 
-  /// Handle `changePoints` — generic H5 point delta.
+  /// Handle `changePoints` �?generic H5 point delta.
   Future<void> _handleChangePoints(Map<String, dynamic> data) async {
-    final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+    final amount = _toDouble(data['amount']);
     final reason = data['reason'] as String? ?? '';
     final requestId = data['requestId']?.toString();
     if (amount == 0) {
@@ -326,10 +371,8 @@ class JSBridge {
         data: requestData,
       );
 
-      final balance = (result?['balance'] as num?)?.toDouble() ??
-          (result?['points'] as num?)?.toDouble() ??
-          0;
-      final actualAmount = (result?['amount'] as num?)?.toDouble() ?? amount;
+      final balance = _readBalance(result);
+      final actualAmount = _toDouble(result?['amount'], amount);
       final duplicate = result?['duplicate'] == true;
       _latestPoints = balance;
       await sendPointsChangeResult(
@@ -341,6 +384,7 @@ class JSBridge {
         message: result?['message']?.toString(),
         requestId: requestId,
       );
+      _scheduleBalanceRefreshes();
     } catch (e) {
       debugPrint('[JSBridge] changePoints failed: $e');
       await sendPointsChangeResult(
@@ -352,7 +396,7 @@ class JSBridge {
     }
   }
 
-  /// Handle `gameSettle` — game over, record results and award items.
+  /// Handle `gameSettle` �?game over, record results and award items.
   Future<void> _handleGameSettle(Map<String, dynamic> data) async {
     try {
       final pointsEarned = data['pointsEarned'] ??
@@ -373,10 +417,10 @@ class JSBridge {
     }
   }
 
-  /// Handle `buySkin` — purchase a skin using points.
+  /// Handle `buySkin` �?purchase a skin using points.
   Future<void> _handleBuySkin(Map<String, dynamic> data) async {
     final skinId = data['skinId'] as String? ?? '';
-    final cost = (data['cost'] as num?)?.toDouble() ?? 0;
+    final cost = _toDouble(data['cost']);
     if (skinId.isEmpty || cost <= 0) {
       await sendBuySkinResult(success: false, skinId: skinId);
       return;
@@ -391,9 +435,9 @@ class JSBridge {
           'skinId': skinId,
         },
       );
-      final balance = (result?['balance'] as num?)?.toDouble() ??
-          (result?['points'] as num?)?.toDouble();
-      if (balance != null) _latestPoints = balance;
+      final balance = result == null ? null : _readBalance(result, double.nan);
+      final normalizedBalance = balance != null && !balance.isNaN ? balance : null;
+      if (normalizedBalance != null) _latestPoints = normalizedBalance;
       await sendBuySkinResult(success: true, skinId: skinId);
     } catch (e) {
       debugPrint('[JSBridge] buySkin failed: $e');
@@ -401,19 +445,19 @@ class JSBridge {
     }
   }
 
-  /// Handle `exitGame` — user wants to leave the game.
+  /// Handle `exitGame` �?user wants to leave the game.
   void _handleExitGame() {
     _onExit();
   }
 
-  /// Handle `getBalance` — H5 requests the latest point balance.
+  /// Handle `getBalance` �?H5 requests the latest point balance.
   Future<void> _handleGetBalance() async {
     try {
       final result = await _apiClient.get<Map<String, dynamic>>(
         ApiEndpoints.currencyBalance,
       );
 
-      final points = (result?['points'] as num?)?.toDouble() ?? 0;
+      final points = _readBalance(result);
       _latestPoints = points;
       await _sendToH5('balanceUpdate', {
         'points': points,

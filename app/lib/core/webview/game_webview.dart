@@ -86,6 +86,12 @@ class GameWebViewState extends State<GameWebView> {
     return url.contains('/uploads/games/xiangqi/') ||
         url.contains('/assets/h5-games/xiangqi/') ||
         url.contains('/h5-games/xiangqi/') ||
+        url.contains('/uploads/games/mahjong/') ||
+        url.contains('/assets/h5-games/mahjong/') ||
+        url.contains('/h5-games/mahjong/') ||
+        url.contains('/uploads/games/fishing/') ||
+        url.contains('/assets/h5-games/fishing/') ||
+        url.contains('/h5-games/fishing/') ||
         url.contains('/uploads/games/killer/') ||
         url.contains('/assets/h5-games/killer/') ||
         url.contains('/h5-games/killer/') ||
@@ -93,6 +99,7 @@ class GameWebViewState extends State<GameWebView> {
         url.contains('/assets/h5-games/saima2/') ||
         url.contains('/h5-games/saima2/');
   }
+
   int _loadProgress = 0;
   int _lastLoggedProgress = -10;
 
@@ -210,9 +217,8 @@ class GameWebViewState extends State<GameWebView> {
 })()
 ''',
       );
-      final parts =
-          result?.toString().replaceAll('"', '').trim().split('|') ??
-              const <String>[];
+      final parts = result?.toString().replaceAll('"', '').trim().split('|') ??
+          const <String>[];
       final suppressFromH5 = parts.isNotEmpty && parts[0] == '1';
       final mode = parts.length > 2 ? parts.sublist(2).join('|').trim() : '';
       final now = DateTime.now();
@@ -260,6 +266,7 @@ class GameWebViewState extends State<GameWebView> {
 window.__GAME_APP_INIT__ = $initDataJson;
 window.__KILLER_APP_INIT__ = $initDataJson;
 window.__SAIMA_APP_INIT__ = $initDataJson;
+window.__MAHJONG_APP_INIT__ = $initDataJson;
 window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
 ''',
       ),
@@ -638,7 +645,8 @@ window.__APP_GAME_INIT_MESSAGE__ = $messageJson;
             ? <double>[0.335, 0.490, 0.646]
             : <double>[0.285, 0.415, 0.545];
         final hitHeight = isPortrait ? 0.072 : 0.078;
-        final horizontalInset = constraints.maxWidth * (isPortrait ? 0.11 : 0.18);
+        final horizontalInset =
+            constraints.maxWidth * (isPortrait ? 0.11 : 0.18);
         return Stack(
           children: [
             for (var i = 0; i < topFractions.length; i += 1)

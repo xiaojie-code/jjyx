@@ -50,6 +50,36 @@ class AppConstants {
   }
 
   /// Token 存储 key
+  static const String mahjongHttpUrlOverride = String.fromEnvironment(
+    'MAHJONG_HTTP_URL',
+    defaultValue: '',
+  );
+
+  static const String mahjongWsUrlOverride = String.fromEnvironment(
+    'MAHJONG_WS_URL',
+    defaultValue: '',
+  );
+
+  static String get mahjongHttpUrl {
+    if (mahjongHttpUrlOverride.isNotEmpty) return mahjongHttpUrlOverride;
+    final apiUri = Uri.tryParse(apiBaseUrl);
+    if (apiUri != null && apiUri.host.isNotEmpty) {
+      final protocol = apiUri.scheme == 'https' ? 'https' : 'http';
+      return '$protocol://${apiUri.host}:15103';
+    }
+    return 'http://localhost:15103';
+  }
+
+  static String get mahjongWsUrl {
+    if (mahjongWsUrlOverride.isNotEmpty) return mahjongWsUrlOverride;
+    final apiUri = Uri.tryParse(apiBaseUrl);
+    if (apiUri != null && apiUri.host.isNotEmpty) {
+      final protocol = apiUri.scheme == 'https' ? 'https' : 'http';
+      return '$protocol://${apiUri.host}:42001';
+    }
+    return 'http://localhost:42001';
+  }
+
   static const String tokenKey = 'auth_token';
   static const String refreshTokenKey = 'refresh_token';
 

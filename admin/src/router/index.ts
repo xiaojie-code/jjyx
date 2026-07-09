@@ -76,6 +76,12 @@ const router = createRouter({
           meta: { title: '充值管理', icon: 'CreditCard' },
         },
         {
+          path: 'shop-orders',
+          name: 'ShopOrders',
+          component: () => import('@/views/shop/ShopOrderManage.vue'),
+          meta: { title: '商城订单', icon: 'ShoppingCart' },
+        },
+        {
           path: 'assets',
           name: 'AssetManage',
           component: () => import('@/views/assets/AssetManage.vue'),

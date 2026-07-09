@@ -57,6 +57,9 @@ export class MatrixIncome {
   @Column({ name: 'claimed_at', type: 'datetime', nullable: true })
   claimedAt: Date;
 
+  @Column({ name: 'gold_currency_log_id', type: 'bigint', nullable: true })
+  goldCurrencyLogId: number | null;
+
   /** 鎻忚堪 */
   @Column({ name: 'description', type: 'varchar', length: 200, nullable: true })
   description: string;

@@ -26,6 +26,10 @@ const LOTTERY_MAJOR_INTERVAL = 200;
 const HORSE_BET_OPTIONS = [10, 50, 100, 300, 500, 1000];
 const XIANQI_STUDY_MAX_LEVEL = 240;
 const XIANQI_STUDY_REWARD_STEP = 10;
+const FISHING_ENTRY_FEE = 500;
+const FISHING_DAILY_CAST_LIMIT = 50;
+const FISHING_LEVEL_RESET_DAYS = 15;
+const FISHING_LEVEL_RESET_MS = FISHING_LEVEL_RESET_DAYS * 24 * 60 * 60 * 1000;
 const DEFAULT_GAME_ENTRIES = [
   {
     name: '象雀对弈',
@@ -106,6 +110,11 @@ export class GameService {
       text.includes('象雀') ||
       text.includes('对弈')
     );
+  }
+
+  private isMahjongGame(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
+    const text = this.gameSearchText(game);
+    return text.includes('mahjong') || text.includes('majiang') || text.includes('麻将');
   }
 
   private isPlaceholderGameUrl(value?: string | null) {
@@ -302,6 +311,18 @@ export class GameService {
       name: game.name,
       orientation: this.resolveGameOrientation(game),
     };
+  }
+
+  async recordGamePlayDuration(
+    userId: number,
+    gameId: number,
+    data: { sessionId?: string; durationSeconds?: number },
+  ) {
+    await this.ensureDefaultGameEntries();
+    const game = await this.gameRepo.findOne({ where: { id: gameId } });
+    if (!game) throw new NotFoundException('游戏不存在');
+    if (game.status !== 1) throw new BadRequestException('游戏维护中');
+    return this.currencyService.recordGamePlayDuration(userId, gameId, data);
   }
 
   private resolveGameOrientation(game: Game) {
@@ -593,6 +614,9 @@ export class GameService {
         game_id INT NOT NULL,
         save_data JSON NOT NULL,
         last_daily_reward_date VARCHAR(10) NULL,
+        level_reset_at DATETIME NULL,
+        daily_cast_date VARCHAR(10) NULL,
+        daily_cast_count INT NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uniq_fishing_saves_user_game (user_id, game_id),
@@ -600,6 +624,31 @@ export class GameService {
         INDEX idx_fishing_saves_game (game_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    await this.addFishingSaveColumnIfMissing(
+      'level_reset_at',
+      `ALTER TABLE fishing_saves ADD COLUMN level_reset_at DATETIME NULL AFTER last_daily_reward_date`,
+    );
+    await this.addFishingSaveColumnIfMissing(
+      'daily_cast_date',
+      `ALTER TABLE fishing_saves ADD COLUMN daily_cast_date VARCHAR(10) NULL AFTER level_reset_at`,
+    );
+    await this.addFishingSaveColumnIfMissing(
+      'daily_cast_count',
+      `ALTER TABLE fishing_saves ADD COLUMN daily_cast_count INT NOT NULL DEFAULT 0 AFTER daily_cast_date`,
+    );
+  }
+
+  private async addFishingSaveColumnIfMissing(columnName: string, ddl: string) {
+    const rows = await this.dataSource.query(
+      `SELECT COUNT(*) AS count
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'fishing_saves'
+         AND COLUMN_NAME = ?`,
+      [columnName],
+    );
+    if (Number(rows?.[0]?.count || 0) > 0) return;
+    await this.dataSource.query(ddl);
   }
 
   private parseFishingSaveData(value: any) {
@@ -649,6 +698,119 @@ export class GameService {
         item.price = this.scaleFishingRewardValue(item.price);
       }
     }
+  }
+
+  private parseDateValue(value: any): Date | null {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+
+  private addDays(date: Date, days: number) {
+    return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+  }
+
+  private getFishingDailyCastState(save?: Pick<FishingSave, 'dailyCastDate' | 'dailyCastCount'> | null) {
+    const today = this.getTodayString();
+    const count = save?.dailyCastDate === today ? Math.max(0, Number(save.dailyCastCount || 0)) : 0;
+    return {
+      date: today,
+      limit: FISHING_DAILY_CAST_LIMIT,
+      count,
+      remaining: Math.max(0, FISHING_DAILY_CAST_LIMIT - count),
+    };
+  }
+
+  private getFishingLevelResetAt(save?: Pick<FishingSave, 'levelResetAt' | 'createdAt'> | null) {
+    return this.parseDateValue(save?.levelResetAt) || this.parseDateValue(save?.createdAt) || new Date();
+  }
+
+  private getNextFishingLevelResetAt(save?: Pick<FishingSave, 'levelResetAt' | 'createdAt'> | null) {
+    return this.addDays(this.getFishingLevelResetAt(save), FISHING_LEVEL_RESET_DAYS);
+  }
+
+  private shouldResetFishingLevels(save?: Pick<FishingSave, 'levelResetAt' | 'createdAt'> | null) {
+    const resetAt = this.getFishingLevelResetAt(save);
+    return Date.now() - resetAt.getTime() >= FISHING_LEVEL_RESET_MS;
+  }
+
+  private resetFishingLevelProgress(saveData: Record<string, any>) {
+    const reset = JSON.parse(JSON.stringify(saveData || {}));
+    if (Array.isArray(reset.skill_lv)) {
+      reset.skill_lv = reset.skill_lv.map(() => 1);
+    }
+
+    const resetNestedLevelFields = (value: any, key = ''): any => {
+      if (Array.isArray(value)) {
+        return value.map((item) => resetNestedLevelFields(item, key));
+      }
+      if (value && typeof value === 'object') {
+        const next: Record<string, any> = {};
+        for (const childKey of Object.keys(value)) {
+          next[childKey] = resetNestedLevelFields(value[childKey], childKey);
+        }
+        return next;
+      }
+      if (this.shouldPreserveFishingLevelField(key)) {
+        const num = Number(value);
+        return Number.isFinite(num) ? 1 : value;
+      }
+      return value;
+    };
+
+    return resetNestedLevelFields(reset);
+  }
+
+  private applyFishingLevelResetPolicy(save: FishingSave) {
+    let changed = false;
+    if (!save.levelResetAt) {
+      save.levelResetAt = this.getFishingLevelResetAt(save);
+      changed = true;
+    }
+    if (this.shouldResetFishingLevels(save)) {
+      save.saveData = this.resetFishingLevelProgress(save.saveData || {});
+      save.levelResetAt = new Date();
+      changed = true;
+    }
+    return changed;
+  }
+
+  private isFishingResetSnapshot(prev: any, next: any) {
+    const prevSkills = Array.isArray(prev?.skill_lv) ? prev.skill_lv.map(Number) : [];
+    const nextSkills = Array.isArray(next?.skill_lv) ? next.skill_lv.map(Number) : [];
+    if (prevSkills.some((value) => Number.isFinite(value) && value > 1) &&
+        nextSkills.length > 0 &&
+        nextSkills.every((value) => !Number.isFinite(value) || value <= 1)) {
+      return true;
+    }
+
+    const prevItems = Array.isArray(prev?.userPackageInfo?.items) ? prev.userPackageInfo.items : [];
+    const nextItems = Array.isArray(next?.userPackageInfo?.items) ? next.userPackageInfo.items : [];
+    return prevItems.some((prevItem: any) => {
+      if (!prevItem || typeof prevItem !== 'object') return false;
+      const prevType = Number(prevItem.type);
+      const prevId = Number(prevItem.id);
+      if (!Number.isFinite(prevType) || !Number.isFinite(prevId) || prevId <= 0) return false;
+      return nextItems.some((nextItem: any) =>
+        nextItem &&
+        typeof nextItem === 'object' &&
+        Number(nextItem.type) === prevType &&
+        Number(nextItem.id) < prevId,
+      );
+    });
+  }
+
+  private mergeFishingResetSnapshot(prev: Record<string, any>, next: Record<string, any>) {
+    const merged = this.mergeFishingProgress(prev, next);
+    for (const key of ['skill_lv', 'useRod', 'useHook', 'useBait', 'useRope', 'useNet', 'useBox']) {
+      if (typeof prev?.[key] !== 'undefined') {
+        merged[key] = JSON.parse(JSON.stringify(prev[key]));
+      }
+    }
+    if (prev?.userPackageInfo && typeof prev.userPackageInfo === 'object') {
+      merged.userPackageInfo = JSON.parse(JSON.stringify(prev.userPackageInfo));
+    }
+    return merged;
   }
 
   private shouldPreserveFishingLevelField(key: string) {
@@ -730,13 +892,17 @@ export class GameService {
     const game = await this.gameRepo.findOne({ where: { id: gameId } });
     if (!game) throw new NotFoundException('Game not found');
 
-    const [save, balance, dailyClaimed] = await Promise.all([
+    let [save, balance, dailyClaimed] = await Promise.all([
       this.fishingSaveRepo.findOne({ where: { userId, gameId } }),
       this.currencyService.getBalance(userId),
       this.hasDailyFishingReward(userId, gameId),
     ]);
 
     const points = Number(balance.points);
+    if (save && this.applyFishingLevelResetPolicy(save)) {
+      save = await this.fishingSaveRepo.save(save);
+    }
+    const castState = this.getFishingDailyCastState(save);
     const saveData = save?.saveData
       ? this.normalizeFishingSaveData(save.saveData, points, dailyClaimed)
       : null;
@@ -747,6 +913,13 @@ export class GameService {
       points,
       balance: points,
       dailyClaimed,
+      entryFee: FISHING_ENTRY_FEE,
+      dailyCastDate: castState.date,
+      dailyCastLimit: castState.limit,
+      dailyCastCount: castState.count,
+      dailyCastRemaining: castState.remaining,
+      levelResetAt: save?.levelResetAt ?? null,
+      nextLevelResetAt: save ? this.getNextFishingLevelResetAt(save) : null,
       today: this.getTodayString(),
     };
   }
@@ -762,9 +935,15 @@ export class GameService {
 
     const saved = await this.dataSource.transaction(async (mgr) => {
       let save = await mgr.findOne(FishingSave, { where: { userId, gameId } });
-      const mergedRawSaveData = save?.saveData
-        ? this.mergeFishingProgress(save.saveData, rawSaveData)
+      const resetByPolicy = save ? this.applyFishingLevelResetPolicy(save) : false;
+      const policySaveData = resetByPolicy
+        ? this.resetFishingLevelProgress(rawSaveData)
         : rawSaveData;
+      const mergedRawSaveData = save?.saveData
+        ? this.isFishingResetSnapshot(save.saveData, policySaveData)
+          ? this.mergeFishingResetSnapshot(save.saveData, policySaveData)
+          : this.mergeFishingProgress(save.saveData, policySaveData)
+        : policySaveData;
       const saveData = this.normalizeFishingSaveData(mergedRawSaveData, Number(balance.points), dailyClaimed);
       if (!save) {
         save = mgr.create(FishingSave, {
@@ -772,26 +951,87 @@ export class GameService {
           gameId,
           saveData,
           lastDailyRewardDate: dailyClaimed ? this.getTodayString() : null,
+          levelResetAt: new Date(),
+          dailyCastDate: null,
+          dailyCastCount: 0,
         });
       } else {
         save.saveData = saveData;
         save.lastDailyRewardDate = dailyClaimed ? this.getTodayString() : save.lastDailyRewardDate;
+        if (!save.levelResetAt) save.levelResetAt = new Date();
       }
       return mgr.save(FishingSave, save);
     });
 
+    const castState = this.getFishingDailyCastState(saved);
     return {
       id: saved.id,
       saveData: saved.saveData,
       points: Number(balance.points),
       balance: Number(balance.points),
       dailyClaimed,
+      entryFee: FISHING_ENTRY_FEE,
+      dailyCastDate: castState.date,
+      dailyCastLimit: castState.limit,
+      dailyCastCount: castState.count,
+      dailyCastRemaining: castState.remaining,
+      levelResetAt: saved.levelResetAt ?? null,
+      nextLevelResetAt: this.getNextFishingLevelResetAt(saved),
       today: this.getTodayString(),
       updatedAt: saved.updatedAt,
     };
   }
 
-  /** 游戏结算回调 */
+  /** 实况钓鱼抛竿次数登记 */
+  async claimFishingCast(userId: number, gameId: number) {
+    await this.ensureFishingSavesTable();
+    const game = await this.gameRepo.findOne({ where: { id: gameId } });
+    if (!game) throw new NotFoundException('Game not found');
+    if (game.status !== 1) throw new BadRequestException('Game is unavailable');
+
+    let finalSave: FishingSave | null = null;
+    let allowed = false;
+    await this.dataSource.transaction(async (mgr) => {
+      let save = await mgr.findOne(FishingSave, { where: { userId, gameId } });
+      if (!save) {
+        save = mgr.create(FishingSave, {
+          userId,
+          gameId,
+          saveData: {},
+          lastDailyRewardDate: null,
+          levelResetAt: new Date(),
+          dailyCastDate: null,
+          dailyCastCount: 0,
+        });
+      }
+
+      this.applyFishingLevelResetPolicy(save);
+      const today = this.getTodayString();
+      if (save.dailyCastDate !== today) {
+        save.dailyCastDate = today;
+        save.dailyCastCount = 0;
+      }
+
+      if (Number(save.dailyCastCount || 0) < FISHING_DAILY_CAST_LIMIT) {
+        save.dailyCastCount = Number(save.dailyCastCount || 0) + 1;
+        allowed = true;
+      }
+      finalSave = await mgr.save(FishingSave, save);
+    });
+
+    const castState = this.getFishingDailyCastState(finalSave);
+    return {
+      allowed,
+      message: allowed
+        ? '钓鱼次数登记成功'
+        : `今日钓鱼次数已用完（${FISHING_DAILY_CAST_LIMIT}次），请明天再来`,
+      dailyCastDate: castState.date,
+      dailyCastLimit: castState.limit,
+      dailyCastCount: castState.count,
+      dailyCastRemaining: castState.remaining,
+    };
+  }
+
   private async ensureSnakeSavesTable() {
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS snake_saves (
@@ -968,6 +1208,8 @@ export class GameService {
     if (this.isLotteryGame(game)) return null;
 
     const result = String(recordResult || '').toLowerCase();
+    const mahjongSource = this.resolveMahjongTurnoverSource(result, amount, game);
+    if (mahjongSource) return mahjongSource;
     const xiangqiSource = this.resolveXiangqiTurnoverSource(result, amount, game);
     if (xiangqiSource) return xiangqiSource;
 
@@ -1037,6 +1279,56 @@ export class GameService {
       return amount > 0 ? 'game_settle' : null;
     }
     return amount > 0 ? 'game_settle' : 'game_spend';
+  }
+
+  private resolveMahjongTurnoverSource(
+    normalizedResult: string,
+    amount: number,
+    game?: Pick<Game, 'name' | 'gameUrl'> | null,
+  ): string | null {
+    const isMahjong =
+      this.isMahjongGame(game) ||
+      normalizedResult.includes('mahjong') ||
+      normalizedResult.includes('majiang') ||
+      normalizedResult.includes('麻将');
+    if (!isMahjong) return null;
+
+    if (amount < 0) {
+      if (
+        normalizedResult.includes('bet') ||
+        normalizedResult.includes('stake') ||
+        normalizedResult.includes('wager') ||
+        normalizedResult.includes('settle') ||
+        normalizedResult.includes('loss') ||
+        normalizedResult.includes('lose') ||
+        normalizedResult.includes('下注') ||
+        normalizedResult.includes('投注')
+      ) {
+        return 'mahjong_bet';
+      }
+      if (normalizedResult.includes('entry') || normalizedResult.includes('入场')) {
+        return 'mahjong_entry';
+      }
+      return 'mahjong_spend';
+    }
+
+    if (amount > 0) {
+      if (
+        normalizedResult.includes('settle') ||
+        normalizedResult.includes('win') ||
+        normalizedResult.includes('reward') ||
+        normalizedResult.includes('earn') ||
+        normalizedResult.includes('结算') ||
+        normalizedResult.includes('获胜') ||
+        normalizedResult.includes('奖励') ||
+        normalizedResult.includes('收益')
+      ) {
+        return 'mahjong_settle';
+      }
+      return 'mahjong_earn';
+    }
+
+    return null;
   }
 
   private resolveXiangqiTurnoverSource(
@@ -1123,6 +1415,29 @@ export class GameService {
         return '赛马获胜派奖';
       }
       return amount < 0 ? '赛马积分消费' : '赛马积分奖励';
+    }
+    if (
+      normalizedReason.includes('mahjong') ||
+      normalizedReason.includes('majiang') ||
+      this.isMahjongGame(game)
+    ) {
+      if (
+        normalizedReason.includes('bet') ||
+        normalizedReason.includes('stake') ||
+        normalizedReason.includes('wager')
+      ) {
+        return '麻将投注积分';
+      }
+      if (normalizedReason.includes('entry')) return '麻将入场积分';
+      if (
+        normalizedReason.includes('settle') ||
+        normalizedReason.includes('win') ||
+        normalizedReason.includes('reward') ||
+        normalizedReason.includes('earn')
+      ) {
+        return '麻将结算奖励';
+      }
+      return amount < 0 ? '麻将积分支出' : '麻将积分收入';
     }
     if (this.isXiangqiGame(game) || normalizedReason.includes('xiangqi')) {
       if (normalizedReason.includes('study') || normalizedReason.includes('canju')) return '象棋名局研习奖励';

@@ -34,6 +34,11 @@ export class GameController {
     @Body() data: { saveData?: any; save_data?: any },
   ) { return this.gameService.saveGameSave(userId, id, data); }
 
+  @Post(':id/fishing/cast')
+  claimFishingCast(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
+    return this.gameService.claimFishingCast(userId, id);
+  }
+
   @Get(':id/snake-save')
   getSnakeGameSave(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number) {
     return this.gameService.getSnakeGameSave(userId, id);
@@ -52,6 +57,15 @@ export class GameController {
   @Post(':id/start')
   startGame(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number, @Body('betAmount') betAmount?: number) {
     return this.gameService.startGame(userId, id, betAmount);
+  }
+
+  @Post(':id/play-duration')
+  reportGamePlayDuration(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: { sessionId?: string; durationSeconds?: number },
+  ) {
+    return this.gameService.recordGamePlayDuration(userId, id, data);
   }
 
   @Post(':id/settle')

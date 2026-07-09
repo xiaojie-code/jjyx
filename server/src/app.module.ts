@@ -18,6 +18,7 @@ import { NotificationModule } from './notification/notification.module';
 import { PushModule } from './push/push.module';
 import { AssetModule } from './asset/asset.module';
 import { SignInModule } from './sign-in/sign-in.module';
+import { ShopModule } from './shop/shop.module';
 
 @Module({
   imports: [
@@ -85,6 +86,8 @@ import { SignInModule } from './sign-in/sign-in.module';
 
     // Asset package module
     AssetModule,
+
+    ShopModule,
 
     SignInModule,
 

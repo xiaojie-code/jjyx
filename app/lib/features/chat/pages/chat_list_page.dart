@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'dart:convert';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
@@ -27,11 +30,15 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   bool _loading = true;
   int _serviceUnread = 0;
   bool _serviceUnreadLoaded = false;
+  bool _serviceUnreadLocallyCleared = false;
+  bool _conversationUnreadLocallyCleared = false;
+  final Map<int, int> _localConversationUnreadOverrides = <int, int>{};
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _clearMessageBadgesLocal();
     _loadConversations();
     _syncServiceUnread();
     // Register listeners before connecting so offline messages are not missed.
@@ -82,6 +89,15 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       ref.read(authProvider).user != null ||
       ref.read(authProvider).profile != null;
 
+  void _clearMessageBadgesLocal() {
+    _serviceUnreadLocallyCleared = true;
+    _conversationUnreadLocallyCleared = true;
+    _serviceUnreadLoaded = true;
+    _serviceUnread = 0;
+    ref.read(badgeProvider.notifier).clearUnread();
+    ref.read(badgeProvider.notifier).clearServiceNotifications();
+  }
+
   void _syncServiceUnread() {
     if (_canUseServiceNotifications) {
       _loadServiceUnread();
@@ -110,6 +126,16 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       _syncServiceUnread();
       return;
     }
+    if (_serviceUnreadLocallyCleared) {
+      if (mounted) {
+        setState(() {
+          _serviceUnread = 0;
+          _serviceUnreadLoaded = true;
+        });
+      }
+      ref.read(badgeProvider.notifier).clearServiceNotifications();
+      return;
+    }
     try {
       final result =
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
@@ -127,6 +153,11 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
 
   void _onNewMessageInList(ChatMessage msg) {
     if (!mounted) return;
+    if (_conversationUnreadLocallyCleared ||
+        _localConversationUnreadOverrides.containsKey(msg.conversationId)) {
+      _localConversationUnreadOverrides[msg.conversationId] =
+          (_localConversationUnreadOverrides[msg.conversationId] ?? 0) + 1;
+    }
     // 鐩存帴鍦ㄦ湰鍦版洿鏂颁細璇濆垪琛紝涓嶇瓑寰?API
     setState(() {
       final idx = _conversations
@@ -162,6 +193,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       _syncServiceUnread();
       return;
     }
+    _serviceUnreadLocallyCleared = false;
     // 本地先 +1，保证角标即时更新
     setState(() => _serviceUnread += 1);
     // 再从服务器拉准确未读数
@@ -184,13 +216,22 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       if (!mounted) return;
       final conversations = (result ?? []).map((e) {
         final map = Map<String, dynamic>.from(e);
+        final conversationId =
+            int.tryParse(map['conversationId']?.toString() ?? '') ?? 0;
+        if (_conversationUnreadLocallyCleared &&
+            !_localConversationUnreadOverrides.containsKey(conversationId)) {
+          _localConversationUnreadOverrides[conversationId] = 0;
+        }
+        final serverUnread =
+            int.tryParse(map['unreadCount']?.toString() ?? '') ?? 0;
+        final localUnread = _localConversationUnreadOverrides[conversationId];
         return ConversationItem(
-          conversationId: map['conversationId'] as int,
+          conversationId: conversationId,
           type: map['type'] as int?,
           name: map['name'] as String?,
           avatar: map['avatar'] as String?,
           isPinned: map['isPinned'] as bool? ?? false,
-          unreadCount: map['unreadCount'] as int? ?? 0,
+          unreadCount: localUnread ?? serverUnread,
           peerUser: map['peerUser'] != null
               ? Map<String, dynamic>.from(map['peerUser'])
               : null,
@@ -220,6 +261,34 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       ref.read(badgeProvider.notifier).setUnreadCount(totalUnread);
     } catch (e) {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _clearConversationUnreadLocal(int conversationId) {
+    _localConversationUnreadOverrides[conversationId] = 0;
+    var changed = false;
+    setState(() {
+      _conversations = _conversations.map((item) {
+        if (item.conversationId != conversationId || item.unreadCount == 0) {
+          return item;
+        }
+        changed = true;
+        return ConversationItem(
+          conversationId: item.conversationId,
+          type: item.type,
+          name: item.name,
+          avatar: item.avatar,
+          isPinned: item.isPinned,
+          unreadCount: 0,
+          peerUser: item.peerUser,
+          lastMessage: item.lastMessage,
+        );
+      }).toList();
+    });
+    if (changed) {
+      final totalUnread =
+          _conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
+      ref.read(badgeProvider.notifier).setUnreadCount(totalUnread);
     }
   }
 
@@ -475,8 +544,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     final groupId = conv.conversationId;
     final groupName = _conversationDisplayName(conv);
     try {
-      Map<String, dynamic>? meeting =
-          await api.get<Map<String, dynamic>>(
+      Map<String, dynamic>? meeting = await api.get<Map<String, dynamic>>(
         ApiEndpoints.groupMeetingActive(groupId),
       );
       meeting = normalizeActiveMeeting(meeting);
@@ -492,8 +560,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
         int currentPoints = 0;
         if (!free) {
           try {
-            final balance =
-                await api.get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
+            final balance = await api
+                .get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
             currentPoints =
                 (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0)
                     .toInt();
@@ -682,8 +750,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                     return ListTile(
                       leading: CircleAvatar(
                         backgroundColor: Colors.green.shade100,
-                        child: const Icon(Icons.video_call,
-                            color: Colors.green),
+                        child:
+                            const Icon(Icons.video_call, color: Colors.green),
                       ),
                       title: const Text('群会议',
                           style: TextStyle(fontWeight: FontWeight.w600)),
@@ -731,11 +799,18 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                           style: TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: const Text('业务处理结果和系统提醒'),
                       onTap: () async {
+                        setState(() {
+                          _serviceUnread = 0;
+                          _serviceUnreadLoaded = true;
+                          _serviceUnreadLocallyCleared = true;
+                        });
+                        ref
+                            .read(badgeProvider.notifier)
+                            .clearServiceNotifications();
                         await Navigator.of(context, rootNavigator: true)
                             .push(MaterialPageRoute(
                           builder: (_) => const ServiceNotificationPage(),
                         ));
-                        _loadServiceUnread();
                       },
                     );
                   }
@@ -825,6 +900,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                         ],
                       ),
                       onTap: () async {
+                        _clearConversationUnreadLocal(conv.conversationId);
                         await Navigator.of(context, rootNavigator: true)
                             .push(MaterialPageRoute(
                           builder: (_) => ChatPage(
@@ -957,7 +1033,168 @@ class _DigitalHumanPageV2 extends StatefulWidget {
 }
 
 class _DigitalHumanPageV2State extends State<_DigitalHumanPageV2> {
+  static const _digitalHumanChannel =
+      MethodChannel('com.example.app/digital_human');
+  static const _videoExts = {'mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'm4v'};
+  static const _audioExts = {
+    'mp3',
+    'wav',
+    'm4a',
+    'aac',
+    'flac',
+    'ogg',
+    'opus',
+    'amr',
+    'wma'
+  };
+  final ImagePicker _imagePicker = ImagePicker();
   String _mode = '极速模式';
+  bool _generating = false;
+
+  Future<bool> _requestAnyPermission(
+    List<Permission> permissions,
+    String deniedMessage,
+  ) async {
+    for (final permission in permissions) {
+      final status = await permission.status;
+      if (status.isGranted || status.isLimited) return true;
+    }
+
+    for (final permission in permissions) {
+      final status = await permission.request();
+      if (status.isGranted || status.isLimited) return true;
+    }
+
+    if (!mounted) return false;
+    Toast.error(context, deniedMessage);
+    return false;
+  }
+
+  String _fileNameFromPath(String path) {
+    if (path.isEmpty) return '';
+    final parts = path.split(RegExp(r'[\\/]'));
+    return parts.isEmpty ? path : parts.last;
+  }
+
+  String _displayFileName(XFile file) {
+    final name = file.name.trim();
+    return name.isNotEmpty ? name : _fileNameFromPath(file.path);
+  }
+
+  bool _hasAllowedExt(String name, Set<String> exts) {
+    final clean = name.split('?').first.toLowerCase();
+    final index = clean.lastIndexOf('.');
+    if (index < 0 || index == clean.length - 1) return false;
+    return exts.contains(clean.substring(index + 1));
+  }
+
+  Future<bool> _confirmFakeUpload({
+    required String title,
+    required String fileName,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text('已选择：$fileName'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认上传'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _pickTrainingVideo() async {
+    final allowed = await _requestAnyPermission(
+      [Permission.videos, Permission.storage],
+      '请允许访问相册后再选择视频',
+    );
+    if (!allowed) return;
+
+    final picked = await _imagePicker.pickVideo(source: ImageSource.gallery);
+    if (picked == null || !mounted) return;
+
+    final fileName = _displayFileName(picked);
+    if (!_hasAllowedExt(fileName, _videoExts)) {
+      Toast.error(context, '请选择MP4、MOV等常见视频文件');
+      return;
+    }
+
+    final confirmed = await _confirmFakeUpload(
+      title: '确认上传形象视频',
+      fileName: fileName,
+    );
+    if (!mounted) return;
+    if (confirmed) Toast.success(context, '形象视频已选择');
+  }
+
+  Future<void> _authorizeImage() async {
+    final allowed = await _requestAnyPermission(
+      [Permission.camera],
+      '请允许使用相机后再授权形象',
+    );
+    if (!allowed) return;
+
+    final picked = await _imagePicker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 88,
+    );
+    if (picked == null || !mounted) return;
+    Toast.success(context, '形象授权已完成');
+  }
+
+  Future<void> _pickCustomVoice() async {
+    final allowed = await _requestAnyPermission(
+      [Permission.audio, Permission.storage],
+      '请允许访问本地文件后再选择音频',
+    );
+    if (!allowed) return;
+
+    try {
+      final result =
+          await _digitalHumanChannel.invokeMapMethod<String, dynamic>(
+        'pickAudioFile',
+      );
+      if (result == null || !mounted) return;
+      final fileName = (result['name'] ?? result['uri'] ?? '').toString();
+      if (!_hasAllowedExt(fileName, _audioExts)) {
+        Toast.error(context, '请选择MP3、WAV等常见音频文件');
+        return;
+      }
+      final confirmed = await _confirmFakeUpload(
+        title: '确认上传定制声音',
+        fileName: fileName,
+      );
+      if (!mounted) return;
+      if (confirmed) Toast.success(context, '声音文件已选择');
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      Toast.error(context, e.message ?? '无法打开文件管理器');
+    } catch (_) {
+      if (!mounted) return;
+      Toast.error(context, '无法打开文件管理器');
+    }
+  }
+
+  Future<void> _startCustomize() async {
+    if (_generating) return;
+    _generating = true;
+    Toast.info(
+      context,
+      'AI数字人生成中',
+      duration: const Duration(seconds: 5),
+    );
+    await Future.delayed(const Duration(seconds: 5));
+    _generating = false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -976,25 +1213,25 @@ class _DigitalHumanPageV2State extends State<_DigitalHumanPageV2> {
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
-                children: const [
-                  _DigitalHumanSectionTitle(number: '1.', title: '上传形象'),
-                  SizedBox(height: 12),
-                  _UploadTrainingCard(),
-                  SizedBox(height: 36),
-                  _DigitalHumanSectionTitle(number: '2.', title: '授权形象'),
-                  SizedBox(height: 12),
-                  _AuthorizationCard(),
-                  SizedBox(height: 36),
-                  _DigitalHumanSectionTitle(number: '3.', title: '选择声音'),
-                  SizedBox(height: 12),
-                  _VoiceSelector(),
-                  SizedBox(height: 170),
+                children: [
+                  const _DigitalHumanSectionTitle(number: '1.', title: '上传形象'),
+                  const SizedBox(height: 12),
+                  _UploadTrainingCard(onTap: _pickTrainingVideo),
+                  const SizedBox(height: 36),
+                  const _DigitalHumanSectionTitle(number: '2.', title: '授权形象'),
+                  const SizedBox(height: 12),
+                  _AuthorizationCard(onAuthorize: _authorizeImage),
+                  const SizedBox(height: 36),
+                  const _DigitalHumanSectionTitle(number: '3.', title: '选择声音'),
+                  const SizedBox(height: 12),
+                  _VoiceSelector(onCustomVoice: _pickCustomVoice),
+                  const SizedBox(height: 170),
                 ],
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(22, 8, 22, 26),
-              child: _StartCustomizeButton(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 8, 22, 26),
+              child: _StartCustomizeButton(onPressed: _startCustomize),
             ),
           ],
         ),
@@ -1064,16 +1301,6 @@ class _DigitalHumanHeader extends StatelessWidget {
               ],
             ),
           ),
-          const Positioned(
-            right: 14,
-            child: IconButton(
-              icon: Icon(Icons.help_outline_rounded, size: 27),
-              onPressed: null,
-              color: Color(0xFFA5ADBA),
-              disabledColor: Color(0xFFA5ADBA),
-              splashRadius: 24,
-            ),
-          ),
         ],
       ),
     );
@@ -1137,37 +1364,45 @@ class _DigitalHumanSectionTitle extends StatelessWidget {
 }
 
 class _UploadTrainingCard extends StatelessWidget {
-  const _UploadTrainingCard();
+  final VoidCallback onTap;
+
+  const _UploadTrainingCard({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 284,
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.add_rounded, size: 52, color: Color(0xFFC8CDD5)),
-          SizedBox(height: 12),
-          Text(
-            '上传训练视频',
-            style: TextStyle(
-              fontSize: 15,
-              color: Color(0xFFA8AFBC),
-              fontWeight: FontWeight.w500,
-            ),
+        child: const SizedBox(
+          height: 284,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.add_rounded, size: 52, color: Color(0xFFC8CDD5)),
+              SizedBox(height: 12),
+              Text(
+                '上传形象视频',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: Color(0xFFA8AFBC),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
 class _AuthorizationCard extends StatelessWidget {
-  const _AuthorizationCard();
+  final VoidCallback onAuthorize;
+
+  const _AuthorizationCard({required this.onAuthorize});
 
   @override
   Widget build(BuildContext context) {
@@ -1213,20 +1448,25 @@ class _AuthorizationCard extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            width: 96,
-            height: 48,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: const Color(0xFF101114),
+          Material(
+            color: const Color(0xFF101114),
+            borderRadius: BorderRadius.circular(24),
+            child: InkWell(
+              onTap: onAuthorize,
               borderRadius: BorderRadius.circular(24),
-            ),
-            child: const Text(
-              '去授权',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
+              child: const SizedBox(
+                width: 96,
+                height: 48,
+                child: Center(
+                  child: Text(
+                    '去授权',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -1237,7 +1477,9 @@ class _AuthorizationCard extends StatelessWidget {
 }
 
 class _VoiceSelector extends StatelessWidget {
-  const _VoiceSelector();
+  final VoidCallback onCustomVoice;
+
+  const _VoiceSelector({required this.onCustomVoice});
 
   @override
   Widget build(BuildContext context) {
@@ -1246,14 +1488,18 @@ class _VoiceSelector extends StatelessWidget {
       child: ListView(
         scrollDirection: Axis.horizontal,
         clipBehavior: Clip.none,
-        children: const [
-          _VoiceCard(isCustom: true, label: '定制声音'),
-          SizedBox(width: 18),
-          _VoiceCard(label: '萌娃音', showVip: true),
-          SizedBox(width: 18),
-          _VoiceCard(label: '御姐音', showVip: true),
-          SizedBox(width: 18),
-          _VoiceCard(label: '男青年', showVip: true),
+        children: [
+          _VoiceCard(
+            isCustom: true,
+            label: '定制声音',
+            onTap: onCustomVoice,
+          ),
+          const SizedBox(width: 18),
+          const _VoiceCard(label: '萌娃音', showVip: true),
+          const SizedBox(width: 18),
+          const _VoiceCard(label: '御姐音', showVip: true),
+          const SizedBox(width: 18),
+          const _VoiceCard(label: '男青年', showVip: true),
         ],
       ),
     );
@@ -1264,11 +1510,13 @@ class _VoiceCard extends StatelessWidget {
   final String label;
   final bool isCustom;
   final bool showVip;
+  final VoidCallback? onTap;
 
   const _VoiceCard({
     required this.label,
     this.isCustom = false,
     this.showVip = false,
+    this.onTap,
   });
 
   @override
@@ -1276,35 +1524,41 @@ class _VoiceCard extends StatelessWidget {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Container(
-          width: 84,
-          height: 106,
-          decoration: BoxDecoration(
-            color: Colors.white,
+        Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            onTap: onTap,
             borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (isCustom) ...[
-                const Icon(Icons.add_rounded, size: 42, color: Colors.black),
-                const SizedBox(height: 8),
-              ],
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: isCustom ? 12 : 15,
-                    fontWeight: isCustom ? FontWeight.w500 : FontWeight.w600,
-                    color: Colors.black,
+            child: SizedBox(
+              width: 84,
+              height: 106,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (isCustom) ...[
+                    const Icon(Icons.add_rounded,
+                        size: 42, color: Colors.black),
+                    const SizedBox(height: 8),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: isCustom ? 12 : 15,
+                        fontWeight:
+                            isCustom ? FontWeight.w500 : FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
         if (showVip)
@@ -1336,23 +1590,30 @@ class _VoiceCard extends StatelessWidget {
 }
 
 class _StartCustomizeButton extends StatelessWidget {
-  const _StartCustomizeButton();
+  final VoidCallback onPressed;
+
+  const _StartCustomizeButton({required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 58,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: const Color(0xFF101114),
+    return Material(
+      color: const Color(0xFF101114),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onPressed,
         borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Text(
-        '开始定制',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 18,
-          fontWeight: FontWeight.w800,
+        child: const SizedBox(
+          height: 58,
+          child: Center(
+            child: Text(
+              '开始定制',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
         ),
       ),
     );

@@ -68,16 +68,23 @@ class _AiChatPageState extends ConsumerState<AiChatPage> {
     _scrollToBottom();
 
     try {
-      final result = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
-        ApiEndpoints.aiChat,
-        data: {'message': text},
-      );
-      final reply = result?['reply'] as String? ?? '无回复';
-      setState(() => _messages.add(_AiMessage(reply, false)));
-    } catch (e) {
-      setState(() => _messages.add(_AiMessage('请求失败，请重试', false)));
+      while (mounted) {
+        try {
+          final result =
+              await ref.read(apiClientProvider).post<Map<String, dynamic>>(
+            ApiEndpoints.aiChat,
+            data: {'message': text},
+          );
+          final reply = result?['reply'] as String? ?? '无回复';
+          if (!mounted) return;
+          setState(() => _messages.add(_AiMessage(reply, false)));
+          return;
+        } catch (_) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+        }
+      }
     } finally {
-      setState(() => _sending = false);
+      if (mounted) setState(() => _sending = false);
       _scrollToBottom();
     }
   }

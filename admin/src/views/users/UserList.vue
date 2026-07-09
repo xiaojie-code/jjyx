@@ -60,6 +60,16 @@
             <el-icon :color="row.isActivated ? '#67c23a' : '#ccc'"><CircleCheckFilled /></el-icon>
           </template>
         </el-table-column>
+        <el-table-column label="当前金币" width="110" align="right">
+          <template #default="{ row }">
+            {{ formatAmount(row.currency?.gold) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="原始金币" width="120" align="right">
+          <template #default="{ row }">
+            {{ formatAmount(row.currency?.totalGoldEarned) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="registerTime" label="注册时间" width="180" :formatter="dateTimeFormatter" />
         <el-table-column prop="loginTime" label="最近登录" width="180" :formatter="dateTimeFormatter" />
         <el-table-column prop="registerIp" label="注册IP" width="130" />
@@ -191,6 +201,12 @@ function handleSearch() { page.value = 1; loadUsers() }
 function handleReset() { searchKeyword.value = ''; searchStatus.value = undefined; handleSearch() }
 function handlePageChange(p: number) { page.value = p; loadUsers() }
 function handleSizeChange(s: number) { pageSize.value = s; page.value = 1; loadUsers() }
+
+function formatAmount(value: unknown) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n)) return '0'
+  return Number.isInteger(n) ? String(n) : n.toFixed(2)
+}
 
 function handleEdit(row: any) {
   editForm.value = { id: row.id, userType: row.userType, remark: row.remark || '' }

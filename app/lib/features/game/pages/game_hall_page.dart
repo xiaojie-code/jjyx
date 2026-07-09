@@ -20,8 +20,7 @@ class GameHallPage extends ConsumerStatefulWidget {
 }
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
-  static const String _gameShellVersion =
-      '20260625-killer-direct-ai-cn-v44';
+  static const String _gameShellVersion = '20260707-fishing-entry500-cast50-v1';
   static const String _h5AssetBaseUrl =
       'http://appassets.androidplatform.net/assets/h5-games';
 
@@ -236,6 +235,11 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  double _asDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
   }
 
   Map<String, dynamic>? _asMap(dynamic value) {
@@ -981,8 +985,11 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
 
     if (!mounted || selected == null) return;
     if (selected == 'mahjong') {
-      await _showTestingDialog();
-      return;
+      await _openGameWebView(
+        game,
+        overrideRawUrl: '/uploads/games/mahjong/index.html',
+        overrideOrientation: 'landscape',
+      );
     }
     if (selected == 'xiangqi') {
       await _openGameWebView(
@@ -1026,7 +1033,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       try {
         final balance =
             await api.get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
-        points = (balance?['points'] as num?)?.toDouble() ?? 0;
+        points = _asDouble(balance?['points']);
       } catch (_) {}
 
       final gameUrl = _resolveGameUrl(safeRawUrl, gameId);
@@ -1051,6 +1058,9 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         onExit: closeGameRoute,
       );
 
+      final playSessionId =
+          'game_${gameId}_${user.id}_${DateTime.now().microsecondsSinceEpoch}_${math.Random().nextInt(100000)}';
+      final playStartedAt = DateTime.now();
       await rootNavigator.push(
         MaterialPageRoute(
           builder: (_) => GameWebView(
@@ -1072,6 +1082,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
           ),
         ),
       );
+      await _reportGamePlayDuration(api, gameId, playSessionId, playStartedAt);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1079,6 +1090,28 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       );
     } finally {
       if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  Future<void> _reportGamePlayDuration(
+    ApiClient api,
+    int gameId,
+    String sessionId,
+    DateTime startedAt,
+  ) async {
+    final durationSeconds = DateTime.now().difference(startedAt).inSeconds;
+    if (durationSeconds <= 0) return;
+    try {
+      await api.post<Map<String, dynamic>>(
+        ApiEndpoints.gamePlayDuration(gameId),
+        data: {
+          'sessionId': sessionId,
+          'durationSeconds': durationSeconds,
+        },
+      );
+      await ref.read(authProvider.notifier).loadProfile();
+    } catch (_) {
+      // Game duration rewards should not block returning from the game.
     }
   }
 
@@ -1135,7 +1168,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       try {
         final balance =
             await api.get<Map<String, dynamic>>(ApiEndpoints.currencyBalance);
-        points = (balance?['points'] as num?)?.toDouble() ?? 0;
+        points = _asDouble(balance?['points']);
       } catch (_) {}
 
       final token = TokenStorage.getToken() ?? '';
@@ -1172,6 +1205,9 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         onExit: closeGameRoute,
       );
 
+      final playSessionId =
+          'game_${gameId}_${user.id}_${DateTime.now().microsecondsSinceEpoch}_${math.Random().nextInt(100000)}';
+      final playStartedAt = DateTime.now();
       await rootNavigator.push(
         MaterialPageRoute(
           builder: (_) => GameWebView(
@@ -1193,6 +1229,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
           ),
         ),
       );
+      await _reportGamePlayDuration(api, gameId, playSessionId, playStartedAt);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1266,6 +1303,10 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         text.contains('\\uploads\\games\\xiangqi\\')) {
       return 'xiangqi';
     }
+    if (text.contains('/uploads/games/mahjong/') ||
+        text.contains('\\uploads\\games\\mahjong\\')) {
+      return 'mahjong';
+    }
     if (text.contains('/uploads/games/saima2/') ||
         text.contains('\\uploads\\games\\saima2\\')) {
       return 'saima2';
@@ -1304,11 +1345,12 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     params['gameId'] = gameId.toString();
     params['apiBaseUrl'] = AppConstants.apiBaseUrl;
     params['saimaWsUrl'] = AppConstants.saimaWsUrl;
+    params['mahjongHttpUrl'] = AppConstants.mahjongHttpUrl;
+    params['mahjongWsUrl'] = AppConstants.mahjongWsUrl;
     params.addAll(extraParams);
     final wsBaseUri = Uri.tryParse(AppConstants.apiBaseUrl);
     if (wsBaseUri != null && wsBaseUri.host.isNotEmpty) {
-      params['wsProtocol'] =
-          wsBaseUri.scheme == 'https' ? 'wss:' : 'ws:';
+      params['wsProtocol'] = wsBaseUri.scheme == 'https' ? 'wss:' : 'ws:';
       params['wsHost'] = wsBaseUri.host;
       params['wsPort'] = '7272';
     }

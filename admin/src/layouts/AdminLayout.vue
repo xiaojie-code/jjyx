@@ -3,7 +3,7 @@
     <el-aside width="240px" class="layout-aside">
       <div class="logo">
         <span class="logo-icon">🎮</span>
-        <span class="logo-text">竞技游戏平台</span>
+        <span class="logo-text">沧恒云芯管理平台</span>
       </div>
       <el-menu
         :default-active="activeMenu"
@@ -43,6 +43,10 @@
         <el-menu-item index="/recharge">
           <el-icon><CreditCard /></el-icon>
           <span>充值管理</span>
+        </el-menu-item>
+        <el-menu-item index="/shop-orders">
+          <el-icon><ShoppingCart /></el-icon>
+          <span>商城订单</span>
         </el-menu-item>
         <el-menu-item index="/assets">
           <el-icon><Wallet /></el-icon>
@@ -131,6 +135,7 @@ const menuItems = [
   { path: '/cdk', title: 'CDK管理' },
   { path: '/withdrawals', title: '提现管理' },
   { path: '/recharge', title: '充值管理' },
+  { path: '/shop-orders', title: '商城订单' },
   { path: '/assets', title: '资产包管理' },
   { path: '/agents', title: '分销管理' },
   { path: '/matrix', title: '推广管理' },
@@ -145,7 +150,7 @@ const menuItems = [
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => {
   const item = menuItems.find((m) => m.path === route.path)
-  return item?.title ?? '管理后台'
+  return item?.title ?? '沧恒云芯管理平台'
 })
 
 function handleLogout() {
