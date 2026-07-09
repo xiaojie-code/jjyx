@@ -411,6 +411,23 @@ export class CurrencyService {
         );
         if (existed.length > 0) return;
 
+        const userRows = await mgr.query(
+          `SELECT id FROM users WHERE id = ? LIMIT 1`,
+          [userId],
+        );
+        if (userRows.length === 0) {
+          await mgr.query(
+            `INSERT INTO matrix_gold_migration_records (user_id, migrated_amount)
+             VALUES (?, 0)`,
+            [userId],
+          );
+          return;
+        }
+        await mgr.query(
+          `INSERT IGNORE INTO user_currencies (user_id) VALUES (?)`,
+          [userId],
+        );
+
         const incomeRows = await mgr.query(
           `SELECT COALESCE(SUM(amount), 0) AS total
            FROM matrix_incomes
