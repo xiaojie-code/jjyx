@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
@@ -116,6 +117,21 @@ export class CurrencyService {
 
   private formatLocalDate(date: Date) {
     return `${date.getFullYear()}-${this.pad2(date.getMonth() + 1)}-${this.pad2(date.getDate())}`;
+  }
+
+  private async requireActivatedForCurrencyTrade(userId: number, manager?: EntityManager) {
+    const mgr = manager || this.dataSource.manager;
+    const rows = await mgr.query(
+      `SELECT id, status, is_activated AS isActivated FROM users WHERE id = ? LIMIT 1`,
+      [userId],
+    );
+    const user = rows?.[0];
+    if (!user || Number(user.status) !== 1) {
+      throw new ForbiddenException('账号不可用');
+    }
+    if (!(user.isActivated === true || Number(user.isActivated) === 1)) {
+      throw new ForbiddenException('请先激活后再进行金币、铜币交易');
+    }
   }
 
   private formatLocalDateTime(date: Date) {
@@ -1709,6 +1725,7 @@ export class CurrencyService {
     data: { quantity: number; totalPrice: number; alipayName?: string; alipayQrcode?: string },
   ) {
     await this.ensureGoldModuleTables();
+    await this.requireActivatedForCurrencyTrade(userId);
     const quantity = this.validateGoldQuantity(data?.quantity, '出售金币数量');
     const totalPrice = this.roundMoney(Number(data?.totalPrice));
     if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
@@ -1842,6 +1859,7 @@ export class CurrencyService {
 
   async confirmGoldTradePaid(userId: number, id: number) {
     await this.ensureGoldModuleTables();
+    await this.requireActivatedForCurrencyTrade(userId);
     await this.dataSource.transaction(async (mgr) => {
       const rows = await mgr.query(
         `SELECT * FROM gold_trade_orders WHERE id = ? FOR UPDATE`,
@@ -1989,6 +2007,7 @@ export class CurrencyService {
     data: { quantity: number; totalPrice: number; alipayName?: string; alipayQrcode?: string },
   ) {
     await this.ensureGoldModuleTables();
+    await this.requireActivatedForCurrencyTrade(userId);
     const quantity = this.validateCopperQuantity(data?.quantity, '出售铜币数量');
     const totalPrice = this.roundMoney(Number(data?.totalPrice));
     if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
@@ -2120,6 +2139,7 @@ export class CurrencyService {
 
   async confirmCopperTradePaid(userId: number, id: number) {
     await this.ensureGoldModuleTables();
+    await this.requireActivatedForCurrencyTrade(userId);
     await this.dataSource.transaction(async (mgr) => {
       const rows = await mgr.query(
         `SELECT * FROM copper_trade_orders WHERE id = ? FOR UPDATE`,

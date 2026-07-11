@@ -121,15 +121,15 @@ export class HorseRaceGateway implements OnGatewayConnection, OnGatewayDisconnec
       if (!token) throw new Error('missing token');
       const payload = this.jwtService.verify(token);
       const user = await this.userRepo.findOne({ where: { id: Number(payload.sub) } });
-      if (!user || user.status !== 1 || !user.isActivated) {
-        throw new Error('inactive user');
+      if (!user || user.status !== 1) {
+        throw new Error('invalid user');
       }
       client.data.user = user;
       client.emit('horse:catalog', { horses: HORSES, betOptions: BET_OPTIONS });
       await this.resumeActiveMatch(client, user);
       this.logger.log(`horse socket connected user=${user.id} socket=${client.id}`);
     } catch (error) {
-      client.emit('horse:error', { message: '请先登录并激活账号' });
+      client.emit('horse:error', { message: '请先登录账号' });
       client.disconnect();
     }
   }

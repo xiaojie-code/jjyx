@@ -7,7 +7,6 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/storage/token_storage.dart';
-import '../../../core/utils/activation_guard.dart';
 import '../../../core/webview/game_webview.dart';
 import '../../../core/webview/js_bridge.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -20,7 +19,8 @@ class GameHallPage extends ConsumerStatefulWidget {
 }
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
-  static const String _gameShellVersion = '20260707-fishing-entry500-cast50-v1';
+  static const String _gameShellVersion =
+      '20260711-mahjong-settle-server-only-v2';
   static const String _h5AssetBaseUrl =
       'http://appassets.androidplatform.net/assets/h5-games';
 
@@ -1007,7 +1007,6 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
   }) async {
     final user = ref.read(authProvider).user;
     if (user == null) return;
-    if (!checkActivation(context, user.isActivated)) return;
 
     final gameId = (game['id'] as num?)?.toInt();
     if (gameId == null || _starting) return;
@@ -1140,7 +1139,6 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
 
     final user = ref.read(authProvider).user;
     if (user == null) return;
-    if (!checkActivation(context, user.isActivated)) return;
 
     if (_isLotteryGame(game)) {
       await _showLotteryDialog();

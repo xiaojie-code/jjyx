@@ -44,6 +44,12 @@ const GameBtnCallBackMixin = {
                 if (!context) continue;
                 let side = amount > 0 ? 'settle' : 'bet';
                 let requestId = ['mahjong', roomId, inning, seat.user_id, side].join(':');
+                this._appPointSettlementSynced = this._appPointSettlementSynced || {};
+                if (this._appPointSettlementSynced[requestId]) {
+                    log.warn('[mahjong points] duplicate settlement skipped ' + requestId + ' amount=' + amount);
+                    continue;
+                }
+                this._appPointSettlementSynced[requestId] = true;
                 appPointsClient.changePoints(context, amount, amount > 0 ? 'mahjong_settle' : 'mahjong_bet', {
                     requestId: requestId,
                     roomId: roomId,
@@ -55,11 +61,51 @@ const GameBtnCallBackMixin = {
                 }).then((ret) => {
                     log.warn('[mahjong points] synced ' + requestId + ' amount=' + amount + ' balance=' + (ret && (ret.balance || ret.points)));
                 }).catch((error) => {
+                    delete this._appPointSettlementSynced[requestId];
                     log.error('[mahjong points] failed ' + requestId + ' amount=' + amount + ' ' + (error && error.message || error));
                 });
             }
         } catch (error) {
             log.error('[mahjong points] sync exception ' + (error && error.message || error));
+        }
+    },
+
+    ensureRoundScoreBeforeOver() {
+        try {
+            if (!this.room_seats || !this.room_seats.length) return;
+            let hasRoundScore = false;
+            for (let i = 0; i < this.room_seats.length; i++) {
+                if (Number(this.room_seats[i].score || 0) !== 0) {
+                    hasRoundScore = true;
+                    break;
+                }
+            }
+            if (hasRoundScore) return;
+
+            let winnerIndex = -1;
+            for (let i = 0; i < this.room_seats.length; i++) {
+                let seat = this.room_seats[i];
+                if (!seat) continue;
+                if (seat.action_state == globalMgr.present_game_config.action_state.hu_card_over) {
+                    winnerIndex = i;
+                    break;
+                }
+                if (seat.hand_holds && seat.hand_holds.length == 14) {
+                    winnerIndex = i;
+                    break;
+                }
+            }
+            if (winnerIndex < 0) return;
+
+            let winner = this.room_seats[winnerIndex];
+            let fallbackCard = this.previous_card || (winner.hand_holds && winner.hand_holds[winner.hand_holds.length - 1]);
+            if (!fallbackCard) return;
+            this.previous_card = fallbackCard;
+            globalMgr.present_room_mgr.setRoomsSeatsActionState(winnerIndex, this.roomid, globalMgr.present_game_config.action_state.hu_card_over);
+            log.warn('[mahjong score] rescue settlement before over room=' + this.roomid + ' winner=' + winnerIndex);
+            this.caculate_score(true);
+        } catch (error) {
+            log.error('[mahjong score] rescue failed ' + (error && error.message || error));
         }
     },
 
@@ -294,6 +340,11 @@ class WSLogic extends WSMahjongGameBaseLogic {
         switch (game_scene_key) {
             case globalMgr.present_game_config.game_scene.game_start: 
                 game_start.bind(this)();
+                break;
+            case globalMgr.present_game_config.game_scene.single_over:
+            case globalMgr.present_game_config.game_scene.game_over:
+                this.ensureRoundScoreBeforeOver();
+                super.runScene(game_scene_key);
                 break;
       
             default:

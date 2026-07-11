@@ -136,6 +136,23 @@
         return window.cc && cc.myBaseMgr && cc.myBaseMgr.DAO && cc.myBaseMgr.DAO.GameDao;
     }
 
+    function firstValue() {
+        for (var i = 0; i < arguments.length; i++) {
+            var value = arguments[i];
+            if (value !== undefined && value !== null && value !== '') return value;
+        }
+        return '';
+    }
+
+    function buildSettlementRequestId(userDao, selfSeat, amount) {
+        var roomInfo = window.__MAHJONG_LAST_ROOM_INFO__ || {};
+        var roomId = firstValue(roomInfo.roomid, roomInfo.roomId, userDao.roomid);
+        var inning = firstValue(roomInfo.cruent_inning, roomInfo.current_inning, roomInfo.inning);
+        var userId = firstValue(userDao.uid, userDao.userAccountId, selfSeat && selfSeat.user_id);
+        if (roomId === '' || inning === '' || userId === '') return '';
+        return ['mahjong', roomId, inning, userId, amount > 0 ? 'settle' : 'bet'].join(':');
+    }
+
     function findSelfSeat(seats) {
         if (!seats || !seats.length) return null;
         var dao = getUserDao() || {};
@@ -206,6 +223,7 @@
             if (!isFinite(amount) || amount === 0) return false;
             var userDao = getUserDao() || {};
             var gameDao = getGameDao() || {};
+            var requestId = buildSettlementRequestId(userDao, selfSeat, amount);
             var rawKey = JSON.stringify({
                 source: source || 'mahjong_over',
                 roomId: userDao.roomid || '',
@@ -218,19 +236,12 @@
                 handHolds: selfSeat.hand_holds,
                 resultScore: selfSeat.result_score
             });
-            var requestId = 'mahjong_settle_' + hashString(rawKey);
+            requestId || (requestId = 'mahjong_settle_' + hashString(rawKey));
             if (settledRequests[requestId]) return false;
             settledRequests[requestId] = true;
-            return window.__mahjongChangePoints(amount, {
-                requestId: requestId,
-                reason: 'mahjong_settle',
-                roomId: userDao.roomid || '',
-                roomType: gameDao.present_roomType || '',
-                playType: gameDao.present_gameKey || '',
-                seatIndex: selfSeat.seats_index,
-                score: selfSeat.score,
-                totalScore: selfSeat.total_score
-            });
+            console.log('[mahjong-points] client settlement ignored; server settlement is authoritative', requestId, amount);
+            queueRequestBalance();
+            return true;
         } catch (error) {
             console.warn('[mahjong] settle points failed', error);
             return false;

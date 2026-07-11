@@ -348,8 +348,13 @@ class _MainShellState extends ConsumerState<MainShell>
   Widget build(BuildContext context) {
     final badges = ref.watch(badgeProvider);
     final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
-    final profileHasDot =
-        hasUpdate || badges.goldTradeCount > 0 || badges.copperTradeCount > 0;
+    final authState = ref.watch(authProvider);
+    final isActivated = authState.user?.isActivated ??
+        authState.profile?.user.isActivated ??
+        false;
+    final profileHasDot = hasUpdate ||
+        (isActivated &&
+            (badges.goldTradeCount > 0 || badges.copperTradeCount > 0));
 
     return PopScope(
       canPop: false,

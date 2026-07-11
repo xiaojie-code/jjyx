@@ -99,7 +99,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     final currency = profile?.currency;
     final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
     final badges = ref.watch(badgeProvider);
-    final tradeCount = badges.goldTradeCount + badges.copperTradeCount;
+    final tradeCount = (user?.isActivated ?? false)
+        ? badges.goldTradeCount + badges.copperTradeCount
+        : 0;
 
     return Scaffold(
       appBar: AppBar(

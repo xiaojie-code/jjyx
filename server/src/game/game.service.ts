@@ -258,11 +258,11 @@ export class GameService {
     return this.withResolvedOrientation(game);
   }
 
-  /** 启动游戏（检查激活+扣入场费+扣下注） */
+  /** 启动游戏（登录用户可玩，保留入场费和下注扣除） */
   async startGame(userId: number, gameId: number, betAmount?: number) {
     await this.ensureDefaultGameEntries();
     const user = await this.userRepo.findOne({ where: { id: userId } });
-    if (!user?.isActivated) throw new ForbiddenException('请先激活');
+    if (!user || Number(user.status) !== 1) throw new ForbiddenException('账号不可用');
 
     const game = await this.gameRepo.findOne({ where: { id: gameId } });
     if (!game) throw new NotFoundException('游戏不存在');

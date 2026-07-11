@@ -1,9 +1,12 @@
 param(
     [switch]$WithFlutterWeb,
+    [switch]$SkipFlutterWeb,
     [switch]$WithNginx,
     [string]$ApiHost,
     [int]$ServerPort = 3001,
-    [int]$WebPort = 3200
+    [int]$WebPort = 3200,
+    [int]$SaimaPort = 8080,
+    [string]$SaimaServerRoot = 'D:\myApp\work_ycykj\jjyx\saima\saima-server'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,9 +17,20 @@ $EnvFile = Join-Path $RepoRoot 'server\.env'
 $RedisExe = 'D:\myApp\redis\redis-server.exe'
 $RedisConf = 'D:\myApp\redis\redis.windows.conf'
 $PhpDir = 'D:\myApp\php'
+$PhpExe = Join-Path $PhpDir 'php.exe'
 $NginxExe = 'D:\myApp\nginx\nginx.exe'
 $NginxRoot = 'D:\myApp\nginx'
 $MahjongServerRoot = Join-Path $RepoRoot 'server\uploads\games\mahjong-server'
+$Pm2Home = Join-Path $RepoRoot 'pm2-home'
+$RunLogDir = Join-Path $RepoRoot '.codex\run-logs'
+
+if (-not $SkipFlutterWeb) {
+    $WithFlutterWeb = $true
+}
+
+if (-not (Test-Path $RunLogDir)) {
+    New-Item -ItemType Directory -Path $RunLogDir -Force | Out-Null
+}
 
 . $NetworkProfileScript
 
@@ -41,9 +55,26 @@ function Start-HiddenPowerShell {
     )
 
     Write-Host "START $Name"
+    $safeName = ($Name -replace '[^a-zA-Z0-9_-]', '-').Trim('-')
+    if (-not $safeName) { $safeName = 'service' }
+    $outLog = Join-Path $RunLogDir "$safeName.out.log"
+    $errLog = Join-Path $RunLogDir "$safeName.err.log"
+    $runner = Join-Path $RunLogDir "start-$safeName.ps1"
+    $runnerContent = @"
+`$ErrorActionPreference = 'Continue'
+Set-Location -LiteralPath '$WorkingDirectory'
+"[`$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] start $Name" | Out-File -LiteralPath '$outLog' -Append -Encoding utf8
+"cwd=$WorkingDirectory" | Out-File -LiteralPath '$outLog' -Append -Encoding utf8
+& {
+$Command
+} >> '$outLog' 2>> '$errLog'
+"[`$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] exited code=`$LASTEXITCODE" | Out-File -LiteralPath '$outLog' -Append -Encoding utf8
+Start-Sleep -Seconds 10
+"@
+    Set-Content -LiteralPath $runner -Value $runnerContent -Encoding utf8
     Start-Process `
         -FilePath 'powershell.exe' `
-        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $Command) `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner) `
         -WorkingDirectory $WorkingDirectory `
         -WindowStyle Hidden | Out-Null
 }
@@ -72,7 +103,11 @@ function Start-MySqlIfNeeded {
         Select-Object -First 1
     if ($service) {
         Write-Host "START MySQL service $($service.Name)"
-        Start-Service -Name $service.Name
+        try {
+            Start-Service -Name $service.Name
+        } catch {
+            Write-Host "WARN MySQL service start failed: $($_.Exception.Message)"
+        }
     } else {
         Write-Host 'SKIP MySQL service not found'
     }
@@ -108,11 +143,26 @@ function Start-KillerIfNeeded {
         return
     }
     $killerRoot = Join-Path $RepoRoot 'server\uploads\games\killer-server'
-    $command = '$env:PATH="' + $PhpDir + ';" + $env:PATH; php windows.php'
+    $command = '$env:PATH="' + $PhpDir + ';" + $env:PATH; & "' + $PhpExe + '" .\windows.php'
     Start-HiddenPowerShell `
         -Name 'killer websocket' `
         -WorkingDirectory $killerRoot `
         -Command $command
+}
+
+function Start-SaimaIfNeeded {
+    if (Test-LocalPort $SaimaPort) {
+        Write-Host "PORT $SaimaPort OK saima websocket"
+        return
+    }
+    if (-not (Test-Path $SaimaServerRoot)) {
+        Write-Host "SKIP saima server not found: $SaimaServerRoot"
+        return
+    }
+    Start-HiddenPowerShell `
+        -Name 'saima websocket' `
+        -WorkingDirectory $SaimaServerRoot `
+        -Command ('$env:PORT=' + $SaimaPort + '; node .\dist\index.js')
 }
 
 function Start-MahjongHttpIfNeeded {
@@ -131,10 +181,11 @@ function Start-MahjongWsIfNeeded {
         Write-Host 'PORT 42001 OK mahjong websocket'
         return
     }
+    $mahjongWsRoot = Join-Path $MahjongServerRoot 'ws_server\mahjong_game_shqm_server'
     Start-HiddenPowerShell `
         -Name 'mahjong websocket' `
-        -WorkingDirectory $MahjongServerRoot `
-        -Command 'pm2 start .\ecosystem.config.js --env dev --only mahjong_game_shqm_server'
+        -WorkingDirectory $mahjongWsRoot `
+        -Command ('$env:PM2_HOME="' + $Pm2Home + '"; $env:WS_PORT="42001"; $env:H_NODE_ENV="dev"; $env:name="mahjong_game_shqm_server"; node .\App.js')
 }
 
 function Start-FlutterWebIfNeeded {
@@ -177,6 +228,7 @@ Start-RedisIfNeeded
 Start-BackendIfNeeded
 Start-AdminIfNeeded
 Start-KillerIfNeeded
+Start-SaimaIfNeeded
 Start-MahjongHttpIfNeeded
 Start-MahjongWsIfNeeded
 Start-FlutterWebIfNeeded
@@ -184,7 +236,7 @@ Start-NginxIfNeeded
 
 Start-Sleep -Seconds 6
 
-$ports = @(3306, 6379, $ServerPort, 3100, 7272, 1236, 15103, 42001)
+$ports = @(3306, 6379, $ServerPort, 3100, 7272, 1236, $SaimaPort, 15103, 42001)
 if ($WithFlutterWeb) { $ports += $WebPort }
 if ($WithNginx) { $ports += 80 }
 
@@ -198,6 +250,7 @@ foreach ($port in $ports) {
 
 Write-Host "Admin: http://127.0.0.1:3100/admin/"
 Write-Host "Backend: $($Endpoint.ApiBaseUrl)"
+Write-Host "Saima WS: ws://$($Endpoint.ApiHost):$SaimaPort"
 Write-Host "Mahjong HTTP: http://$($Endpoint.ApiHost):15103"
 Write-Host "Mahjong WS: http://$($Endpoint.ApiHost):42001"
 if ($WithFlutterWeb) {

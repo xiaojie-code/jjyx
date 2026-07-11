@@ -3575,6 +3575,14 @@ window.__require = function e(t, n, r) {
           tooltip: "\u6d4b\u8bd5\u7279\u6548 \u52a8\u753b"
         }
       },
+      onLoad: function onLoad() {
+        function hideNode(node) {
+          if (!node) return;
+          node.opacity = 0;
+          for (var i = 0; i < node.children.length; i++) hideNode(node.children[i]);
+        }
+        hideNode(this.node);
+      },
       start: function start() {
         var self = this;
         cc.myBaseMgr.AudioMgr.playBGM("MusicEx_Normal");
@@ -3716,7 +3724,7 @@ window.__require = function e(t, n, r) {
 
          case "btn_rules":
           console.log("\u89c4\u5219");
-          this.creater_Layer("rules_layer");
+          return;
           break;
 
          case "btn_share":
@@ -4391,6 +4399,7 @@ window.__require = function e(t, n, r) {
         this.btn_gengDuo_node_guiZe_node = cc.find("Canvas/main/menu/sheZhi/btn_guiZe");
         this.btn_gengDuo_node_exit_game_node = cc.find("Canvas/main/menu/sheZhi/btn_exit_game");
         this.btn_gengDuo_node_caiDan_node = cc.find("Canvas/main/menu/btn_caiDan");
+        this.btn_gengDuo_node_guiZe_node && (this.btn_gengDuo_node_guiZe_node.active = false);
         this.room_info = cc.find("Canvas/main/room_info");
         this.roomid_label = cc.find("Canvas/main/room_info/fangJianHao/fangJianHao_val").getComponent("cc.Label");
         this.inning_label = cc.find("Canvas/main/room_info/juShu/juShu_val").getComponent("cc.Label");
@@ -4669,6 +4678,7 @@ window.__require = function e(t, n, r) {
         switch (d) {
          case "btn_gengDuo":
           this.gengDuo_node.active = !this.gengDuo_node.active;
+          this.btn_gengDuo_node_guiZe_node && (this.btn_gengDuo_node_guiZe_node.active = false);
           this.gengDuo_btn_mask.active = !this.gengDuo_btn_mask.active;
           break;
 
@@ -4748,7 +4758,7 @@ window.__require = function e(t, n, r) {
 
          case "btn_guiZe":
           console.log("\u89c4\u5219");
-          this.creater_Layer("rules_layer");
+          return;
           break;
 
          case "btn_quXiaoTuoGuan":
@@ -5736,6 +5746,7 @@ window.__require = function e(t, n, r) {
       onUpdate_room_info_all: function onUpdate_room_info_all(code, msg, data) {
         this._home_state = data["home_state"];
         this._home_data = data;
+        "undefined" != typeof window && (window.__MAHJONG_LAST_ROOM_INFO__ = data);
         function repare() {
           this.game_layer.active = false;
           this.matching_layer.active = false;
@@ -6218,6 +6229,7 @@ window.__require = function e(t, n, r) {
       onUpdate_room_info_all: function onUpdate_room_info_all(code, msg, data) {
         this._home_state = data["home_state"];
         this._home_data = data;
+        "undefined" != typeof window && (window.__MAHJONG_LAST_ROOM_INFO__ = data);
         function repare() {
           this.game_layer.active = false;
           this.matching_layer.active = false;
@@ -7535,6 +7547,7 @@ window.__require = function e(t, n, r) {
       onUpdate_room_info_all: function onUpdate_room_info_all(code, msg, data) {
         this._home_state = data["home_state"];
         this._home_data = data;
+        "undefined" != typeof window && (window.__MAHJONG_LAST_ROOM_INFO__ = data);
         function repare() {
           this.game_layer.active = false;
           this.matching_layer.active = false;
@@ -14394,14 +14407,7 @@ window.__require = function e(t, n, r) {
           break;
 
          case "rules_layer":
-          self._loadRes_Layer("prefab/layer/rules_layer", true, function(data) {
-            var prefab = cc.instantiate(data);
-            prefab.layerName = layerName;
-            cc.director.getScene().getChildByName("Canvas").addChild(prefab);
-            _ui_layer_map[layerName] = prefab;
-            callback && callback(prefab);
-          });
-          break;
+          return;
 
          case "loading_layer":
           self._loadRes_Layer("prefab/layer/loading_layer", false, function(data) {

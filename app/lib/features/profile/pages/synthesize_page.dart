@@ -118,6 +118,17 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
+  bool _isCurrentUserActivated() {
+    final auth = ref.read(authProvider);
+    return auth.user?.isActivated ?? auth.profile?.user.isActivated ?? false;
+  }
+
+  bool _ensureCurrencyTradeAllowed() {
+    if (_isCurrentUserActivated()) return true;
+    Toast.error(context, '请先激活后再进行金币、铜币交易');
+    return false;
+  }
+
   String _formatNumber(double value) {
     if (value % 1 == 0) return value.toInt().toString();
     return value.toStringAsFixed(2);
@@ -264,6 +275,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
   }
 
   Future<void> _showSellTradeDialog({required bool isCopper}) async {
+    if (!_ensureCurrencyTradeAllowed()) return;
     final currencyName = isCopper ? '铜币' : '金币';
     final currentBalance = isCopper
         ? _numberValue(_copperOverview?['copper'] ??
@@ -541,6 +553,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
     Map<String, dynamic> item, {
     required bool isCopper,
   }) async {
+    if (!_ensureCurrencyTradeAllowed()) return;
     final id = _intValue(item['id']);
     if (id <= 0) return;
     final currencyName = isCopper ? '铜币' : '金币';
@@ -822,6 +835,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
                     onPressed: _goldBusy
                         ? null
                         : () async {
+                            if (!_ensureCurrencyTradeAllowed()) return;
                             setState(() => _goldBusy = true);
                             await _showSellTradeDialog(isCopper: false);
                             if (mounted) setState(() => _goldBusy = false);
@@ -929,6 +943,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
               onPressed: _goldBusy
                   ? null
                   : () async {
+                      if (!_ensureCurrencyTradeAllowed()) return;
                       setState(() => _goldBusy = true);
                       await _showSellTradeDialog(isCopper: true);
                       if (mounted) setState(() => _goldBusy = false);
@@ -1004,7 +1019,6 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
     final target = (config['targetCurrency'] ?? '').toString();
     final targetAmount = _numberValue(config['targetAmount']);
     final totalConsume = consume * quantity;
-    final totalTarget = targetAmount * quantity;
     final hasEnoughPoints = availablePoints >= totalConsume;
     final isSubmitting = _synthesizing == id;
     final canSubmit =
@@ -1058,19 +1072,6 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
                       ? null
                       : () => onQuantityChanged(quantity - 1),
                   onIncrease: () => onQuantityChanged(quantity + 1),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '需 ${_formatNumber(totalConsume)} 积分，获得 ${_formatNumber(totalTarget)} ${_currencyName(target)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: hasEnoughPoints
-                        ? const Color(0xFF667085)
-                        : const Color(0xFFE5484D),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
                 ),
               ],
             ),
