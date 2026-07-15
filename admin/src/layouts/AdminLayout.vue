@@ -68,6 +68,10 @@
           <el-icon><DataLine /></el-icon>
           <span>积分返还统计</span>
         </el-menu-item>
+        <el-menu-item index="/game-duration">
+          <el-icon><Timer /></el-icon>
+          <span>游戏时长统计</span>
+        </el-menu-item>
         <el-menu-item index="/social">
           <el-icon><ChatDotRound /></el-icon>
           <span>社交管理</span>
@@ -141,6 +145,7 @@ const menuItems = [
   { path: '/matrix', title: '推广管理' },
   { path: '/reward-backfill', title: '奖励补账' },
   { path: '/weekly-point-returns', title: '积分返还统计' },
+  { path: '/game-duration', title: '游戏时长统计' },
   { path: '/social', title: '社交管理' },
   { path: '/invite-records', title: '邀请关系' },
   { path: '/configs', title: '系统配置' },

@@ -112,6 +112,12 @@ const router = createRouter({
           meta: { title: '积分返还统计', icon: 'DataLine' },
         },
         {
+          path: 'game-duration',
+          name: 'GameDuration',
+          component: () => import('@/views/games/GameDurationManage.vue'),
+          meta: { title: '游戏时长统计', icon: 'Timer' },
+        },
+        {
           path: 'social',
           name: 'SocialManage',
           component: () => import('@/views/social/SocialManage.vue'),

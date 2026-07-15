@@ -998,25 +998,33 @@ export class CurrencyService {
     const playDate = this.formatLocalDate(new Date());
 
     return this.dataSource.transaction(async (mgr) => {
-      const insertResult = await mgr.query(
+      await mgr.query(
         `INSERT IGNORE INTO game_play_sessions
           (user_id, game_id, session_id, play_date, duration_seconds, copper_reward, currency_log_id, created_at)
          VALUES (?, ?, ?, ?, 0, 0, NULL, NOW())`,
         [userId, gameId || null, sessionId, playDate],
       );
-      const affectedRows = Number(insertResult?.affectedRows ?? insertResult?.[0]?.affectedRows ?? 0);
-      if (affectedRows === 0) {
-        const rows = await mgr.query(
-          `SELECT duration_seconds AS durationSeconds, copper_reward AS copperReward
-           FROM game_play_sessions
-           WHERE user_id = ? AND session_id = ? LIMIT 1`,
-          [userId, sessionId],
-        );
+      const sessionRows = await mgr.query(
+        `SELECT duration_seconds AS durationSeconds, copper_reward AS copperReward
+         FROM game_play_sessions
+         WHERE user_id = ? AND session_id = ?
+         FOR UPDATE`,
+        [userId, sessionId],
+      );
+      const session = sessionRows?.[0] || {};
+      const previousDurationSeconds = Number(session.durationSeconds || 0);
+      const countedDurationSeconds = Math.max(
+        0,
+        safeDurationSeconds - previousDurationSeconds,
+      );
+      if (countedDurationSeconds <= 0) {
         return {
           counted: false,
           duplicate: true,
-          durationSeconds: Number(rows?.[0]?.durationSeconds || 0),
-          copperReward: Number(rows?.[0]?.copperReward || 0),
+          durationSeconds: previousDurationSeconds,
+          countedDurationSeconds: 0,
+          copperReward: 0,
+          rewardedCopperSession: Number(session.copperReward || 0),
         };
       }
 
@@ -1036,7 +1044,7 @@ export class CurrencyService {
       const daily = dailyRows?.[0] || {};
       const totalBefore = Number(daily.totalSeconds || 0);
       const rewardedBefore = Number(daily.rewardedCopper || 0);
-      const totalAfter = totalBefore + safeDurationSeconds;
+      const totalAfter = totalBefore + countedDurationSeconds;
       const config = await this.getGameCopperConfig(mgr);
       const eligibleCopper = Math.min(
         Math.floor(totalAfter / (config.minutesPerCoin * 60)),
@@ -1065,7 +1073,9 @@ export class CurrencyService {
       );
       await mgr.query(
         `UPDATE game_play_sessions
-         SET duration_seconds = ?, copper_reward = ?, currency_log_id = ?
+         SET duration_seconds = ?,
+             copper_reward = copper_reward + ?,
+             currency_log_id = COALESCE(?, currency_log_id)
          WHERE user_id = ? AND session_id = ?`,
         [safeDurationSeconds, copperReward, currencyLogId, userId, sessionId],
       );
@@ -1074,6 +1084,7 @@ export class CurrencyService {
         counted: true,
         duplicate: false,
         durationSeconds: safeDurationSeconds,
+        countedDurationSeconds,
         totalSecondsToday: totalAfter,
         copperReward,
         rewardedCopperToday: rewardedAfter,
@@ -2508,7 +2519,7 @@ export class CurrencyService {
       { configKey: GOLD_EXCHANGE_RATE_KEY, configName: '金币兑换现金比例', configValue: '1', description: '1金币可兑换多少元，默认1，可填0.9或1.1' },
       { configKey: 'meeting_start_cost', configName: '普通成员发起会议消耗', configValue: '10000', description: '普通群成员发起群会议需要扣除的积分，群主和管理员免费' },
       { configKey: 'data_retention_days', configName: '聊天/会议数据保留天数', configValue: '7', description: '后台清理聊天记录和已结束会议时使用的保留天数' },
-      { configKey: 'meeting_media_mode', configName: '会议媒体模式', configValue: 'p2p', description: 'p2p 或 sfu；SFU 服务接入稳定后可切换为 sfu' },
+      { configKey: 'meeting_media_mode', configName: '会议媒体模式', configValue: 'p2p', description: 'p2p、trtc 或 sfu；腾讯云 TRTC 接入稳定后可切换为 trtc' },
       { configKey: 'meeting_sfu_endpoint', configName: '会议SFU地址', configValue: '', description: 'mediasoup/Janus 信令或控制服务地址，未配置时客户端继续使用 P2P' },
       { configKey: 'meeting_turn_urls', configName: '会议TURN地址', configValue: '', description: 'TURN/STUN 地址，多个地址用英文逗号或换行分隔' },
       { configKey: 'meeting_turn_username', configName: '会议TURN用户名', configValue: '', description: 'TURN 服务用户名' },

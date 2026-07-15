@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -1060,28 +1061,44 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       final playSessionId =
           'game_${gameId}_${user.id}_${DateTime.now().microsecondsSinceEpoch}_${math.Random().nextInt(100000)}';
       final playStartedAt = DateTime.now();
-      await rootNavigator.push(
-        MaterialPageRoute(
-          builder: (_) => GameWebView(
-            gameUrl: gameUrl,
-            gameId: gameId,
-            userInfo: GameUserInfo(
-              token: token,
-              userId: user.id,
-              account: user.account,
-              nickname: user.nickname.isNotEmpty ? user.nickname : user.account,
-              avatar: user.avatar,
-              points: points,
-              gameId: gameId,
-            ),
-            jsBridge: jsBridge,
-            onExit: closeGameRoute,
-            orientation: orientation,
-            showExitButton: false,
-          ),
-        ),
+      final durationHeartbeat = _startGameDurationHeartbeat(
+        api,
+        gameId,
+        playSessionId,
+        playStartedAt,
       );
-      await _reportGamePlayDuration(api, gameId, playSessionId, playStartedAt);
+      try {
+        await rootNavigator.push(
+          MaterialPageRoute(
+            builder: (_) => GameWebView(
+              gameUrl: gameUrl,
+              gameId: gameId,
+              userInfo: GameUserInfo(
+                token: token,
+                userId: user.id,
+                account: user.account,
+                nickname:
+                    user.nickname.isNotEmpty ? user.nickname : user.account,
+                avatar: user.avatar,
+                points: points,
+                gameId: gameId,
+              ),
+              jsBridge: jsBridge,
+              onExit: closeGameRoute,
+              orientation: orientation,
+              showExitButton: false,
+            ),
+          ),
+        );
+      } finally {
+        durationHeartbeat.cancel();
+        await _reportGamePlayDuration(
+          api,
+          gameId,
+          playSessionId,
+          playStartedAt,
+        );
+      }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1101,17 +1118,33 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
     final durationSeconds = DateTime.now().difference(startedAt).inSeconds;
     if (durationSeconds <= 0) return;
     try {
-      await api.post<Map<String, dynamic>>(
+      final result = await api.post<Map<String, dynamic>>(
         ApiEndpoints.gamePlayDuration(gameId),
         data: {
           'sessionId': sessionId,
           'durationSeconds': durationSeconds,
         },
       );
-      await ref.read(authProvider.notifier).loadProfile();
+      final copperReward = (result?['copperReward'] as num?)?.toDouble() ?? 0;
+      if (copperReward > 0 && mounted) {
+        await ref.read(authProvider.notifier).loadProfile();
+      }
     } catch (_) {
       // Game duration rewards should not block returning from the game.
     }
+  }
+
+  Timer _startGameDurationHeartbeat(
+    ApiClient api,
+    int gameId,
+    String sessionId,
+    DateTime startedAt,
+  ) {
+    return Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(
+        _reportGamePlayDuration(api, gameId, sessionId, startedAt),
+      );
+    });
   }
 
   Future<void> _startGame(Map<String, dynamic> game) async {
@@ -1206,28 +1239,44 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       final playSessionId =
           'game_${gameId}_${user.id}_${DateTime.now().microsecondsSinceEpoch}_${math.Random().nextInt(100000)}';
       final playStartedAt = DateTime.now();
-      await rootNavigator.push(
-        MaterialPageRoute(
-          builder: (_) => GameWebView(
-            gameUrl: gameUrl,
-            gameId: gameId,
-            userInfo: GameUserInfo(
-              token: token,
-              userId: user.id,
-              account: user.account,
-              nickname: user.nickname.isNotEmpty ? user.nickname : user.account,
-              avatar: user.avatar,
-              points: points,
-              gameId: gameId,
-            ),
-            jsBridge: jsBridge,
-            onExit: closeGameRoute,
-            orientation: orientation,
-            showExitButton: false,
-          ),
-        ),
+      final durationHeartbeat = _startGameDurationHeartbeat(
+        api,
+        gameId,
+        playSessionId,
+        playStartedAt,
       );
-      await _reportGamePlayDuration(api, gameId, playSessionId, playStartedAt);
+      try {
+        await rootNavigator.push(
+          MaterialPageRoute(
+            builder: (_) => GameWebView(
+              gameUrl: gameUrl,
+              gameId: gameId,
+              userInfo: GameUserInfo(
+                token: token,
+                userId: user.id,
+                account: user.account,
+                nickname:
+                    user.nickname.isNotEmpty ? user.nickname : user.account,
+                avatar: user.avatar,
+                points: points,
+                gameId: gameId,
+              ),
+              jsBridge: jsBridge,
+              onExit: closeGameRoute,
+              orientation: orientation,
+              showExitButton: false,
+            ),
+          ),
+        );
+      } finally {
+        durationHeartbeat.cancel();
+        await _reportGamePlayDuration(
+          api,
+          gameId,
+          playSessionId,
+          playStartedAt,
+        );
+      }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

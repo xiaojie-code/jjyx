@@ -31,6 +31,31 @@
 
   <title>competitive_game_platform</title>
   <link rel="manifest" href="manifest.json">
+  <script src="js/TrtcWrapper.2.0.0-dev.0.0.2.bundle.js" type="application/javascript"></script>
+  <script>
+    (() => {
+      const sizeTrtcViews = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('[id^="HTMLID_trtcCloudChannelView"]').forEach((view) => {
+          view.style.width = '100%';
+          view.style.height = '100%';
+          view.style.overflow = 'hidden';
+          view.querySelectorAll('video').forEach((video) => {
+            video.style.width = '100%';
+            video.style.height = '100%';
+            video.style.objectFit = 'cover';
+          });
+        });
+      };
+      window.addEventListener('DOMContentLoaded', () => {
+        sizeTrtcViews(document);
+        new MutationObserver(() => sizeTrtcViews(document)).observe(
+          document.documentElement,
+          { childList: true, subtree: true },
+        );
+      });
+    })();
+  </script>
 </head>
 <body>
   <!--

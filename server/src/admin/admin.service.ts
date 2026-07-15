@@ -766,6 +766,65 @@ export class AdminService {
     return Math.min(Math.floor(parsed), max);
   }
 
+  private formatAdminDate(date: Date) {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  private normalizeAdminDate(value: any, fallback: string) {
+    const text = String(value || '').trim();
+    if (!text) return fallback;
+    const matched = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+    if (!matched) throw new BadRequestException('日期格式应为 YYYY-MM-DD');
+    const year = Number(matched[1]);
+    const month = Number(matched[2]);
+    const day = Number(matched[3]);
+    const parsed = new Date(year, month - 1, day);
+    if (
+      parsed.getFullYear() !== year ||
+      parsed.getMonth() !== month - 1 ||
+      parsed.getDate() !== day
+    ) {
+      throw new BadRequestException('查询日期无效');
+    }
+    return text;
+  }
+
+  private getGameDurationFilters(query: any) {
+    const today = new Date();
+    const defaultEndDate = this.formatAdminDate(today);
+    const defaultStart = new Date(today);
+    defaultStart.setDate(defaultStart.getDate() - 6);
+    const startDate = this.normalizeAdminDate(
+      query.startDate,
+      this.formatAdminDate(defaultStart),
+    );
+    const endDate = this.normalizeAdminDate(query.endDate, defaultEndDate);
+    if (startDate > endDate) {
+      throw new BadRequestException('开始日期不能晚于结束日期');
+    }
+
+    const where = ['s.play_date BETWEEN ? AND ?'];
+    const params: any[] = [startDate, endDate];
+    const keyword = String(query.keyword || '').trim();
+    if (keyword) {
+      where.push('(u.id = ? OR u.account LIKE ? OR u.nickname LIKE ?)');
+      params.push(Number(keyword) || 0, `%${keyword}%`, `%${keyword}%`);
+    }
+    const gameId = Number(query.gameId || 0);
+    if (Number.isInteger(gameId) && gameId > 0) {
+      where.push('s.game_id = ?');
+      params.push(gameId);
+    }
+    return {
+      startDate,
+      endDate,
+      gameId: gameId > 0 ? gameId : 0,
+      where,
+      params,
+    };
+  }
+
   private roundAdminPoints(value: number) {
     return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
   }
@@ -1147,6 +1206,197 @@ export class AdminService {
         baseAfterReturn: this.roundAdminPoints(Number(row.baseAfterReturn || 0)),
         currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
       })),
+    };
+  }
+
+  // ===== 游戏时长统计 =====
+  async getGameDurationOverview(query: any) {
+    await this.currencyService.ensureDefaultConfigs();
+    const filters = this.getGameDurationFilters(query);
+    const rows = await this.dataSource.query(
+      `SELECT
+         COUNT(*) AS sessionCount,
+         COUNT(DISTINCT s.user_id) AS activeUsers,
+         COUNT(DISTINCT s.game_id) AS activeGames,
+         COALESCE(SUM(s.duration_seconds), 0) AS totalSeconds,
+         COALESCE(SUM(s.copper_reward), 0) AS rewardedCopper
+       FROM game_play_sessions s
+       LEFT JOIN users u ON u.id = s.user_id
+       WHERE ${filters.where.join(' AND ')}`,
+      filters.params,
+    );
+    const configRows = await this.dataSource.query(
+      `SELECT config_key AS configKey, config_value AS configValue
+       FROM system_configs
+       WHERE config_key IN ('game_copper_minutes_per_coin', 'game_copper_daily_max')`,
+    );
+    const config = new Map(
+      (configRows || []).map((row: any) => [
+        String(row.configKey),
+        Number(row.configValue || 0),
+      ]),
+    );
+    const summary = rows?.[0] || {};
+    return {
+      startDate: filters.startDate,
+      endDate: filters.endDate,
+      activeUsers: Number(summary.activeUsers || 0),
+      activeGames: Number(summary.activeGames || 0),
+      sessionCount: Number(summary.sessionCount || 0),
+      totalSeconds: Number(summary.totalSeconds || 0),
+      rewardedCopper: Number(summary.rewardedCopper || 0),
+      minutesPerCoin: config.get('game_copper_minutes_per_coin') || 15,
+      dailyMax: config.get('game_copper_daily_max') || 2,
+    };
+  }
+
+  async getGameDurationDaily(query: any) {
+    const page = this.safePositiveInt(query.page, 1, 100000);
+    const pageSize = this.safePositiveInt(query.pageSize, 20, 100);
+    const offset = (page - 1) * pageSize;
+    const filters = this.getGameDurationFilters(query);
+    const whereSql = filters.where.join(' AND ');
+
+    const totalRows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total
+       FROM (
+         SELECT s.user_id, s.play_date
+         FROM game_play_sessions s
+         LEFT JOIN users u ON u.id = s.user_id
+         WHERE ${whereSql}
+         GROUP BY s.user_id, s.play_date
+       ) grouped_duration_rows`,
+      filters.params,
+    );
+    const total = Number(totalRows?.[0]?.total || 0);
+    const rows = await this.dataSource.query(
+      `SELECT
+         s.user_id AS userId,
+         u.account,
+         u.nickname,
+         DATE_FORMAT(s.play_date, '%Y-%m-%d') AS playDate,
+         COUNT(*) AS sessionCount,
+         COUNT(DISTINCT s.game_id) AS gameCount,
+         GROUP_CONCAT(DISTINCT g.name ORDER BY g.name SEPARATOR '、') AS gameNames,
+         COALESCE(SUM(s.duration_seconds), 0) AS totalSeconds,
+         COALESCE(SUM(s.copper_reward), 0) AS rewardedCopper,
+         DATE_FORMAT(MAX(s.created_at), '%Y-%m-%d %H:%i:%s') AS latestSessionAt
+       FROM game_play_sessions s
+       LEFT JOIN users u ON u.id = s.user_id
+       LEFT JOIN games g ON g.id = s.game_id
+       WHERE ${whereSql}
+       GROUP BY s.user_id, s.play_date, u.account, u.nickname
+       ORDER BY s.play_date DESC, totalSeconds DESC, s.user_id DESC
+       LIMIT ${offset}, ${pageSize}`,
+      filters.params,
+    );
+
+    return {
+      list: (rows || []).map((row: any) => ({
+        ...row,
+        userId: Number(row.userId),
+        sessionCount: Number(row.sessionCount || 0),
+        gameCount: Number(row.gameCount || 0),
+        totalSeconds: Number(row.totalSeconds || 0),
+        rewardedCopper: Number(row.rewardedCopper || 0),
+      })),
+      total,
+      page,
+      pageSize,
+      startDate: filters.startDate,
+      endDate: filters.endDate,
+    };
+  }
+
+  async getGameDurationGames() {
+    const rows = await this.dataSource.query(
+      `SELECT id, name, status
+       FROM games
+       ORDER BY sort_order ASC, id ASC`,
+    );
+    return (rows || []).map((row: any) => ({
+      id: Number(row.id),
+      name: row.name,
+      status: Number(row.status),
+    }));
+  }
+
+  async getGameDurationSessions(userId: number, query: any) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('用户不存在');
+    const page = this.safePositiveInt(query.page, 1, 100000);
+    const pageSize = this.safePositiveInt(query.pageSize, 20, 100);
+    const offset = (page - 1) * pageSize;
+    const requestedDate = String(query.date || '').trim();
+    const filters = this.getGameDurationFilters({
+      startDate: requestedDate || query.startDate,
+      endDate: requestedDate || query.endDate,
+      gameId: query.gameId,
+    });
+    filters.where.push('s.user_id = ?');
+    filters.params.push(userId);
+    const whereSql = filters.where.join(' AND ');
+
+    const totalRows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total
+       FROM game_play_sessions s
+       LEFT JOIN users u ON u.id = s.user_id
+       WHERE ${whereSql}`,
+      filters.params,
+    );
+    const summaryRows = await this.dataSource.query(
+      `SELECT
+         COALESCE(SUM(s.duration_seconds), 0) AS totalSeconds,
+         COALESCE(SUM(s.copper_reward), 0) AS rewardedCopper,
+         COUNT(DISTINCT s.game_id) AS gameCount
+       FROM game_play_sessions s
+       LEFT JOIN users u ON u.id = s.user_id
+       WHERE ${whereSql}`,
+      filters.params,
+    );
+    const rows = await this.dataSource.query(
+      `SELECT
+         s.id,
+         s.session_id AS sessionId,
+         s.game_id AS gameId,
+         g.name AS gameName,
+         DATE_FORMAT(s.play_date, '%Y-%m-%d') AS playDate,
+         s.duration_seconds AS durationSeconds,
+         s.copper_reward AS copperReward,
+         s.currency_log_id AS currencyLogId,
+         l.sn AS currencyLogSn,
+         DATE_FORMAT(s.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt
+       FROM game_play_sessions s
+       LEFT JOIN users u ON u.id = s.user_id
+       LEFT JOIN games g ON g.id = s.game_id
+       LEFT JOIN currency_logs l ON l.id = s.currency_log_id
+       WHERE ${whereSql}
+       ORDER BY s.created_at DESC, s.id DESC
+       LIMIT ${offset}, ${pageSize}`,
+      filters.params,
+    );
+    const summary = summaryRows?.[0] || {};
+
+    return {
+      user: { id: user.id, account: user.account, nickname: user.nickname },
+      summary: {
+        totalSeconds: Number(summary.totalSeconds || 0),
+        rewardedCopper: Number(summary.rewardedCopper || 0),
+        gameCount: Number(summary.gameCount || 0),
+      },
+      list: (rows || []).map((row: any) => ({
+        ...row,
+        id: Number(row.id),
+        gameId: row.gameId ? Number(row.gameId) : null,
+        durationSeconds: Number(row.durationSeconds || 0),
+        copperReward: Number(row.copperReward || 0),
+        currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
+      })),
+      total: Number(totalRows?.[0]?.total || 0),
+      page,
+      pageSize,
+      startDate: filters.startDate,
+      endDate: filters.endDate,
     };
   }
 

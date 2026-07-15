@@ -9,6 +9,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull, LessThan, In } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { createHmac } from 'crypto';
+import { deflateSync } from 'zlib';
 import { existsSync, unlinkSync } from 'fs';
 import { resolve } from 'path';
 import { Conversation } from '../entities/conversation.entity';
@@ -257,7 +259,10 @@ export class MeetingService implements OnModuleInit {
 
   async getMediaConfig(userId: number, meetingId: number) {
     const meeting = await this.getMeetingOrFail(meetingId);
+    if (meeting.status !== 1) throw new BadRequestException('会议已结束');
     await this.ensureGroupMember(userId, meeting.groupId);
+    const ban = await this.banRepo.findOne({ where: { meetingId, userId } });
+    if (ban) throw new ForbiddenException('你已被移出本次会议');
 
     const mediaMode = await this.currencyService.getConfigValue(
       'meeting_media_mode',
@@ -298,7 +303,58 @@ export class MeetingService implements OnModuleInit {
       iceServers.push(turnServer);
     }
 
-    const normalizedMode = mediaMode.trim().toLowerCase() === 'sfu' ? 'sfu' : 'p2p';
+    const configuredMode = mediaMode.trim().toLowerCase();
+    const normalizedMode =
+      configuredMode === 'trtc'
+        ? 'trtc'
+        : configuredMode === 'sfu'
+          ? 'sfu'
+          : 'p2p';
+    const recording = {
+      enabled: recordingEnabled,
+      autoRecord,
+      url: meeting.recordingUrl || '',
+      replayAvailable: !!meeting.recordingUrl?.trim(),
+    };
+
+    if (normalizedMode === 'trtc') {
+      const sdkAppId = Number(process.env.TENCENT_TRTC_SDK_APP_ID || 0);
+      const secretKey = (process.env.TENCENT_TRTC_SECRET_KEY || '').trim();
+      const expireSeconds = this.parsePositiveInt(
+        process.env.TENCENT_TRTC_USER_SIG_EXPIRE_SECONDS,
+        86400,
+      );
+      if (!Number.isFinite(sdkAppId) || sdkAppId <= 0 || !secretKey) {
+        this.logger.error('TRTC config missing: check TENCENT_TRTC_SDK_APP_ID and TENCENT_TRTC_SECRET_KEY');
+        throw new BadRequestException('TRTC配置未完成，请联系管理员');
+      }
+      const trtcUserId = `u_${userId}`;
+      const sig = this.createTrtcUserSig({
+        sdkAppId,
+        secretKey,
+        userId: trtcUserId,
+        expireSeconds,
+      });
+      return {
+        meetingId,
+        mediaMode: normalizedMode,
+        iceServers: [],
+        trtc: {
+          sdkAppId,
+          roomId: meetingId,
+          strRoomId: `meeting_${meetingId}`,
+          userId: trtcUserId,
+          userSig: sig.userSig,
+          expireAt: sig.expireAt,
+        },
+        sfu: {
+          enabled: false,
+          endpoint: '',
+        },
+        recording,
+      };
+    }
+
     return {
       meetingId,
       mediaMode: normalizedMode,
@@ -307,12 +363,7 @@ export class MeetingService implements OnModuleInit {
         enabled: normalizedMode === 'sfu' && !!sfuEndpoint,
         endpoint: sfuEndpoint,
       },
-      recording: {
-        enabled: recordingEnabled,
-        autoRecord,
-        url: meeting.recordingUrl || '',
-        replayAvailable: !!meeting.recordingUrl?.trim(),
-      },
+      recording,
     };
   }
 
@@ -599,6 +650,49 @@ export class MeetingService implements OnModuleInit {
 
   private configEnabled(value: string) {
     return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+  }
+
+  private parsePositiveInt(value: string | undefined, fallback: number) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+  }
+
+  private createTrtcUserSig(options: {
+    sdkAppId: number;
+    secretKey: string;
+    userId: string;
+    expireSeconds: number;
+  }) {
+    const currentTime = Math.floor(Date.now() / 1000);
+    const content =
+      `TLS.identifier:${options.userId}\n` +
+      `TLS.sdkappid:${options.sdkAppId}\n` +
+      `TLS.time:${currentTime}\n` +
+      `TLS.expire:${options.expireSeconds}\n`;
+    const signature = createHmac('sha256', options.secretKey)
+      .update(content)
+      .digest('base64');
+    const sigDoc = {
+      'TLS.ver': '2.0',
+      'TLS.identifier': options.userId,
+      'TLS.sdkappid': options.sdkAppId,
+      'TLS.expire': options.expireSeconds,
+      'TLS.time': currentTime,
+      'TLS.sig': signature,
+    };
+    const compressed = deflateSync(Buffer.from(JSON.stringify(sigDoc)));
+    return {
+      userSig: this.toTencentBase64Url(compressed),
+      expireAt: currentTime + options.expireSeconds,
+    };
+  }
+
+  private toTencentBase64Url(value: Buffer) {
+    return value
+      .toString('base64')
+      .replace(/\+/g, '*')
+      .replace(/\//g, '-')
+      .replace(/=/g, '_');
   }
 
   private async getParticipantList(meetingId: number, activeOnly = false) {

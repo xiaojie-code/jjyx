@@ -48,16 +48,19 @@ class MainActivity: FlutterActivity() {
     private var apkDownloadReceiverRegistered = false
     private val apkDownloadReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
-            val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-            val prefs = getSharedPreferences(APK_DOWNLOAD_PREFS, Context.MODE_PRIVATE)
-            val expectedId = prefs.getLong("downloadId", -1L)
-            if (completedId <= 0 || completedId != expectedId) return
-
-            val status = queryApkDownloadStatus(completedId)
-            if (status?.get("status") == "successful") {
-                val path = prefs.getString("apkPath", null)
-                if (!path.isNullOrBlank()) openApkInstaller(path)
+            when (intent?.action) {
+                DownloadManager.ACTION_DOWNLOAD_COMPLETE -> {
+                    val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                    val prefs = getSharedPreferences(APK_DOWNLOAD_PREFS, Context.MODE_PRIVATE)
+                    val expectedId = prefs.getLong("downloadId", -1L)
+                    if (completedId > 0 && completedId == expectedId) {
+                        ApkUpdateDownloadService.resumeFallbackVerification(this@MainActivity)
+                    }
+                }
+                ApkUpdateDownloadService.ACTION_DOWNLOAD_COMPLETE -> {
+                    val path = intent.getStringExtra("path")
+                    if (!path.isNullOrBlank()) openApkInstaller(path)
+                }
             }
         }
     }
@@ -628,7 +631,10 @@ class MainActivity: FlutterActivity() {
     private fun registerApkDownloadReceiver() {
         if (apkDownloadReceiverRegistered) return
         try {
-            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+            val filter = IntentFilter().apply {
+                addAction(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+                addAction(ApkUpdateDownloadService.ACTION_DOWNLOAD_COMPLETE)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(apkDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
@@ -645,6 +651,8 @@ class MainActivity: FlutterActivity() {
         val downloadUrl = call.argument<String>("url")?.trim().orEmpty()
         val versionCode = call.argument<Int>("versionCode") ?: 0
         val versionName = call.argument<String>("versionName")?.trim().orEmpty()
+        val expectedSize = call.argument<Number>("fileSize")?.toLong() ?: 0L
+        val expectedMd5 = call.argument<String>("fileMd5")?.trim().orEmpty()
         val uri = try {
             Uri.parse(downloadUrl)
         } catch (_: Exception) {
@@ -656,6 +664,46 @@ class MainActivity: FlutterActivity() {
         }
         if (versionCode <= 0) {
             result.error("invalid_version", "Version code is invalid", null)
+            return
+        }
+
+        val parallelStatus = ApkUpdateDownloadService.query(
+            this,
+            downloadUrl,
+            versionCode,
+            expectedSize,
+            expectedMd5,
+        )
+        val parallelStatusName = parallelStatus?.get("status")?.toString().orEmpty()
+        if (parallelStatusName == "successful") {
+            val path = parallelStatus?.get("path")?.toString().orEmpty()
+            if (path.isNotBlank() && File(path).exists()) {
+                result.success(openApkInstaller(path))
+                return
+            }
+        }
+        if (parallelStatusName in setOf("starting", "probing", "running", "waiting", "verifying")) {
+            parallelStatus?.set("status", "running")
+            result.success(parallelStatus)
+            return
+        }
+        if (parallelStatusName == "fallback") {
+            ApkUpdateDownloadService.resumeFallbackVerification(this)
+        } else if (ApkUpdateDownloadService.start(
+                this,
+                downloadUrl,
+                versionCode,
+                versionName,
+                expectedSize,
+                expectedMd5,
+            )
+        ) {
+            result.success(
+                hashMapOf<String, Any?>(
+                    "status" to "started",
+                    "path" to ApkUpdateDownloadService.apkFile(this, versionCode).absolutePath,
+                )
+            )
             return
         }
 

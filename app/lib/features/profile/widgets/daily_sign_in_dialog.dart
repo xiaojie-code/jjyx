@@ -272,7 +272,7 @@ class _DailySignInDialogState extends ConsumerState<_DailySignInDialog> {
         crossAxisCount: 4,
         mainAxisSpacing: 8,
         crossAxisSpacing: 8,
-        childAspectRatio: 0.86,
+        childAspectRatio: 0.78,
       ),
       itemCount: days.length,
       itemBuilder: (context, index) => _buildDayCard(days[index]),
@@ -319,24 +319,26 @@ class _DailySignInDialogState extends ConsumerState<_DailySignInDialog> {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: border),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: fg, size: 20),
-          const SizedBox(height: 4),
+          Icon(icon, color: fg, size: 19),
+          const SizedBox(height: 3),
           Text(
             day['weekDayName']?.toString().replaceFirst('星期', '周') ?? '',
             style:
                 TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
           ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: fg),
+          const SizedBox(height: 3),
+          Flexible(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, height: 1.12, color: fg),
+            ),
           ),
         ],
       ),

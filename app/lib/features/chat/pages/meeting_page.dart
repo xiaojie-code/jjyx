@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart' as permissions;
 import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'package:tencent_trtc_cloud/trtc_cloud.dart';
+import 'package:tencent_trtc_cloud/trtc_cloud_def.dart';
+import 'package:tencent_trtc_cloud/trtc_cloud_listener.dart';
+import 'package:tencent_trtc_cloud/trtc_cloud_video_view.dart';
 import 'dart:async';
 import 'dart:convert';
 import '../../../core/constants/app_constants.dart';
@@ -43,6 +48,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   final Set<int> _remoteDescriptionReady = {};
   MediaStream? _localStream;
   io.Socket? _meetingSocket;
+  Timer? _participantRefreshTimer;
   String? _meetingAuthToken;
   bool _loading = true;
   bool _micOn = false;
@@ -60,6 +66,12 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
       {'urls': 'stun:stun.l.google.com:19302'},
     ],
   };
+  Map<String, dynamic> _trtcConfiguration = {};
+  TRTCCloud? _trtcCloud;
+  Completer<int>? _trtcEnterRoomCompleter;
+  int? _trtcLocalViewId;
+  final Map<int, int> _trtcRemoteViewIds = {};
+  final Set<int> _trtcRemoteVideoUsers = {};
   String _mediaMode = 'p2p';
   bool _recordingEnabled = false;
   bool _recordingAvailable = false;
@@ -68,6 +80,13 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   int? _activeCameraUserId;
 
   int get _meetingId => int.tryParse(_meeting['id']?.toString() ?? '') ?? 0;
+
+  bool get _isTrtcMode => _mediaMode == 'trtc';
+
+  bool get _isUnsupportedWebTrtcPlatform =>
+      kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
 
   int get _myId {
     final authState = ref.read(authProvider);
@@ -100,6 +119,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
 
   @override
   void dispose() {
+    _participantRefreshTimer?.cancel();
     _disconnectMeetingSocket(notifyLeave: false);
     _disposeRtc();
     super.dispose();
@@ -112,13 +132,59 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
           .post(ApiEndpoints.meetingJoin(_meetingId));
       await _loadMediaConfig();
       await _loadParticipants();
-      await _prepareRtc();
       if (!mounted) return;
       _connectMeetingSocket();
-      await _loadParticipants();
-    } catch (e) {
+      _startParticipantRefresh();
+    } catch (e, stackTrace) {
+      _meetingLog('join failed error=$e stack=$stackTrace');
       if (mounted) Toast.error(context, '加入会议失败');
       if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      if (_isTrtcMode) {
+        await _prepareTrtc();
+      } else {
+        await _prepareRtc();
+      }
+    } catch (e, stackTrace) {
+      _meetingLog('media init failed error=$e stack=$stackTrace');
+      if (!mounted) return;
+      final enterRoomCompleter = _trtcEnterRoomCompleter;
+      if (enterRoomCompleter != null && !enterRoomCompleter.isCompleted) {
+        enterRoomCompleter.complete(-1);
+      }
+      _trtcEnterRoomCompleter = null;
+      setState(() => _rtcReady = false);
+      final unsupportedWebPlatform =
+          e.toString().contains('unsupported_web_mobile_emulation');
+      Toast.error(
+        context,
+        unsupportedWebPlatform
+            ? '网页版音视频不支持手机设备模拟，请关闭设备模拟后刷新重试'
+            : kIsWeb
+                ? '音视频初始化失败，请关闭浏览器设备模拟后刷新重试'
+                : '音视频初始化失败，请检查摄像头和麦克风权限',
+      );
+    }
+
+    await _refreshParticipantsSafely();
+  }
+
+  void _startParticipantRefresh() {
+    _participantRefreshTimer?.cancel();
+    _participantRefreshTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(_refreshParticipantsSafely()),
+    );
+  }
+
+  Future<void> _refreshParticipantsSafely() async {
+    try {
+      await _loadParticipants();
+    } catch (e) {
+      _meetingLog('participant refresh failed error=$e');
     }
   }
 
@@ -168,7 +234,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
       setState(() => _connectionText = '已连接');
       _emitMediaStatus();
       await _loadParticipants();
-      _syncPeerConnections();
+      if (!_isTrtcMode) _syncPeerConnections();
     });
 
     socket.onDisconnect((reason) {
@@ -207,7 +273,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
       setState(() => _connectionText = '已连接');
       _emitMediaStatus();
       await _loadParticipants();
-      await _syncPeerConnections();
+      if (!_isTrtcMode) await _syncPeerConnections();
     });
 
     socket.on('meeting:join-error', (data) {
@@ -219,7 +285,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     socket.on('meeting:participant-refresh', (data) async {
       _meetingLog('participant-refresh data=$data');
       await _loadParticipants();
-      await _syncPeerConnections();
+      if (!_isTrtcMode) await _syncPeerConnections();
     });
     socket.on('meeting:signal', _handleSignal);
     socket.on('meeting:media-status', _handleMediaStatus);
@@ -289,20 +355,30 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
           .toList();
       _loading = false;
     });
-    await _syncPeerConnections();
+    if (!_isTrtcMode) await _syncPeerConnections();
   }
 
   Future<void> _loadMediaConfig() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-            ApiEndpoints.meetingMediaConfig(_meetingId),
-          );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+                ApiEndpoints.meetingMediaConfig(_meetingId),
+              );
       if (!mounted || result == null) return;
       final recording = result['recording'] is Map
           ? Map<String, dynamic>.from(result['recording'] as Map)
           : <String, dynamic>{};
+      final trtc = result['trtc'] is Map
+          ? Map<String, dynamic>.from(result['trtc'] as Map)
+          : <String, dynamic>{};
+      final mode = result['mediaMode']?.toString().toLowerCase();
       setState(() {
-        _mediaMode = result['mediaMode']?.toString() == 'sfu' ? 'sfu' : 'p2p';
+        _mediaMode = mode == 'trtc'
+            ? 'trtc'
+            : mode == 'sfu'
+                ? 'sfu'
+                : 'p2p';
+        _trtcConfiguration = trtc;
         _rtcConfiguration = {
           'iceServers': _normalizeIceServers(result['iceServers']),
         };
@@ -311,7 +387,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
         _recordingUrl = recording['url']?.toString() ?? '';
       });
       _meetingLog(
-          'media config loaded mode=$_mediaMode ice=${(_rtcConfiguration['iceServers'] as List).length} recording=$_recordingEnabled replay=$_recordingAvailable');
+          'media config loaded mode=$_mediaMode ice=${(_rtcConfiguration['iceServers'] as List).length} trtc=${_trtcConfiguration.isNotEmpty} recording=$_recordingEnabled replay=$_recordingAvailable');
     } catch (e) {
       _meetingLog('media config load failed error=$e');
     }
@@ -343,6 +419,226 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     } catch (_) {}
     if (!mounted) return;
     setState(() => _rtcReady = true);
+  }
+
+  Future<void> _prepareTrtc() async {
+    if (_isUnsupportedWebTrtcPlatform) {
+      throw Exception('unsupported_web_mobile_emulation');
+    }
+    final config = _trtcConfiguration;
+    final sdkAppId = int.tryParse(config['sdkAppId']?.toString() ?? '') ?? 0;
+    final roomId = int.tryParse(config['roomId']?.toString() ?? '') ?? 0;
+    final userId = config['userId']?.toString() ?? '';
+    final userSig = config['userSig']?.toString() ?? '';
+    _meetingLog(
+      'trtc preparing sdk=$sdkAppId room=$roomId user=$userId sig=${userSig.isNotEmpty}',
+    );
+    if (sdkAppId <= 0 || roomId <= 0 || userId.isEmpty || userSig.isEmpty) {
+      throw Exception('invalid_trtc_config');
+    }
+
+    final cloud = await TRTCCloud.sharedInstance();
+    if (cloud == null) throw Exception('trtc_instance_failed');
+    _trtcCloud = cloud;
+    cloud.unRegisterListener(_handleTrtcEvent);
+    cloud.registerListener(_handleTrtcEvent);
+    await cloud.setDefaultStreamRecvMode(true, true);
+    try {
+      await cloud
+          .getDeviceManager()
+          .setAudioRoute(TRTCCloudDef.TRTC_AUDIO_ROUTE_SPEAKER);
+    } catch (_) {}
+    _meetingLog('trtc enter room calling room=$roomId user=$userId');
+    final enterRoomCompleter = Completer<int>();
+    _trtcEnterRoomCompleter = enterRoomCompleter;
+    await cloud.enterRoom(
+      TRTCParams(
+        sdkAppId: sdkAppId,
+        roomId: roomId,
+        userId: userId,
+        userSig: userSig,
+      ),
+      TRTCCloudDef.TRTC_APP_SCENE_VIDEOCALL,
+    );
+    final enterResult = await enterRoomCompleter.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => -1,
+    );
+    if (identical(_trtcEnterRoomCompleter, enterRoomCompleter)) {
+      _trtcEnterRoomCompleter = null;
+    }
+    if (enterResult < 0) {
+      throw Exception('trtc_enter_room_failed_$enterResult');
+    }
+    if (!mounted) return;
+    setState(() => _rtcReady = true);
+    _meetingLog(
+      'trtc entered room room=$roomId user=$userId result=$enterResult',
+    );
+  }
+
+  void _handleTrtcEvent(TRTCCloudListener type, dynamic params) {
+    _meetingLog('trtc event=$type params=$params');
+    if (!mounted) return;
+    switch (type) {
+      case TRTCCloudListener.onEnterRoom:
+        final result = int.tryParse(params?.toString() ?? '') ?? 0;
+        final enterRoomCompleter = _trtcEnterRoomCompleter;
+        if (enterRoomCompleter != null && !enterRoomCompleter.isCompleted) {
+          enterRoomCompleter.complete(result);
+        }
+        setState(() {
+          _rtcReady = result >= 0;
+        });
+        if (result < 0) Toast.error(context, 'TRTC进房失败：$result');
+        break;
+      case TRTCCloudListener.onError:
+        final error = params is Map
+            ? Map<String, dynamic>.from(params)
+            : <String, dynamic>{};
+        final errorCode = error['errCode']?.toString() ?? '';
+        final errorMessage = error['errMsg']?.toString() ?? '';
+        _meetingLog(
+          'trtc error code=$errorCode message=$errorMessage params=$params',
+        );
+        final enterRoomCompleter = _trtcEnterRoomCompleter;
+        final enteringRoom =
+            enterRoomCompleter != null && !enterRoomCompleter.isCompleted;
+        if (enteringRoom) {
+          enterRoomCompleter.complete(int.tryParse(errorCode) ?? -1);
+        } else {
+          Toast.error(
+            context,
+            errorCode.isEmpty ? 'TRTC音视频服务异常' : 'TRTC音视频服务异常（$errorCode）',
+          );
+        }
+        break;
+      case TRTCCloudListener.onRemoteUserEnterRoom:
+        unawaited(_refreshParticipantsSafely());
+        break;
+      case TRTCCloudListener.onRemoteUserLeaveRoom:
+        _handleTrtcRemoteUserLeave(params);
+        unawaited(_refreshParticipantsSafely());
+        break;
+      case TRTCCloudListener.onUserAudioAvailable:
+        _handleTrtcAudioAvailable(params);
+        break;
+      case TRTCCloudListener.onUserVideoAvailable:
+        _handleTrtcVideoAvailable(params);
+        break;
+      case TRTCCloudListener.onFirstVideoFrame:
+      case TRTCCloudListener.onFirstAudioFrame:
+      case TRTCCloudListener.onSendFirstLocalVideoFrame:
+      case TRTCCloudListener.onSendFirstLocalAudioFrame:
+        _meetingLog('trtc media frame event=$type params=$params');
+        break;
+      default:
+        break;
+    }
+  }
+
+  void _handleTrtcAudioAvailable(dynamic params) {
+    if (params is! Map) return;
+    final userId = _parseTrtcUserId(params['userId']?.toString() ?? '');
+    if (userId <= 0) return;
+    final available = _parseTrtcAvailable(params);
+    final current = _mediaStateFor(userId);
+    setState(() {
+      _mediaStates[userId] = _MeetingMediaState(
+        micOn: available,
+        cameraOn: current.cameraOn,
+      );
+    });
+    if (available) {
+      unawaited(_trtcCloud?.muteRemoteAudio(_trtcUserIdFor(userId), false));
+    }
+  }
+
+  void _handleTrtcVideoAvailable(dynamic params) {
+    if (params is! Map) return;
+    final userId = _parseTrtcUserId(params['userId']?.toString() ?? '');
+    if (userId <= 0) return;
+    final available = _parseTrtcAvailable(params);
+    final current = _mediaStateFor(userId);
+    setState(() {
+      _mediaStates[userId] = _MeetingMediaState(
+        micOn: current.micOn,
+        cameraOn: available,
+      );
+      if (available) {
+        _activeCameraUserId = userId;
+        _trtcRemoteVideoUsers.add(userId);
+      } else if (_activeCameraUserId == userId) {
+        _activeCameraUserId = null;
+      }
+      if (!available) _trtcRemoteVideoUsers.remove(userId);
+    });
+    if (available) {
+      unawaited(_startTrtcRemoteView(userId));
+    } else {
+      unawaited(_stopTrtcRemoteView(userId));
+    }
+  }
+
+  void _handleTrtcRemoteUserLeave(dynamic params) {
+    final trtcUserId = params is Map
+        ? params['userId']?.toString() ?? ''
+        : params?.toString() ?? '';
+    final userId = _parseTrtcUserId(trtcUserId);
+    if (userId <= 0) return;
+    unawaited(_stopTrtcRemoteView(userId));
+    setState(() {
+      _trtcRemoteVideoUsers.remove(userId);
+      _trtcRemoteViewIds.remove(userId);
+      if (_activeCameraUserId == userId) _activeCameraUserId = null;
+      _mediaStates.remove(userId);
+    });
+  }
+
+  bool _parseTrtcAvailable(Map params) {
+    final value = params['available'] ?? params['visible'];
+    if (value is bool) return value;
+    final text = value?.toString().toLowerCase();
+    return text == 'true' || text == '1';
+  }
+
+  int _parseTrtcUserId(String userId) {
+    if (userId.startsWith('u_')) {
+      return int.tryParse(userId.substring(2)) ?? 0;
+    }
+    return int.tryParse(userId) ?? 0;
+  }
+
+  String _trtcUserIdFor(int userId) => 'u_$userId';
+
+  Future<void> _startTrtcRemoteView(int userId, {int? viewId}) async {
+    final cloud = _trtcCloud;
+    final targetViewId = viewId ?? _trtcRemoteViewIds[userId];
+    if (cloud == null || targetViewId == null || userId <= 0) return;
+    try {
+      await cloud.startRemoteView(
+        _trtcUserIdFor(userId),
+        TRTCCloudDef.TRTC_VIDEO_STREAM_TYPE_BIG,
+        targetViewId,
+      );
+      _meetingLog('trtc remote view started user=$userId view=$targetViewId');
+    } catch (e) {
+      _meetingLog('trtc remote view start failed user=$userId error=$e');
+    }
+  }
+
+  Future<void> _stopTrtcRemoteView(int userId) async {
+    final cloud = _trtcCloud;
+    if (cloud == null || userId <= 0) return;
+    try {
+      await cloud.stopRemoteView(
+        _trtcUserIdFor(userId),
+        TRTCCloudDef.TRTC_VIDEO_STREAM_TYPE_BIG,
+      );
+      _meetingLog('trtc remote view stopped user=$userId');
+    } catch (e) {
+      _meetingLog('trtc remote view stop failed user=$userId error=$e');
+    }
   }
 
   Future<bool> _ensureLocalMedia({
@@ -426,6 +722,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   }
 
   Future<void> _syncPeerConnections() async {
+    if (_isTrtcMode) return;
     final socket = _meetingSocket;
     if (socket == null || !socket.connected) return;
     if (!_meetingRoomJoined) return;
@@ -523,8 +820,8 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
             ? event.streams.first
             : await createLocalMediaStream('remote-$peerId'));
     _remoteStreams[peerId] = stream;
-    final trackId =
-        event.track.id ?? '${event.track.kind}-${identityHashCode(event.track)}';
+    final trackId = event.track.id ??
+        '${event.track.kind}-${identityHashCode(event.track)}';
     final exists = stream.getTracks().any((track) {
       final id = track.id ?? '${track.kind}-${identityHashCode(track)}';
       return id == trackId;
@@ -577,6 +874,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   }
 
   Future<void> _handleSignal(dynamic data) async {
+    if (_isTrtcMode) return;
     if (!mounted || data is! Map) return;
     final map = Map<String, dynamic>.from(data);
     final signalMeetingId =
@@ -727,6 +1025,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   }
 
   void _disposeRtc() {
+    unawaited(_disposeTrtc());
     for (final pc in _peerConnections.values) {
       pc.close();
       pc.dispose();
@@ -762,8 +1061,37 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     if (_localRendererReady) _localRenderer.dispose();
   }
 
+  Future<void> _disposeTrtc() async {
+    final enterRoomCompleter = _trtcEnterRoomCompleter;
+    if (enterRoomCompleter != null && !enterRoomCompleter.isCompleted) {
+      enterRoomCompleter.complete(-1);
+    }
+    _trtcEnterRoomCompleter = null;
+    final cloud = _trtcCloud;
+    if (cloud == null) return;
+    _trtcCloud = null;
+    _trtcLocalViewId = null;
+    _trtcRemoteViewIds.clear();
+    _trtcRemoteVideoUsers.clear();
+    try {
+      cloud.unRegisterListener(_handleTrtcEvent);
+    } catch (_) {}
+    try {
+      await cloud.stopLocalAudio();
+    } catch (_) {}
+    try {
+      await cloud.stopLocalPreview();
+    } catch (_) {}
+    try {
+      await cloud.stopAllRemoteView();
+    } catch (_) {}
+    try {
+      await cloud.exitRoom();
+    } catch (_) {}
+  }
+
   void _meetingLog(String message) {
-    debugPrint('[MeetingP2P] meeting=$_meetingId user=$_myId $message');
+    debugPrint('[Meeting] meeting=$_meetingId user=$_myId $message');
   }
 
   void _handleMediaStatus(dynamic data) {
@@ -811,8 +1139,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     if (!mounted || data is! Map) return;
     final map = Map<String, dynamic>.from(data);
     setState(() {
-      _activeCameraUserId =
-          int.tryParse(map['activeUserId']?.toString() ?? '');
+      _activeCameraUserId = int.tryParse(map['activeUserId']?.toString() ?? '');
     });
   }
 
@@ -830,7 +1157,11 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
             _MeetingMediaState(micOn: _micOn, cameraOn: false);
       }
     });
-    _applyLocalMediaState();
+    if (_isTrtcMode) {
+      unawaited(_stopTrtcCamera());
+    } else {
+      _applyLocalMediaState();
+    }
     _emitMediaStatus();
     Toast.info(context, '已有用户正在分享画面，请稍等');
   }
@@ -847,7 +1178,11 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     }
     if (operatorId != _myId && !_canControlMeeting() && _micOn) {
       setState(() => _micOn = false);
-      _applyLocalMediaState();
+      if (_isTrtcMode) {
+        unawaited(_stopTrtcAudio());
+      } else {
+        _applyLocalMediaState();
+      }
       _emitMediaStatus();
     }
     if (operatorId != _myId) Toast.info(context, '群主或管理员已开启全员静音');
@@ -878,7 +1213,12 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
       }
     });
     if (targetUserId == _myId) {
-      _applyLocalMediaState();
+      if (_isTrtcMode) {
+        if (!nextMicOn) unawaited(_stopTrtcAudio());
+        if (!nextCameraOn) unawaited(_stopTrtcCamera());
+      } else {
+        _applyLocalMediaState();
+      }
       _emitMediaStatus();
       if (hasMic && !nextMicOn) Toast.info(context, '群主或管理员已关闭你的麦克风');
       if (hasCamera && !nextCameraOn) Toast.info(context, '群主或管理员已关闭你的摄像头');
@@ -923,9 +1263,71 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     });
   }
 
+  Future<bool> _ensureTrtcPermission(permissions.Permission permission) async {
+    final status = await permission.request();
+    return status.isGranted;
+  }
+
+  Future<void> _startTrtcAudio() async {
+    final cloud = _trtcCloud;
+    if (cloud == null) throw Exception('trtc_not_ready');
+    await cloud.startLocalAudio(TRTCCloudDef.TRTC_AUDIO_QUALITY_DEFAULT);
+    await cloud.muteLocalAudio(false);
+  }
+
+  Future<void> _stopTrtcAudio() async {
+    final cloud = _trtcCloud;
+    if (cloud == null) return;
+    try {
+      await cloud.stopLocalAudio();
+    } catch (_) {}
+  }
+
+  Future<void> _startTrtcCamera() async {
+    final cloud = _trtcCloud;
+    if (cloud == null) throw Exception('trtc_not_ready');
+    await cloud.startLocalPreview(_frontCamera, _trtcLocalViewId);
+  }
+
+  Future<void> _stopTrtcCamera() async {
+    final cloud = _trtcCloud;
+    if (cloud == null) return;
+    try {
+      await cloud.stopLocalPreview();
+    } catch (_) {}
+  }
+
   Future<void> _toggleMic({required bool locked}) async {
     if (locked) return;
+    if (_isTrtcMode && !_rtcReady) {
+      Toast.warning(context, '音视频服务尚未连接，请稍后重试');
+      return;
+    }
     final nextMicOn = !_micOn;
+    if (_isTrtcMode) {
+      if (nextMicOn) {
+        final granted =
+            await _ensureTrtcPermission(permissions.Permission.microphone);
+        if (!granted) {
+          if (mounted) Toast.warning(context, '请允许麦克风权限');
+          return;
+        }
+        try {
+          await _startTrtcAudio();
+        } catch (e) {
+          _meetingLog('trtc start audio failed error=$e');
+          if (mounted) Toast.error(context, '麦克风开启失败');
+          return;
+        }
+      } else {
+        await _stopTrtcAudio();
+      }
+      if (!mounted) return;
+      setState(() => _micOn = nextMicOn);
+      _emitMediaStatus();
+      return;
+    }
+
     setState(() => _micOn = nextMicOn);
     if (nextMicOn) {
       final ready = await _ensureLocalMedia(audio: true, video: false);
@@ -943,6 +1345,10 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   }
 
   Future<void> _toggleCamera() async {
+    if (_isTrtcMode && !_rtcReady) {
+      Toast.warning(context, '音视频服务尚未连接，请稍后重试');
+      return;
+    }
     if (!_cameraOn) {
       final activeUserId = _activeCameraUserId;
       if (activeUserId != null && activeUserId != _myId) {
@@ -951,6 +1357,30 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
       }
     }
     final nextCameraOn = !_cameraOn;
+    if (_isTrtcMode) {
+      if (nextCameraOn) {
+        final granted =
+            await _ensureTrtcPermission(permissions.Permission.camera);
+        if (!granted) {
+          if (mounted) Toast.warning(context, '请允许摄像头权限');
+          return;
+        }
+        try {
+          await _startTrtcCamera();
+        } catch (e) {
+          _meetingLog('trtc start camera failed error=$e');
+          if (mounted) Toast.error(context, '摄像头开启失败');
+          return;
+        }
+      } else {
+        await _stopTrtcCamera();
+      }
+      if (!mounted) return;
+      setState(() => _cameraOn = nextCameraOn);
+      _emitMediaStatus();
+      return;
+    }
+
     setState(() => _cameraOn = nextCameraOn);
     if (nextCameraOn) {
       final ready = await _ensureLocalMedia(audio: false, video: true);
@@ -968,6 +1398,16 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
   }
 
   Future<void> _switchCamera() async {
+    if (_isTrtcMode) {
+      try {
+        final nextFront = !_frontCamera;
+        await _trtcCloud?.getDeviceManager().switchCamera(nextFront);
+        if (mounted) setState(() => _frontCamera = nextFront);
+      } catch (_) {
+        if (mounted) Toast.error(context, '摄像头切换失败');
+      }
+      return;
+    }
     final tracks = _localStream?.getVideoTracks() ?? [];
     if (tracks.isEmpty) {
       Toast.warning(context, '当前没有可切换的摄像头');
@@ -988,6 +1428,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     }
     try {
       _disconnectMeetingSocket(notifyLeave: true);
+      if (_isTrtcMode) await _disposeTrtc();
       await ref
           .read(apiClientProvider)
           .post(ApiEndpoints.meetingLeave(_meetingId));
@@ -1071,6 +1512,7 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     if (!mounted || _closingPage) return;
     setState(() => _closingPage = true);
     _disconnectMeetingSocket(notifyLeave: false);
+    unawaited(_disposeTrtc());
     Toast.info(context, message);
     Navigator.pop(context, true);
   }
@@ -1094,12 +1536,15 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
 
   bool _canControlMeeting() {
     // 会议创建者（主持人）有控制权限
-    final creatorId = int.tryParse(_meeting['creatorId']?.toString() ?? '') ?? 0;
+    final creatorId =
+        int.tryParse(_meeting['creatorId']?.toString() ?? '') ?? 0;
     if (creatorId == _myId && _myId > 0) return true;
     // 群主、管理员也有控制权限
     final participant = _participantFor(_myId);
     final role = int.tryParse(participant?['role']?.toString() ?? '') ?? 1;
-    return participant?['isOwner'] == true || participant?['isCreator'] == true || role >= 2;
+    return participant?['isOwner'] == true ||
+        participant?['isCreator'] == true ||
+        role >= 2;
   }
 
   Color _connectionColor() {
@@ -1163,9 +1608,9 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
                           children: [
                             _statusPill(_connectionText, _connectionColor()),
                             _statusPill('$_onlineCount 人在线', Colors.blue),
-                            _statusPill(_mediaMode.toUpperCase(), Colors.purple),
-                            if (_allMuted)
-                              _statusPill('全员静音中', Colors.orange),
+                            _statusPill(
+                                _mediaMode.toUpperCase(), Colors.purple),
+                            if (_allMuted) _statusPill('全员静音中', Colors.orange),
                             if (_recordingEnabled || _recordingUrl.isNotEmpty)
                               _statusPill(
                                 _recordingAvailable ? '回放' : '录制',
@@ -1393,6 +1838,9 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
 
   Widget _videoStage() {
     final activeUserId = _activeVideoUserId();
+    if (_isTrtcMode) {
+      return _trtcVideoStage(activeUserId);
+    }
     if (activeUserId == null) {
       return SizedBox(
         height: 260,
@@ -1412,7 +1860,113 @@ class _MeetingPageState extends ConsumerState<MeetingPage> {
     );
   }
 
+  Widget _trtcVideoStage(int? activeUserId) {
+    if (activeUserId == null) {
+      return SizedBox(
+        height: 260,
+        child: _videoPlaceholder('暂无成员分享摄像头画面'),
+      );
+    }
+    if (activeUserId != _myId) {
+      final label = _participantName(activeUserId);
+      return SizedBox(
+        height: 320,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                TRTCCloudVideoView(
+                  key: ValueKey('trtc_remote_$activeUserId'),
+                  trtcCloud: _trtcCloud,
+                  onViewCreated: (viewId) {
+                    _trtcRemoteViewIds[activeUserId] = viewId;
+                    if (_trtcRemoteVideoUsers.contains(activeUserId)) {
+                      unawaited(
+                        _startTrtcRemoteView(activeUserId, viewId: viewId),
+                      );
+                    }
+                  },
+                ),
+                Positioned(
+                  left: 8,
+                  top: 8,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.48),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 320,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          color: Colors.black,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              TRTCCloudVideoView(
+                trtcCloud: _trtcCloud,
+                onViewCreated: (viewId) {
+                  _trtcLocalViewId = viewId;
+                  if (_cameraOn) unawaited(_startTrtcCamera());
+                },
+              ),
+              Positioned(
+                left: 8,
+                top: 8,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.48),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    '我',
+                    style: TextStyle(color: Colors.white, fontSize: 11),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   int? _activeVideoUserId() {
+    if (_isTrtcMode) {
+      final myId = _myId;
+      if (_cameraOn && myId > 0) return myId;
+      final activeUserId = _activeCameraUserId;
+      if (activeUserId != null &&
+          _trtcRemoteVideoUsers.contains(activeUserId)) {
+        return activeUserId;
+      }
+      if (_trtcRemoteVideoUsers.isNotEmpty) {
+        return _trtcRemoteVideoUsers.first;
+      }
+      return null;
+    }
     final activeUserId = _activeCameraUserId;
     if (activeUserId != null) return activeUserId;
     final myId = _myId;

@@ -236,6 +236,7 @@ class AppUpdateService {
       return;
     }
 
+    if (!context.mounted) return;
     if (await _startBackgroundDownload(context, version)) {
       return;
     }
@@ -625,6 +626,8 @@ class AppUpdateService {
         'url': version.resolvedDownloadUrl,
         'versionCode': version.versionCode,
         'versionName': version.versionName,
+        'fileSize': version.fileSize ?? 0,
+        'fileMd5': version.fileMd5 ?? '',
       });
       if (result == null) return false;
 

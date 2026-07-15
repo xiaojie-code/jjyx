@@ -1109,6 +1109,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.3.0+3"
+  tencent_trtc_cloud:
+    dependency: "direct main"
+    description:
+      name: tencent_trtc_cloud
+      sha256: b6c76bab2548e9bdc8a69303243ff2a92d0469a9d50e12ac65318ba1ed178e0b
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.1.4"
   term_glyph:
     dependency: transitive
     description:

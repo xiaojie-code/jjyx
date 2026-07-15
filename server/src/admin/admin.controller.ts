@@ -115,6 +115,23 @@ export class AdminController {
     return this.adminService.getWeeklyPointReturnAccountDaily(accountId);
   }
 
+  // 游戏时长统计
+  @Get('game-duration/overview') getGameDurationOverview(@Query() query: any) {
+    return this.adminService.getGameDurationOverview(query);
+  }
+  @Get('game-duration/daily') getGameDurationDaily(@Query() query: any) {
+    return this.adminService.getGameDurationDaily(query);
+  }
+  @Get('game-duration/games') getGameDurationGames() {
+    return this.adminService.getGameDurationGames();
+  }
+  @Get('game-duration/users/:userId/sessions') getGameDurationSessions(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query() query: any,
+  ) {
+    return this.adminService.getGameDurationSessions(userId, query);
+  }
+
   // 分销
   @Get('agents') getAgents(@Query() query: any) { return this.adminService.getAgents(query); }
   @Get('agents/:id/users') getAgentUsers(@Param('id', ParseIntPipe) id: number) { return this.adminService.getAgentUsers(id); }

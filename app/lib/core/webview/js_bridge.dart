@@ -127,7 +127,7 @@ class JSBridge {
     _controller = null;
   }
 
-  // ==================== App â†?H5 ====================
+  // ==================== App ->H5 ====================
 
   /// Send the `init` message with user info when the game page finishes loading.
   Future<void> sendInit(GameUserInfo userInfo) async {
@@ -259,7 +259,7 @@ class JSBridge {
     });
   }
 
-  // ==================== H5 â†?App (handlers) ====================
+  // ==================== H5 ->App (handlers) ====================
 
   /// Register all JavaScript handlers that H5 can call.
   void _registerHandlers(InAppWebViewController controller) {
@@ -269,7 +269,7 @@ class JSBridge {
     );
   }
 
-  /// Central router for all H5 â†?App messages.
+  /// Central router for all H5 ->App messages.
   dynamic _onGameMessage(List<dynamic> args) {
     if (args.isEmpty) return null;
 
@@ -311,7 +311,7 @@ class JSBridge {
     return null;
   }
 
-  /// Handle `deductPoints` â€?request to deduct points from the user's balance.
+  /// Handle `deductPoints` --request to deduct points from the user's balance.
   Future<void> _handleDeductPoints(Map<String, dynamic> data) async {
     final amount = _toDouble(data['amount']);
     final reason = data['reason'] as String? ?? '';
@@ -346,7 +346,7 @@ class JSBridge {
     }
   }
 
-  /// Handle `changePoints` â€?generic H5 point delta.
+  /// Handle `changePoints` --generic H5 point delta.
   Future<void> _handleChangePoints(Map<String, dynamic> data) async {
     final amount = _toDouble(data['amount']);
     final reason = data['reason'] as String? ?? '';
@@ -396,7 +396,7 @@ class JSBridge {
     }
   }
 
-  /// Handle `gameSettle` â€?game over, record results and award items.
+  /// Handle `gameSettle` --game over, record results and award items.
   Future<void> _handleGameSettle(Map<String, dynamic> data) async {
     try {
       final pointsEarned = data['pointsEarned'] ??
@@ -417,7 +417,7 @@ class JSBridge {
     }
   }
 
-  /// Handle `buySkin` â€?purchase a skin using points.
+  /// Handle `buySkin` --purchase a skin using points.
   Future<void> _handleBuySkin(Map<String, dynamic> data) async {
     final skinId = data['skinId'] as String? ?? '';
     final cost = _toDouble(data['cost']);
@@ -445,12 +445,12 @@ class JSBridge {
     }
   }
 
-  /// Handle `exitGame` â€?user wants to leave the game.
+  /// Handle `exitGame` --user wants to leave the game.
   void _handleExitGame() {
     _onExit();
   }
 
-  /// Handle `getBalance` â€?H5 requests the latest point balance.
+  /// Handle `getBalance` --H5 requests the latest point balance.
   Future<void> _handleGetBalance() async {
     try {
       final result = await _apiClient.get<Map<String, dynamic>>(

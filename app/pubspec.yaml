@@ -1,7 +1,7 @@
 name: competitive_game_platform
 description: 竞技游戏平台 - 社交+游戏+虚拟经济一体化移动应用
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.8+8
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -44,6 +44,7 @@ dependencies:
   permission_handler: ^12.0.1
   video_player: ^2.8.2
   crypto: ^3.0.3
+  tencent_trtc_cloud: ^3.1.4
 
 dev_dependencies:
   flutter_test:
