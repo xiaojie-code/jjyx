@@ -264,10 +264,14 @@ export class MeetingService implements OnModuleInit {
     const ban = await this.banRepo.findOne({ where: { meetingId, userId } });
     if (ban) throw new ForbiddenException('你已被移出本次会议');
 
-    const mediaMode = await this.currencyService.getConfigValue(
+    const storedMediaMode = await this.currencyService.getConfigValue(
       'meeting_media_mode',
       'p2p',
     );
+    const environmentMediaMode = (
+      process.env.MEETING_MEDIA_MODE || ''
+    ).trim();
+    const mediaMode = environmentMediaMode || storedMediaMode;
     const sfuEndpoint = (
       await this.currencyService.getConfigValue('meeting_sfu_endpoint', '')
     ).trim();
