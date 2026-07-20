@@ -13,7 +13,11 @@ class Events
     public static function onWorkerStart($worker)
     {
         Timer::add(1, function () {
-            Taosha::timer();
+            try {
+                Taosha::timer();
+            } catch (\Throwable $e) {
+                self::reportRuntimeError('timer', $e);
+            }
         });
     }
 
@@ -25,7 +29,11 @@ class Events
     {
         $mode = self::modeFromHandshake($data);
         if ($mode) {
-            Common::setClientSelectedMode($client_id, $mode);
+            try {
+                Common::setClientSelectedMode($client_id, $mode);
+            } catch (\Throwable $e) {
+                self::reportRuntimeError('websocket_connect', $e);
+            }
         }
 
         Gateway::sendToClient($client_id, Common::returndata('connected', [
@@ -50,7 +58,8 @@ class Events
         $payload = $data['data'] ?? [];
         $payload = self::applyClientMode($client_id, $action, $payload);
 
-        switch ($action) {
+        try {
+            switch ($action) {
             case 'getconfig':
                 $config = Option::getconfig();
                 Gateway::sendToClient($client_id, Common::returndata('returnconfig', $config));
@@ -127,18 +136,52 @@ class Events
                 $res = User::getbalance($client_id, $payload);
                 Gateway::sendToClient($client_id, Common::returndata('returngetbalance', $res));
                 break;
+            }
+        } catch (\Throwable $e) {
+            self::reportRuntimeError('message:' . $action, $e);
+            $responseAction = in_array($action, ['login', 'app_login'], true)
+                ? 'returnlogin'
+                : 'error';
+            Gateway::sendToClient($client_id, Common::returndata($responseAction, [
+                'code' => 503,
+                'msg' => '大逃杀服务暂时不可用，请稍后重试',
+                'info' => []
+            ]));
         }
     }
 
     public static function onClose($client_id)
     {
-        $uid = Redis::get('binduid_' . $client_id);
-        if ($uid) {
-            $res = Taosha::onCloseleaveroom($client_id, $uid);
-            Gateway::sendToAll(Common::returndata('anyleaveroom_toall', $res));
+        try {
+            $uid = Redis::get('binduid_' . $client_id);
+            if ($uid) {
+                $res = Taosha::onCloseleaveroom($client_id, $uid);
+                Gateway::sendToAll(Common::returndata('anyleaveroom_toall', $res));
+            }
+
+            Common::clearClientSelectedMode($client_id);
+        } catch (\Throwable $e) {
+            self::reportRuntimeError('close', $e);
+        }
+    }
+
+    protected static function reportRuntimeError($scope, \Throwable $error)
+    {
+        static $lastLoggedAt = [];
+        static $lastMessages = [];
+
+        $scope = (string)$scope;
+        $message = get_class($error) . ': ' . $error->getMessage();
+        $now = time();
+        $lastAt = (int)($lastLoggedAt[$scope] ?? 0);
+        $lastMessage = (string)($lastMessages[$scope] ?? '');
+        if ($message === $lastMessage && $now - $lastAt < 60) {
+            return;
         }
 
-        Common::clearClientSelectedMode($client_id);
+        $lastLoggedAt[$scope] = $now;
+        $lastMessages[$scope] = $message;
+        error_log('[killer][' . $scope . '] ' . $message);
     }
 
     protected static function applyClientMode($client_id, $action, $payload)
