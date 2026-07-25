@@ -177,7 +177,10 @@ export class AssetService implements OnModuleInit {
         let inviteCode = '';
         for (let tries = 0; tries < 10; tries++) {
           inviteCode = this.generateReferralCode();
-          const existing = await this.userRepo.findOne({ where: { inviteCode }, select: ['id', 'inviteCode'] });
+          const existing = await this.userRepo.findOne({
+            where: { inviteCode },
+            select: ['id', 'inviteCode'],
+          });
           if (!existing) break;
           inviteCode = '';
         }
@@ -229,7 +232,10 @@ export class AssetService implements OnModuleInit {
     return code;
   }
 
-  private async ensureUserReferralCode(user: User, manager = this.dataSource.manager): Promise<string> {
+  private async ensureUserReferralCode(
+    user: User,
+    manager = this.dataSource.manager,
+  ): Promise<string> {
     if (user.inviteCode) return String(user.inviteCode).toUpperCase();
     let inviteCode = '';
     do {
@@ -258,17 +264,24 @@ export class AssetService implements OnModuleInit {
     }
   }
 
-  private async requireActivatedUser(userId: number, manager = this.dataSource.manager) {
+  private async requireActivatedUser(
+    userId: number,
+    manager = this.dataSource.manager,
+  ) {
     const user = await manager.findOne(User, {
       where: { id: Number(userId) },
       select: ['id', 'account', 'nickname', 'isActivated', 'inviteCode'],
     });
     if (!user) throw new NotFoundException('用户不存在');
-    if (!user.isActivated) throw new BadRequestException('请先激活后使用资产包功能');
+    if (!user.isActivated)
+      throw new BadRequestException('请先激活后使用资产包功能');
     return user;
   }
 
-  private async getOrCreateAccount(userId: number, manager = this.dataSource.manager) {
+  private async getOrCreateAccount(
+    userId: number,
+    manager = this.dataSource.manager,
+  ) {
     let account = await manager.findOne(AssetAccount, { where: { userId } });
     if (!account) {
       account = manager.create(AssetAccount, {
@@ -286,7 +299,10 @@ export class AssetService implements OnModuleInit {
     return account;
   }
 
-  async accrueInterestForUser(userId: number, manager = this.dataSource.manager) {
+  async accrueInterestForUser(
+    userId: number,
+    manager = this.dataSource.manager,
+  ) {
     const account = await this.getOrCreateAccount(userId, manager);
     const principal = this.amount(account.principalBalance);
     const today = this.dateKey();
@@ -304,15 +320,22 @@ export class AssetService implements OnModuleInit {
       });
       if (!existing) {
         const interestAmount = this.money6(principal * DAILY_RATE);
-        await manager.save(AssetInterestRecord, manager.create(AssetInterestRecord, {
-          userId,
-          interestDate: nextDate,
-          basePrincipal: principal,
-          annualRate: MONTHLY_RATE,
-          interestAmount,
-        }));
-        account.interestBalance = this.money6(Number(account.interestBalance) + interestAmount);
-        account.totalInterest = this.money6(Number(account.totalInterest) + interestAmount);
+        await manager.save(
+          AssetInterestRecord,
+          manager.create(AssetInterestRecord, {
+            userId,
+            interestDate: nextDate,
+            basePrincipal: principal,
+            annualRate: MONTHLY_RATE,
+            interestAmount,
+          }),
+        );
+        account.interestBalance = this.money6(
+          Number(account.interestBalance) + interestAmount,
+        );
+        account.totalInterest = this.money6(
+          Number(account.totalInterest) + interestAmount,
+        );
       }
       account.lastInterestDate = nextDate;
       nextDate = this.addDays(nextDate, 1);
@@ -332,7 +355,9 @@ export class AssetService implements OnModuleInit {
     return {
       principalBalance: Number(account.principalBalance),
       interestBalance: Number(account.interestBalance),
-      totalBalance: this.money6(Number(account.principalBalance) + Number(account.interestBalance)),
+      totalBalance: this.money6(
+        Number(account.principalBalance) + Number(account.interestBalance),
+      ),
       totalRecharged: Number(account.totalRecharged),
       totalWithdrawn: Number(account.totalWithdrawn),
       totalInterest: Number(account.totalInterest),
@@ -341,20 +366,33 @@ export class AssetService implements OnModuleInit {
       monthlyRate: MONTHLY_RATE,
       annualRate: MONTHLY_RATE,
       dailyRate: DAILY_RATE,
-      todayEstimatedInterest: this.money6(Number(account.principalBalance) * DAILY_RATE),
+      todayEstimatedInterest: this.money6(
+        Number(account.principalBalance) * DAILY_RATE,
+      ),
       recentInterests,
     };
   }
 
-  async submitRecharge(userId: number, data: { amount?: number; realName?: string; phone?: string; referralCode?: string }) {
+  async submitRecharge(
+    userId: number,
+    data: {
+      amount?: number;
+      realName?: string;
+      phone?: string;
+      referralCode?: string;
+    },
+  ) {
     const user = await this.requireActivatedUser(userId);
     const amount = this.amount(data.amount);
     this.validateRechargeAmount(amount);
     const realName = String(data.realName || '').trim();
     const phone = String(data.phone || '').trim();
-    const referralCode = String(data.referralCode || '').trim().toUpperCase();
+    const referralCode = String(data.referralCode || '')
+      .trim()
+      .toUpperCase();
     if (!realName) throw new BadRequestException('请填写付款姓名');
-    if (!/^1\d{10}$/.test(phone)) throw new BadRequestException('请填写正确的手机号');
+    if (!/^1\d{10}$/.test(phone))
+      throw new BadRequestException('请填写正确的手机号');
 
     let referrerUserId: number | null = null;
     if (referralCode) {
@@ -363,26 +401,45 @@ export class AssetService implements OnModuleInit {
         select: ['id', 'account', 'nickname', 'isActivated', 'inviteCode'],
       });
       if (!referrer) throw new BadRequestException('推荐码不存在');
-      if (Number(referrer.id) === Number(userId)) throw new BadRequestException('不能填写自己的推荐码');
-      if (!referrer.isActivated) throw new BadRequestException('该推荐码暂不可用');
+      if (Number(referrer.id) === Number(userId))
+        throw new BadRequestException('不能填写自己的推荐码');
+      if (!referrer.isActivated)
+        throw new BadRequestException('该推荐码暂不可用');
       referrerUserId = referrer.id;
     }
 
-    const order = await this.rechargeRepo.save(this.rechargeRepo.create({
-      userId,
-      realName,
-      phone,
-      amount,
-      referralCode: referralCode || null,
-      referrerUserId,
-      status: 0,
-    }));
+    const order = await this.rechargeRepo.save(
+      this.rechargeRepo.create({
+        userId,
+        realName,
+        phone,
+        amount,
+        referralCode: referralCode || null,
+        referrerUserId,
+        status: 0,
+      }),
+    );
     await this.notificationService.notifyAdmin({
       type: 'asset_recharge',
       title: '新的资产包充值申请',
       content: `${user.nickname || user.account} 提交资产包充值 ${amount} 元，请核实收款后确认到账。`,
       fromUserId: userId,
-      payload: { assetRechargeId: order.id, amount, referralCode: referralCode || null },
+      payload: {
+        assetRechargeId: order.id,
+        amount,
+        referralCode: referralCode || null,
+      },
+    });
+    await this.notificationService.notifyUser({
+      recipientId: userId,
+      type: 'asset_recharge_progress',
+      title: '资产包充值处理中',
+      content: `你的资产包充值 ${amount} 元申请已提交，管理员处理中，请等待。`,
+      payload: {
+        assetRechargeId: order.id,
+        amount,
+        status: 'pending',
+      },
     });
     return { message: '资产包充值申请已提交，请等待管理员确认' };
   }
@@ -396,12 +453,15 @@ export class AssetService implements OnModuleInit {
     });
   }
 
-  async submitWithdrawal(userId: number, data: {
-    amount?: number;
-    paymentMethod?: string;
-    accountName?: string;
-    accountNumber?: string;
-  }) {
+  async submitWithdrawal(
+    userId: number,
+    data: {
+      amount?: number;
+      paymentMethod?: string;
+      accountName?: string;
+      accountNumber?: string;
+    },
+  ) {
     const user = await this.requireActivatedUser(userId);
     await this.accrueInterestForUser(userId);
     const amount = this.amount(data.amount);
@@ -414,7 +474,8 @@ export class AssetService implements OnModuleInit {
     const accountNumber = String(data.accountNumber || '').trim();
     if (!accountName) throw new BadRequestException('请填写收款人姓名');
     if (!accountNumber) throw new BadRequestException('请填写收款账号');
-    if (!/^1\d{10}$/.test(accountNumber)) throw new BadRequestException('请填写正确的11位支付宝手机号');
+    if (!/^1\d{10}$/.test(accountNumber))
+      throw new BadRequestException('请填写正确的11位支付宝手机号');
 
     const account = await this.accountRepo.findOne({ where: { userId } });
     const pendingRows = await this.dataSource.query(
@@ -426,31 +487,47 @@ export class AssetService implements OnModuleInit {
     const pendingAmount = Number(pendingRows?.[0]?.total || 0);
     const available = this.money6(
       Number(account?.principalBalance || 0) +
-      Number(account?.interestBalance || 0) -
-      pendingAmount,
+        Number(account?.interestBalance || 0) -
+        pendingAmount,
     );
     if (amount > available) {
-      throw new BadRequestException(`资产包余额不足，当前可提现 ${Math.floor(available)} 元`);
+      throw new BadRequestException(
+        `资产包余额不足，当前可提现 ${Math.floor(available)} 元`,
+      );
     }
 
     const fee = this.amount(amount * WITHDRAW_FEE_RATE);
     const actualAmount = this.amount(amount - fee);
-    const withdrawal = await this.withdrawalRepo.save(this.withdrawalRepo.create({
-      userId,
-      amount,
-      fee,
-      actualAmount,
-      paymentMethod,
-      accountName,
-      accountNumber,
-      status: 0,
-    }));
+    const withdrawal = await this.withdrawalRepo.save(
+      this.withdrawalRepo.create({
+        userId,
+        amount,
+        fee,
+        actualAmount,
+        paymentMethod,
+        accountName,
+        accountNumber,
+        status: 0,
+      }),
+    );
     await this.notificationService.notifyAdmin({
       type: 'asset_withdrawal',
       title: '新的资产包提现申请',
       content: `${user.nickname || user.account} 申请资产包提现 ${amount} 元，实际到账 ${actualAmount} 元。`,
       fromUserId: userId,
       payload: { assetWithdrawalId: withdrawal.id, amount, actualAmount },
+    });
+    await this.notificationService.notifyUser({
+      recipientId: userId,
+      type: 'asset_withdrawal_progress',
+      title: '资产包提现处理中',
+      content: `你的资产包提现 ${amount} 元申请已提交，管理员处理中，请等待。`,
+      payload: {
+        assetWithdrawalId: withdrawal.id,
+        amount,
+        actualAmount,
+        status: 'pending',
+      },
     });
     return { message: '资产包提现申请已提交，请等待管理员审核' };
   }
@@ -477,7 +554,8 @@ export class AssetService implements OnModuleInit {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
     const keyword = String(query.keyword || '').trim();
-    const qb = this.rechargeRepo.createQueryBuilder('o')
+    const qb = this.rechargeRepo
+      .createQueryBuilder('o')
       .leftJoin(User, 'u', 'u.id = o.user_id')
       .select([
         'o.id AS id',
@@ -544,11 +622,18 @@ export class AssetService implements OnModuleInit {
     return { list, total: await totalQb.getCount(), page, pageSize };
   }
 
-  async adminReviewRecharge(id: number, operatorId: number, data: { action?: string; confirmedAmount?: number; remark?: string }) {
+  async adminReviewRecharge(
+    id: number,
+    operatorId: number,
+    data: { action?: string; confirmedAmount?: number; remark?: string },
+  ) {
     return this.dataSource.transaction(async (manager) => {
-      const order = await manager.findOne(AssetRechargeOrder, { where: { id } });
+      const order = await manager.findOne(AssetRechargeOrder, {
+        where: { id },
+      });
       if (!order) throw new NotFoundException('资产包充值订单不存在');
-      if (Number(order.status) !== 0) throw new BadRequestException('该订单已处理');
+      if (Number(order.status) !== 0)
+        throw new BadRequestException('该订单已处理');
 
       if (data.action === 'reject') {
         order.status = 2;
@@ -561,7 +646,7 @@ export class AssetService implements OnModuleInit {
           type: 'asset_recharge_result',
           title: '资产包充值未通过',
           content: `你的资产包充值申请未通过：${order.adminRemark}`,
-          payload: { assetRechargeId: order.id },
+          payload: { assetRechargeId: order.id, status: 'rejected' },
         });
         return { message: '已驳回' };
       }
@@ -570,32 +655,51 @@ export class AssetService implements OnModuleInit {
       this.validateRechargeAmount(confirmedAmount);
       await this.accrueInterestForUser(order.userId, manager);
       const account = await this.getOrCreateAccount(order.userId, manager);
-      account.principalBalance = this.amount(Number(account.principalBalance) + confirmedAmount);
-      account.totalRecharged = this.amount(Number(account.totalRecharged) + confirmedAmount);
+      account.principalBalance = this.amount(
+        Number(account.principalBalance) + confirmedAmount,
+      );
+      account.totalRecharged = this.amount(
+        Number(account.totalRecharged) + confirmedAmount,
+      );
       if (!account.lastInterestDate) account.lastInterestDate = this.dateKey();
       await manager.save(AssetAccount, account);
 
       if (order.referrerUserId) {
-        const existingReward = await manager.findOne(AssetReferralRewardRecord, {
-          where: { rechargeOrderId: order.id },
-        });
+        const existingReward = await manager.findOne(
+          AssetReferralRewardRecord,
+          {
+            where: { rechargeOrderId: order.id },
+          },
+        );
         if (!existingReward) {
-          const rewardAmount = this.money6(confirmedAmount * REFERRAL_REWARD_RATE);
+          const rewardAmount = this.money6(
+            confirmedAmount * REFERRAL_REWARD_RATE,
+          );
           await this.accrueInterestForUser(order.referrerUserId, manager);
-          const referrerAccount = await this.getOrCreateAccount(order.referrerUserId, manager);
-          referrerAccount.interestBalance = this.money6(Number(referrerAccount.interestBalance) + rewardAmount);
-          referrerAccount.totalReferralReward = this.money6(Number(referrerAccount.totalReferralReward || 0) + rewardAmount);
+          const referrerAccount = await this.getOrCreateAccount(
+            order.referrerUserId,
+            manager,
+          );
+          referrerAccount.interestBalance = this.money6(
+            Number(referrerAccount.interestBalance) + rewardAmount,
+          );
+          referrerAccount.totalReferralReward = this.money6(
+            Number(referrerAccount.totalReferralReward || 0) + rewardAmount,
+          );
           await manager.save(AssetAccount, referrerAccount);
 
-          const rewardRecord = await manager.save(AssetReferralRewardRecord, manager.create(AssetReferralRewardRecord, {
-            referrerUserId: order.referrerUserId,
-            rechargeUserId: order.userId,
-            rechargeOrderId: order.id,
-            referralCode: order.referralCode || '',
-            rechargeAmount: confirmedAmount,
-            rewardRate: REFERRAL_REWARD_RATE,
-            rewardAmount,
-          }));
+          const rewardRecord = await manager.save(
+            AssetReferralRewardRecord,
+            manager.create(AssetReferralRewardRecord, {
+              referrerUserId: order.referrerUserId,
+              rechargeUserId: order.userId,
+              rechargeOrderId: order.id,
+              referralCode: order.referralCode || '',
+              rechargeAmount: confirmedAmount,
+              rewardRate: REFERRAL_REWARD_RATE,
+              rewardAmount,
+            }),
+          );
           order.referralRewardAmount = rewardAmount;
           order.referralRewardRecordId = rewardRecord.id;
           await this.notificationService.notifyUser({
@@ -603,7 +707,11 @@ export class AssetService implements OnModuleInit {
             type: 'asset_referral_reward',
             title: '资产包推荐收益已到账',
             content: `你获得资产包推荐收益 ${rewardAmount} 元，已实时到账。`,
-            payload: { assetRechargeId: order.id, assetReferralRewardId: rewardRecord.id, amount: rewardAmount },
+            payload: {
+              assetRechargeId: order.id,
+              assetReferralRewardId: rewardRecord.id,
+              amount: rewardAmount,
+            },
           });
         }
       }
@@ -619,7 +727,11 @@ export class AssetService implements OnModuleInit {
         type: 'asset_recharge_result',
         title: '资产包充值已到账',
         content: `你的资产包充值 ${confirmedAmount} 元已确认到账。`,
-        payload: { assetRechargeId: order.id, amount: confirmedAmount },
+        payload: {
+          assetRechargeId: order.id,
+          amount: confirmedAmount,
+          status: 'approved',
+        },
       });
       return { message: '已确认到账' };
     });
@@ -629,7 +741,8 @@ export class AssetService implements OnModuleInit {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
     const keyword = String(query.keyword || '').trim();
-    const qb = this.withdrawalRepo.createQueryBuilder('w')
+    const qb = this.withdrawalRepo
+      .createQueryBuilder('w')
       .leftJoin(User, 'u', 'u.id = w.user_id')
       .select([
         'w.id AS id',
@@ -691,16 +804,21 @@ export class AssetService implements OnModuleInit {
   }
 
   async adminAssetStats() {
-    const accountStats = await this.accountRepo.createQueryBuilder('a')
+    const accountStats = await this.accountRepo
+      .createQueryBuilder('a')
       .select('COUNT(1)', 'totalAccounts')
       .addSelect('COALESCE(SUM(a.principal_balance), 0)', 'totalPrincipal')
       .addSelect('COALESCE(SUM(a.interest_balance), 0)', 'totalInterest')
       .addSelect('COALESCE(SUM(a.total_recharged), 0)', 'totalRecharged')
       .addSelect('COALESCE(SUM(a.total_withdrawn), 0)', 'totalWithdrawn')
-      .addSelect('COALESCE(SUM(a.total_referral_reward), 0)', 'totalReferralReward')
+      .addSelect(
+        'COALESCE(SUM(a.total_referral_reward), 0)',
+        'totalReferralReward',
+      )
       .getRawOne();
 
-    const pendingWithdrawal = await this.withdrawalRepo.createQueryBuilder('w')
+    const pendingWithdrawal = await this.withdrawalRepo
+      .createQueryBuilder('w')
       .select('COALESCE(SUM(w.amount), 0)', 'pendingWithdrawAmount')
       .where('w.status = :status', { status: 0 })
       .getRawOne();
@@ -712,15 +830,24 @@ export class AssetService implements OnModuleInit {
       totalRecharged: Number(accountStats?.totalRecharged || 0),
       totalWithdrawn: Number(accountStats?.totalWithdrawn || 0),
       totalReferralReward: Number(accountStats?.totalReferralReward || 0),
-      pendingWithdrawAmount: Number(pendingWithdrawal?.pendingWithdrawAmount || 0),
+      pendingWithdrawAmount: Number(
+        pendingWithdrawal?.pendingWithdrawAmount || 0,
+      ),
     };
   }
 
-  async adminReviewWithdrawal(id: number, operatorId: number, data: { action?: string; remark?: string }) {
+  async adminReviewWithdrawal(
+    id: number,
+    operatorId: number,
+    data: { action?: string; remark?: string },
+  ) {
     return this.dataSource.transaction(async (manager) => {
-      const withdrawal = await manager.findOne(AssetWithdrawal, { where: { id } });
+      const withdrawal = await manager.findOne(AssetWithdrawal, {
+        where: { id },
+      });
       if (!withdrawal) throw new NotFoundException('资产包提现记录不存在');
-      if (Number(withdrawal.status) !== 0) throw new BadRequestException('该提现已处理');
+      if (Number(withdrawal.status) !== 0)
+        throw new BadRequestException('该提现已处理');
 
       withdrawal.operatorId = operatorId;
       withdrawal.handledAt = new Date();
@@ -734,7 +861,10 @@ export class AssetService implements OnModuleInit {
           type: 'asset_withdrawal_result',
           title: '资产包提现未通过',
           content: `你的资产包提现申请未通过：${withdrawal.adminRemark || '请联系客服'}`,
-          payload: { assetWithdrawalId: withdrawal.id },
+          payload: {
+            assetWithdrawalId: withdrawal.id,
+            status: 'rejected',
+          },
         });
         return { message: '已驳回' };
       }
@@ -742,14 +872,26 @@ export class AssetService implements OnModuleInit {
       await this.accrueInterestForUser(withdrawal.userId, manager);
       const account = await this.getOrCreateAccount(withdrawal.userId, manager);
       const amount = this.amount(withdrawal.amount);
-      const available = this.money6(Number(account.principalBalance) + Number(account.interestBalance));
-      if (amount > available) throw new BadRequestException('资产包余额不足，不能通过提现');
+      const available = this.money6(
+        Number(account.principalBalance) + Number(account.interestBalance),
+      );
+      if (amount > available)
+        throw new BadRequestException('资产包余额不足，不能通过提现');
 
-      const interestDeducted = Math.min(Number(account.interestBalance), amount);
+      const interestDeducted = Math.min(
+        Number(account.interestBalance),
+        amount,
+      );
       const principalDeducted = this.amount(amount - interestDeducted);
-      account.interestBalance = this.money6(Number(account.interestBalance) - interestDeducted);
-      account.principalBalance = this.amount(Number(account.principalBalance) - principalDeducted);
-      account.totalWithdrawn = this.amount(Number(account.totalWithdrawn) + amount);
+      account.interestBalance = this.money6(
+        Number(account.interestBalance) - interestDeducted,
+      );
+      account.principalBalance = this.amount(
+        Number(account.principalBalance) - principalDeducted,
+      );
+      account.totalWithdrawn = this.amount(
+        Number(account.totalWithdrawn) + amount,
+      );
       await manager.save(AssetAccount, account);
 
       withdrawal.status = 1;
@@ -761,7 +903,12 @@ export class AssetService implements OnModuleInit {
         type: 'asset_withdrawal_result',
         title: '资产包提现已通过',
         content: `你的资产包提现 ${amount} 元已通过，手续费 ${withdrawal.fee} 元，实际到账 ${withdrawal.actualAmount} 元。`,
-        payload: { assetWithdrawalId: withdrawal.id, amount, actualAmount: withdrawal.actualAmount },
+        payload: {
+          assetWithdrawalId: withdrawal.id,
+          amount,
+          actualAmount: withdrawal.actualAmount,
+          status: 'approved',
+        },
       });
       return { message: '已通过' };
     });
@@ -771,7 +918,8 @@ export class AssetService implements OnModuleInit {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
     const keyword = String(query.keyword || '').trim();
-    const qb = this.accountRepo.createQueryBuilder('a')
+    const qb = this.accountRepo
+      .createQueryBuilder('a')
       .leftJoin(User, 'u', 'u.id = a.user_id')
       .select([
         'a.id AS id',
@@ -798,7 +946,8 @@ export class AssetService implements OnModuleInit {
         { keyword: `%${keyword}%` },
       );
     }
-    const totalQb = this.accountRepo.createQueryBuilder('a')
+    const totalQb = this.accountRepo
+      .createQueryBuilder('a')
       .leftJoin(User, 'u', 'u.id = a.user_id');
     if (keyword) {
       totalQb.where(
@@ -808,14 +957,20 @@ export class AssetService implements OnModuleInit {
         { keyword: `%${keyword}%` },
       );
     }
-    return { list: await qb.getRawMany(), total: await totalQb.getCount(), page, pageSize };
+    return {
+      list: await qb.getRawMany(),
+      total: await totalQb.getCount(),
+      page,
+      pageSize,
+    };
   }
 
   async adminListReferralRewards(query: any) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
     const keyword = String(query.keyword || '').trim();
-    const qb = this.referralRewardRepo.createQueryBuilder('rw')
+    const qb = this.referralRewardRepo
+      .createQueryBuilder('rw')
       .leftJoin(User, 'referrer', 'referrer.id = rw.referrer_user_id')
       .leftJoin(User, 'rechargeUser', 'rechargeUser.id = rw.recharge_user_id')
       .leftJoin(AssetRechargeOrder, 'o', 'o.id = rw.recharge_order_id')
@@ -857,7 +1012,8 @@ export class AssetService implements OnModuleInit {
         { keyword: `%${keyword}%` },
       );
     }
-    const totalQb = this.referralRewardRepo.createQueryBuilder('rw')
+    const totalQb = this.referralRewardRepo
+      .createQueryBuilder('rw')
       .leftJoin(User, 'referrer', 'referrer.id = rw.referrer_user_id')
       .leftJoin(User, 'rechargeUser', 'rechargeUser.id = rw.recharge_user_id')
       .leftJoin(AssetRechargeOrder, 'o', 'o.id = rw.recharge_order_id');
@@ -877,6 +1033,11 @@ export class AssetService implements OnModuleInit {
         { keyword: `%${keyword}%` },
       );
     }
-    return { list: await qb.getRawMany(), total: await totalQb.getCount(), page, pageSize };
+    return {
+      list: await qb.getRawMany(),
+      total: await totalQb.getCount(),
+      page,
+      pageSize,
+    };
   }
 }

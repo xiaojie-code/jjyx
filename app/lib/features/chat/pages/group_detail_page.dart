@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -31,7 +31,8 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
   String _announcement = '';
   String _myGroupNickname = '';
   String _groupAvatar = '';
-  int _creatorId = 0;
+  bool _allMuted = false;
+  bool _isSystem = false;
   final _memberSearchCtrl = TextEditingController();
 
   @override
@@ -73,18 +74,38 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
 
   Future<void> _loadGroupInfo() async {
     try {
-      final result = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-        '/api/social/groups/${widget.conversationId}/info',
-      );
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+                '/api/social/groups/${widget.conversationId}/info',
+              );
       if (mounted && result != null) {
         setState(() {
           _announcement = result['announcement']?.toString() ?? '';
           _myGroupNickname = result['myGroupNickname']?.toString() ?? '';
           _groupAvatar = result['avatar']?.toString() ?? '';
-          _creatorId = int.tryParse(result['creatorId']?.toString() ?? '') ?? 0;
+          _allMuted = result['allMuted'] == true;
+          _isSystem = result['isSystem'] == true;
         });
       }
     } catch (_) {}
+  }
+
+  Future<void> _toggleAllMuted(bool value) async {
+    final previous = _allMuted;
+    setState(() => _allMuted = value);
+    try {
+      await ref.read(apiClientProvider).put(
+        ApiEndpoints.groupAllMuted(widget.conversationId),
+        data: {'muted': value},
+      );
+      if (mounted) {
+        Toast.success(context, value ? '已开启全员禁言' : '已关闭全员禁言');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _allMuted = previous);
+      Toast.error(context, apiErrorMessage(e, fallback: '设置全员禁言失败'));
+    }
   }
 
   /// 群主更换群头像
@@ -120,14 +141,16 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
       );
       if (picked == null) return;
       final bytes = await picked.readAsBytes();
-      final filename = picked.name.isNotEmpty ? picked.name : 'group_avatar.jpg';
+      final filename =
+          picked.name.isNotEmpty ? picked.name : 'group_avatar.jpg';
       final formData = FormData.fromMap({
         'avatar': MultipartFile.fromBytes(bytes, filename: filename),
       });
-      final result = await ref.read(apiClientProvider).upload<Map<String, dynamic>>(
-        ApiEndpoints.groupAvatar(widget.conversationId),
-        formData: formData,
-      );
+      final result =
+          await ref.read(apiClientProvider).upload<Map<String, dynamic>>(
+                ApiEndpoints.groupAvatar(widget.conversationId),
+                formData: formData,
+              );
       if (mounted && result != null) {
         setState(() => _groupAvatar = result['avatar']?.toString() ?? '');
         Toast.success(context, '群头像已更新');
@@ -152,8 +175,11 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('保存')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text),
+              child: const Text('保存')),
         ],
       ),
     );
@@ -187,8 +213,11 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('保存')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text),
+              child: const Text('保存')),
         ],
       ),
     );
@@ -363,28 +392,25 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
                 ApiEndpoints.groupMeetingActive(widget.conversationId),
               );
+      if (!mounted) return;
       meeting = normalizeActiveMeeting(meeting);
       if (meeting == null) {
-        final free = _canManageMeeting();
-        var currentPoints = 0;
-        if (!free) {
-          try {
-            final balance = await ref
-                .read(apiClientProvider)
-                .get<Map<String, dynamic>>('/api/currency/balance');
-            currentPoints =
-                (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0)
-                    .toInt();
-          } catch (_) {}
+        final authState = ref.read(authProvider);
+        final account =
+            authState.user?.account ?? authState.profile?.user.account ?? '';
+        final isCustomerService = account.trim().toLowerCase() == 'admin';
+        if (!isCustomerService && !_canManageMeeting()) {
+          Toast.warning(context, '仅群主或管理员可申请发起群会议');
+          return;
         }
         final confirm = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('发起群会议'),
             content: Text(
-              free
+              isCustomerService
                   ? '当前没有进行中的会议，是否立即发起？'
-                  : '发起会议将消耗10000积分\n当前积分余额：$currentPoints',
+                  : '提交后需等待客服审核，10分钟未处理将自动拒绝。是否提交申请？',
             ),
             actions: [
               TextButton(
@@ -393,20 +419,22 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('确认发起'),
+                child: Text(isCustomerService ? '确认发起' : '提交申请'),
               ),
             ],
           ),
         );
         if (confirm != true) return;
-        if (!free && currentPoints < 10000) {
-          Toast.warning(context, '积分不足，无法发起会议');
+        final response =
+            await ref.read(apiClientProvider).post<Map<String, dynamic>>(
+          ApiEndpoints.groupMeetingStart(widget.conversationId),
+          data: {'title': '$_groupName的会议'},
+        );
+        if (response?['approvalRequired'] == true) {
+          if (mounted) Toast.success(context, '会议申请已提交，请等待客服审核');
           return;
         }
-        meeting = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
-          ApiEndpoints.groupMeetingStart(widget.conversationId),
-          data: {'title': '$_groupName的会议', 'confirmCost': !free},
-        );
+        meeting = response;
       }
       if (!mounted || meeting == null) return;
       final meetingData = meeting;
@@ -473,8 +501,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           IconButton(icon: const Icon(Icons.videocam), onPressed: _openMeeting),
           if (canManage)
             IconButton(icon: const Icon(Icons.edit), onPressed: _renameGroup),
-          IconButton(
-              icon: const Icon(Icons.person_add), onPressed: _addMember),
+          IconButton(icon: const Icon(Icons.person_add), onPressed: _addMember),
         ],
       ),
       body: _loading
@@ -514,9 +541,11 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                                   decoration: BoxDecoration(
                                     color: Colors.white,
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.grey.shade300),
+                                    border:
+                                        Border.all(color: Colors.grey.shade300),
                                   ),
-                                  child: const Icon(Icons.camera_alt, size: 12, color: Colors.grey),
+                                  child: const Icon(Icons.camera_alt,
+                                      size: 12, color: Colors.grey),
                                 ),
                               ),
                           ],
@@ -543,20 +572,33 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                 // 缇ゅ叕鍛?
                 ListTile(
                   dense: true,
-                  leading: const Icon(Icons.campaign, size: 20, color: Colors.orange),
+                  leading: const Icon(Icons.campaign,
+                      size: 20, color: Colors.orange),
                   title: const Text('群公告', style: TextStyle(fontSize: 14)),
                   subtitle: Text(
                     _announcement.isEmpty ? '暂无公告' : _announcement,
-                    maxLines: 2, overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   trailing: canManage ? const Icon(Icons.edit, size: 16) : null,
                   onTap: canManage ? _editAnnouncement : null,
                 ),
+                if (canManage)
+                  SwitchListTile(
+                    secondary: const Icon(Icons.forum_outlined,
+                        size: 20, color: Colors.deepOrange),
+                    title: const Text('全员禁言', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('开启后仅群主和管理员可发送消息',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    value: _allMuted,
+                    onChanged: _toggleAllMuted,
+                  ),
                 // 鎴戝湪鏈兢鐨勬樀绉?
                 ListTile(
                   dense: true,
-                  leading: const Icon(Icons.badge, size: 20, color: Colors.blue),
+                  leading:
+                      const Icon(Icons.badge, size: 20, color: Colors.blue),
                   title: const Text('我在本群的昵称', style: TextStyle(fontSize: 14)),
                   subtitle: Text(
                     _myGroupNickname.isEmpty ? '未设置' : _myGroupNickname,
@@ -568,7 +610,8 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                 const SizedBox(height: 8),
                 // 鎴愬憳鎼滅储
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   child: TextField(
                     controller: _memberSearchCtrl,
                     onChanged: (v) => setState(() => _filterMembers(v)),
@@ -577,7 +620,8 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                       prefixIcon: const Icon(Icons.search, size: 20),
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
                     ),
                   ),
                 ),
@@ -714,10 +758,14 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton(
-                          onPressed: iAmOwner ? _deleteGroup : _leaveGroup,
+                          onPressed: _isSystem
+                              ? null
+                              : (iAmOwner ? _deleteGroup : _leaveGroup),
                           style: OutlinedButton.styleFrom(
                               foregroundColor: Colors.red),
-                          child: Text(iAmOwner ? '解散群聊' : '退出群聊'),
+                          child: Text(_isSystem
+                              ? '系统总群不可退出'
+                              : (iAmOwner ? '解散群聊' : '退出群聊')),
                         ),
                       ),
                     ],

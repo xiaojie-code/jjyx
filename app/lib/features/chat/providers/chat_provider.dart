@@ -42,6 +42,7 @@ class ConversationItem {
   final int? type;
   final String? name;
   final String? avatar;
+  final String createdAt;
   bool isPinned;
   final int unreadCount;
   final ChatMessage? lastMessage;
@@ -52,6 +53,7 @@ class ConversationItem {
     this.type,
     this.name,
     this.avatar,
+    this.createdAt = '',
     this.isPinned = false,
     this.unreadCount = 0,
     this.lastMessage,
@@ -214,7 +216,8 @@ class SocketService {
       } catch (_) {
         map = <String, dynamic>{};
       }
-      for (final listener in _serviceNotificationListeners) {
+      for (final listener in List<Function(Map<String, dynamic>)>.from(
+          _serviceNotificationListeners)) {
         listener(map);
       }
     });
@@ -357,8 +360,12 @@ class SocketService {
       _conversationNewListeners.add(listener);
   void removeConversationNewListener(Function() listener) =>
       _conversationNewListeners.remove(listener);
-  void addServiceNotificationListener(Function(Map<String, dynamic>) listener) =>
+  void addServiceNotificationListener(Function(Map<String, dynamic>) listener) {
+    if (!_serviceNotificationListeners.contains(listener)) {
       _serviceNotificationListeners.add(listener);
+    }
+  }
+
   void removeServiceNotificationListener(
           Function(Map<String, dynamic>) listener) =>
       _serviceNotificationListeners.remove(listener);

@@ -5,6 +5,7 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { MeetingService } from './meeting.service';
@@ -47,6 +48,35 @@ export class MeetingController {
     if (result.noticeMessage) {
       await this.chatGateway.notifyConversationMessage(
         userId,
+        result.noticeMessage,
+        { includeSender: true },
+      );
+    }
+    return result;
+  }
+
+  @Get('meeting-requests/pending')
+  listPendingMeetingRequests(@CurrentUser('id') userId: number) {
+    return this.meetingService.listPendingMeetingRequests(userId);
+  }
+
+  @Post('meeting-requests/:id/review')
+  async reviewMeetingRequest(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) requestId: number,
+    @Body('action') action: 'approve' | 'reject',
+  ) {
+    if (action !== 'approve' && action !== 'reject') {
+      throw new BadRequestException('无效的审批操作');
+    }
+    const result = (await this.meetingService.reviewMeetingRequest(
+      userId,
+      requestId,
+      action,
+    )) as any;
+    if (result.noticeMessage) {
+      await this.chatGateway.notifyConversationMessage(
+        Number(result.creatorId || userId),
         result.noticeMessage,
         { includeSender: true },
       );

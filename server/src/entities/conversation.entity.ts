@@ -32,6 +32,9 @@ export class Conversation {
   @Column({ type: 'boolean', default: false, name: 'is_system', comment: '是否系统群（不可解散）' })
   isSystem: boolean;
 
+  @Column({ type: 'boolean', default: false, name: 'all_muted', comment: '是否开启全员禁言' })
+  allMuted: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

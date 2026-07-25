@@ -62,7 +62,7 @@ class _CreateGroupPageState extends ConsumerState<CreateGroupPage> {
         data: {'name': name, 'memberIds': _selected.toList()},
       );
       if (mounted) {
-        Toast.success(context, '群聊创建成功');
+        Toast.success(context, '建群申请已发送，管理员处理中，请等待');
         Navigator.pop(context, true);
       }
     } catch (e) {

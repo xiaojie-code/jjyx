@@ -111,9 +111,12 @@ class ApiEndpoints {
   static String groupInvitation(int id) => '/api/social/groups/invitations/$id';
   static String groupMemberRole(int id, int userId) =>
       '/api/social/groups/$id/members/$userId/role';
+  static String groupAllMuted(int id) => '/api/social/groups/$id/all-muted';
   static String groupMeetingActive(int id) =>
       '/api/social/groups/$id/meetings/active';
   static String groupMeetingStart(int id) => '/api/social/groups/$id/meetings';
+  static String meetingRequestReview(int id) =>
+      '/api/social/meeting-requests/$id/review';
   static String conversationMessages(int id) =>
       '/api/social/conversations/$id/messages';
   static String deleteMessage(int id) => '/api/social/messages/$id';

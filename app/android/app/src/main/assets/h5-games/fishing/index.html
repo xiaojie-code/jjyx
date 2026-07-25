@@ -92,8 +92,10 @@
     var FISHING_ENTRY_FEE = 500;
     var FISHING_DAILY_CAST_LIMIT = 50;
     var fishingEntryState = "idle";
-    var fishingEntryRequestId = "";
     var fishingEntryOverlay = null;
+    var fishingEntryFeeKnown = false;
+    var fishingEntryFeeCharged = false;
+    var fishingEntryFeeAmount = FISHING_ENTRY_FEE;
     var fishingDailyCastDate = "";
     var fishingDailyCastCount = 0;
     var fishingDailyCastRemaining = FISHING_DAILY_CAST_LIMIT;
@@ -514,70 +516,52 @@
       return pendingGold !== null || lastKnownGold !== null;
     }
 
-    function requestFishingEntryFee() {
-      var balance = Math.floor(toNumber(pendingGold !== null ? pendingGold : lastKnownGold));
-      if (balance < FISHING_ENTRY_FEE) {
-        fishingEntryState = "blocked";
-        showFishingEntryDialog(
-          "积分不足",
-          "当前积分不足 " + FISHING_ENTRY_FEE + "，暂时无法进入实况钓鱼。<br>请补足积分后再试。",
-          [{ text: "返回", primary: true, onClick: exitFishingGame }]
-        );
-        return;
-      }
+    function hasOwn(object, key) {
+      return !!object && Object.prototype.hasOwnProperty.call(object, key);
+    }
 
-      fishingEntryState = "pending";
-      fishingEntryRequestId = "fishing_entry_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
-      showFishingEntryDialog(
-        "入场费用",
-        "进入实况钓鱼将扣除 <b style=\"color:#0d86d8;\">" + FISHING_ENTRY_FEE + " 积分</b>。<br>当前积分：" + balance,
-        [
-          { text: "返回", primary: false, onClick: exitFishingGame },
-          {
-            text: "确认进入",
-            primary: true,
-            onClick: function () {
-              showFishingEntryDialog("处理中", "正在扣除入场费用，请稍等。", []);
-              postGameMessage("changePoints", {
-                amount: -FISHING_ENTRY_FEE,
-                reason: "fishing_entry",
-                requestId: fishingEntryRequestId,
-                module: "fishing"
-              });
-            }
-          }
-        ]
-      );
+    function parseBooleanFlag(value) {
+      if (value === true || value === 1 || value === "1" || value === "true") return true;
+      if (value === false || value === 0 || value === "0" || value === "false") return false;
+      return null;
+    }
+
+    function applyFishingEntryStatus(data) {
+      data = data || {};
+      var chargedValue = hasOwn(data, "entryFeeCharged")
+        ? data.entryFeeCharged
+        : getQueryParam("entryFeeCharged");
+      var paidTodayValue = hasOwn(data, "entryFeePaidToday")
+        ? data.entryFeePaidToday
+        : getQueryParam("entryFeePaidToday");
+      var charged = parseBooleanFlag(chargedValue);
+      var paidToday = parseBooleanFlag(paidTodayValue);
+      if (charged === null && paidToday === null) return;
+
+      fishingEntryFeeKnown = true;
+      fishingEntryFeeCharged = charged === true;
+      var amountValue = hasOwn(data, "entryFeeAmount")
+        ? data.entryFeeAmount
+        : getQueryParam("entryFeeAmount");
+      var amount = Math.floor(toNumber(amountValue));
+      fishingEntryFeeAmount = amount > 0 ? amount : FISHING_ENTRY_FEE;
     }
 
     function maybeShowFishingEntryFee() {
       if (!isFishingHomeReady()) return;
-      requestFishingEntryFee();
-    }
-
-    function handleFishingEntryFeeResult(data) {
-      if (!data || !fishingEntryRequestId || data.requestId !== fishingEntryRequestId) return false;
-      var balance = balanceFromData(data, pendingGold || lastKnownGold || 0);
-      refreshFishingGold(balance);
-      if (data.success === false) {
-        fishingEntryState = "failed";
-        showFishingEntryDialog(
-          "扣除失败",
-          (data.message || "入场费用扣除失败，请稍后再试。") + "<br>当前积分：" + Math.floor(toNumber(balance)),
-          [
-            { text: "返回", primary: false, onClick: exitFishingGame },
-            { text: "重试", primary: true, onClick: requestFishingEntryFee }
-          ]
-        );
-        return true;
+      if (!fishingEntryFeeKnown) return;
+      if (!fishingEntryFeeCharged) {
+        fishingEntryState = "paid_today";
+        hideFishingEntryDialog();
+        return;
       }
       fishingEntryState = "charged";
+      var balance = Math.floor(toNumber(pendingGold !== null ? pendingGold : lastKnownGold));
       showFishingEntryDialog(
         "入场成功",
-        "已扣除 <b style=\"color:#0d86d8;\">" + FISHING_ENTRY_FEE + " 积分</b> 入场费用。<br>当前积分：" + Math.floor(toNumber(balance)),
+        "今日首次进入已扣除 <b style=\"color:#0d86d8;\">" + fishingEntryFeeAmount + " 积分</b> 入场费用。<br>当前积分：" + balance,
         [{ text: "开始游戏", primary: true, onClick: hideFishingEntryDialog }]
       );
-      return true;
     }
 
     function getQueryParam(name) {
@@ -1425,6 +1409,7 @@
       var data = message.data || {};
       if (action === "init") {
         appInitData = data;
+        applyFishingEntryStatus(data);
         lastAccountIdentity = "";
         remoteSaveLoaded = false;
         remoteSaveData = null;
@@ -1437,9 +1422,6 @@
         refreshFishingGold(pendingGold !== null ? pendingGold : balanceFromData(data, 0));
         setTimeout(maybeShowFishingEntryFee, 300);
       } else if (action === "balanceUpdate" || action === "pointsChangeResult") {
-        if (action === "pointsChangeResult" && handleFishingEntryFeeResult(data)) {
-          return;
-        }
         if (data.success === false || typeof data.points !== "undefined" || typeof data.balance !== "undefined") {
           refreshFishingGold(balanceFromData(data, pendingGold || 0));
           setTimeout(maybeShowFishingEntryFee, 120);
@@ -1448,6 +1430,7 @@
     };
 
     installSaveStoragePatch();
+    applyFishingEntryStatus(appInitData);
     activateAccountSave();
     loadLocalCastState();
     loadRemoteSaveSync(false);

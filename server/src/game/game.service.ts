@@ -1,4 +1,10 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, In } from 'typeorm';
 import { randomBytes } from 'crypto';
@@ -83,7 +89,7 @@ const LOTTERY_PRIZES: LotteryPrize[] = [
 ];
 
 @Injectable()
-export class GameService {
+export class GameService implements OnModuleInit {
   constructor(
     @InjectRepository(Game) private readonly gameRepo: Repository<Game>,
     @InjectRepository(GameRecord) private readonly recordRepo: Repository<GameRecord>,
@@ -97,6 +103,10 @@ export class GameService {
     private readonly currencyService: CurrencyService,
     private readonly dataSource: DataSource,
   ) {}
+
+  async onModuleInit() {
+    await this.ensureFishingDailyEntryTable();
+  }
 
   private gameSearchText(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
     return `${game?.name || ''} ${game?.description || ''} ${game?.gameUrl || ''}`.toLowerCase();
@@ -115,6 +125,11 @@ export class GameService {
   private isMahjongGame(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
     const text = this.gameSearchText(game);
     return text.includes('mahjong') || text.includes('majiang') || text.includes('麻将');
+  }
+
+  private isFishingGame(game?: Partial<Pick<Game, 'name' | 'description' | 'gameUrl'>> | null) {
+    const text = this.gameSearchText(game);
+    return text.includes('fishing') || text.includes('钓鱼') || text.includes('捕鱼');
   }
 
   private isPlaceholderGameUrl(value?: string | null) {
@@ -268,11 +283,38 @@ export class GameService {
     if (!game) throw new NotFoundException('游戏不存在');
     if (game.status !== 1) throw new BadRequestException('游戏维护中');
 
-    // 扣入场费
-    if (Number(game.entryCost) > 0) {
+    const fishingGame = this.isFishingGame(game);
+    const entryCost = fishingGame ? FISHING_ENTRY_FEE : Number(game.entryCost);
+    let entryFeeCharged = false;
+
+    // 实况钓鱼每天首次进入扣费，其他游戏保持原有每次进入扣费规则。
+    if (entryCost > 0) {
+      if (fishingGame) await this.ensureFishingDailyEntryTable();
       await this.dataSource.transaction(async (mgr) => {
-        const entryCost = Number(game.entryCost);
-        const changed = await this.currencyService.changeCurrency(userId, 'points', -entryCost, 'game_entry', `进入${game.name}`, mgr);
+        if (fishingGame) {
+          const inserted = await mgr.query(
+            `INSERT IGNORE INTO fishing_daily_entries
+              (user_id, game_id, entry_date, entry_fee, created_at)
+             VALUES (?, ?, ?, ?, NOW())`,
+            [userId, game.id, this.getTodayString(), entryCost],
+          );
+          const affectedRows = Number(
+            inserted?.affectedRows ?? inserted?.[0]?.affectedRows ?? 0,
+          );
+          if (affectedRows === 0) return;
+        }
+
+        const description = fishingGame
+          ? `${game.name}每日首次入场`
+          : `进入${game.name}`;
+        const changed = await this.currencyService.changeCurrency(
+          userId,
+          'points',
+          -entryCost,
+          'game_entry',
+          description,
+          mgr,
+        );
         if (!this.isLotteryGame(game)) {
           await this.currencyService.recordGameTurnover({
             userId,
@@ -280,10 +322,19 @@ export class GameService {
             sourceType: 'game_entry',
             amount: entryCost,
             currencyLogId: changed.logId,
-            description: `进入${game.name}`,
+            description,
             manager: mgr,
           });
         }
+        if (fishingGame) {
+          await mgr.query(
+            `UPDATE fishing_daily_entries
+             SET currency_log_id = ?
+             WHERE user_id = ? AND game_id = ? AND entry_date = ?`,
+            [changed.logId, userId, game.id, this.getTodayString()],
+          );
+        }
+        entryFeeCharged = true;
       });
     }
 
@@ -310,6 +361,9 @@ export class GameService {
       gameId: game.id,
       name: game.name,
       orientation: this.resolveGameOrientation(game),
+      entryFeeCharged,
+      entryFeeAmount: entryFeeCharged ? entryCost : 0,
+      entryFeePaidToday: fishingGame,
     };
   }
 
@@ -636,6 +690,23 @@ export class GameService {
       'daily_cast_count',
       `ALTER TABLE fishing_saves ADD COLUMN daily_cast_count INT NOT NULL DEFAULT 0 AFTER daily_cast_date`,
     );
+  }
+
+  private async ensureFishingDailyEntryTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS fishing_daily_entries (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        game_id INT NOT NULL,
+        entry_date DATE NOT NULL,
+        entry_fee DECIMAL(18,6) NOT NULL DEFAULT 500,
+        currency_log_id BIGINT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_fishing_daily_entry (user_id, game_id, entry_date),
+        INDEX idx_fishing_daily_entry_date (entry_date),
+        INDEX idx_fishing_daily_entry_log (currency_log_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='实况钓鱼每日首次入场扣费记录';
+    `);
   }
 
   private async addFishingSaveColumnIfMissing(columnName: string, ddl: string) {

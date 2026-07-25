@@ -80,7 +80,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     }
   }
 
-  /// 加载服务通知未读数（仅管理员有意义，普通用户一般为0）
+  /// 加载当前用户的服务通知未读数。
   bool get _canUseServiceNotifications =>
       ref.read(authProvider).user != null ||
       ref.read(authProvider).profile != null;
@@ -163,18 +163,21 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
       final idx = _conversations
           .indexWhere((c) => c.conversationId == msg.conversationId);
       if (idx >= 0) {
-        // Update existing conversation preview and unread count.
-        final old = _conversations[idx];
-        _conversations[idx] = ConversationItem(
+        final old = _conversations.removeAt(idx);
+        final updated = ConversationItem(
           conversationId: old.conversationId,
           type: old.type,
           name: old.name,
           avatar: old.avatar,
+          createdAt: old.createdAt,
           isPinned: old.isPinned,
           unreadCount: old.unreadCount + 1,
           peerUser: old.peerUser,
           lastMessage: msg,
         );
+        _conversations.add(updated);
+        // 四个系统入口固定；普通会话收到新消息后立即按活动时间重排。
+        _conversations.sort(_compareConversationActivity);
       }
     });
     // 鍚屾椂浠庢湇鍔″櫒鍒锋柊瀹屾暣鏁版嵁锛堢‘淇濇暟鎹竴鑷存€э級
@@ -196,6 +199,9 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
     _serviceUnreadLocallyCleared = false;
     // 本地先 +1，保证角标即时更新
     setState(() => _serviceUnread += 1);
+    if (data['type']?.toString() == 'group_result') {
+      _loadConversations();
+    }
     // 再从服务器拉准确未读数
     _loadServiceUnread();
   }
@@ -230,6 +236,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           type: map['type'] as int?,
           name: map['name'] as String?,
           avatar: map['avatar'] as String?,
+          createdAt: map['createdAt']?.toString() ?? '',
           isPinned: map['isPinned'] as bool? ?? false,
           unreadCount: localUnread ?? serverUnread,
           peerUser: map['peerUser'] != null
@@ -241,15 +248,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
               : null,
         );
       }).toList();
-      conversations.sort((a, b) {
-        // 置顶浼樺厛
-        if (a.isPinned && !b.isPinned) return -1;
-        if (!a.isPinned && b.isPinned) return 1;
-        // 鎸夋渶鏂版秷鎭椂闂撮檷搴忥紙瓒婃柊瓒婇潬涓婏級
-        final aTime = a.lastMessage?.createdAt ?? '';
-        final bTime = b.lastMessage?.createdAt ?? '';
-        return bTime.compareTo(aTime);
-      });
+      conversations.sort(_compareConversationActivity);
       if (!mounted) return;
       setState(() {
         _conversations = conversations;
@@ -278,6 +277,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           type: item.type,
           name: item.name,
           avatar: item.avatar,
+          createdAt: item.createdAt,
           isPinned: item.isPinned,
           unreadCount: 0,
           peerUser: item.peerUser,
@@ -290,6 +290,23 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
           _conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
       ref.read(badgeProvider.notifier).setUnreadCount(totalUnread);
     }
+  }
+
+  int _compareConversationActivity(
+    ConversationItem a,
+    ConversationItem b,
+  ) {
+    if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+    final aTime = _conversationActivityTimestamp(a);
+    final bTime = _conversationActivityTimestamp(b);
+    if (aTime != bTime) return bTime.compareTo(aTime);
+    return b.conversationId.compareTo(a.conversationId);
+  }
+
+  int _conversationActivityTimestamp(ConversationItem item) {
+    final messageTime = item.lastMessage?.createdAt ?? '';
+    final raw = messageTime.isNotEmpty ? messageTime : item.createdAt;
+    return DateTime.tryParse(raw)?.millisecondsSinceEpoch ?? 0;
   }
 
   Future<void> _togglePin(ConversationItem conv) async {
@@ -685,9 +702,8 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
-    final isAdmin = authState.user?.isAdmin == true ||
-        authState.profile?.user.isAdmin == true;
-    final showServiceNotifications = isAdmin || _serviceUnread > 0;
+    final showServiceNotifications =
+        authState.user != null || authState.profile != null;
     if (_hasKnownUser && !_serviceUnreadLoaded) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadServiceUnread();
@@ -760,7 +776,7 @@ class _ChatListPageState extends ConsumerState<ChatListPage>
                     );
                   }
 
-                  // 服务通知入口（仅管理员）
+                  // 服务通知入口：所有已登录用户都可查看业务进度。
                   if (showServiceNotifications && index == 3) {
                     return ListTile(
                       leading: Stack(

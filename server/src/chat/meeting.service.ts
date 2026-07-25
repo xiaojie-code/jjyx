@@ -18,9 +18,11 @@ import { ConversationMember } from '../entities/conversation-member.entity';
 import { Meeting } from '../entities/meeting.entity';
 import { MeetingParticipant } from '../entities/meeting-participant.entity';
 import { MeetingBan } from '../entities/meeting-ban.entity';
+import { GroupMeetingRequest } from '../entities/group-meeting-request.entity';
 import { User } from '../entities/user.entity';
 import { Message } from '../entities/message.entity';
 import { CurrencyService } from '../currency/currency.service';
+import { ServiceNotificationService } from '../notification/service-notification.service';
 
 @Injectable()
 export class MeetingService implements OnModuleInit {
@@ -37,13 +39,17 @@ export class MeetingService implements OnModuleInit {
     private readonly participantRepo: Repository<MeetingParticipant>,
     @InjectRepository(MeetingBan)
     private readonly banRepo: Repository<MeetingBan>,
+    @InjectRepository(GroupMeetingRequest)
+    private readonly meetingRequestRepo: Repository<GroupMeetingRequest>,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
     private readonly currencyService: CurrencyService,
+    private readonly serviceNotificationService: ServiceNotificationService,
   ) {}
 
   async onModuleInit() {
+    await this.ensureMeetingRequestSchema();
     await this.closeLingeringActiveMeetings('service_start');
   }
 
@@ -58,7 +64,7 @@ export class MeetingService implements OnModuleInit {
     userId: number,
     groupId: number,
     title?: string,
-    confirmCost = false,
+    _confirmCost = false,
   ) {
     const { conversation, member } = await this.ensureGroupMember(
       userId,
@@ -67,41 +73,257 @@ export class MeetingService implements OnModuleInit {
     const active = await this.findUsableActiveMeeting(groupId);
     if (active) return this.withParticipants(active);
 
-    const isManager = this.isGroupManager(conversation, member, userId);
-    // 普通成员发起会议需要消耗积分，群主/管理员免费
-    if (!isManager) {
-      const costStr = await this.currencyService.getConfigValue('meeting_start_cost', '10000');
-      const cost = Number(costStr);
-      if (cost > 0) {
-        if (!confirmCost) {
-          throw new ForbiddenException(`发起群会议需要${cost}积分，请确认后再发起`);
-        }
-        try {
-          await this.currencyService.changeCurrency(
-            userId, 'points', -cost, 'meeting_start', `发起群会议消耗${cost}积分`,
-          );
-        } catch {
-          throw new ForbiddenException(`积分不足，发起会议需要${cost}积分`);
-        }
-      }
+    const requester = await this.userRepo.findOne({ where: { id: userId } });
+    const isCustomerService = requester?.account?.trim().toLowerCase() === 'admin';
+    if (isCustomerService) {
+      return this.createMeeting(userId, conversation, title);
     }
 
+    if (!this.isGroupManager(conversation, member, userId)) {
+      throw new ForbiddenException('仅群主或管理员可申请发起群会议');
+    }
+
+    return this.createMeetingRequest(userId, conversation, title);
+  }
+
+  private async createMeeting(
+    creatorId: number,
+    conversation: Conversation,
+    title?: string,
+  ) {
+    const active = await this.findUsableActiveMeeting(conversation.id);
+    if (active) return this.withParticipants(active);
     const meeting = await this.meetingRepo.save(
       this.meetingRepo.create({
-        groupId,
-        creatorId: userId,
+        groupId: conversation.id,
+        creatorId,
         status: 1,
         title: title || `${conversation.name || '群聊'}的会议`,
       }),
     );
-    await this.joinMeeting(userId, meeting.id);
+    await this.joinMeeting(creatorId, meeting.id);
     const result = await this.withParticipants(meeting);
     const noticeMessage = await this.createMeetingNoticeMessage(
-      userId,
+      creatorId,
       meeting,
       conversation,
     );
     return { ...result, justCreated: true, noticeMessage };
+  }
+
+  private async createMeetingRequest(
+    requesterId: number,
+    conversation: Conversation,
+    title?: string,
+  ) {
+    await this.expirePendingMeetingRequests();
+    const existing = await this.meetingRequestRepo.findOne({
+      where: { groupId: conversation.id, status: 0 },
+      order: { createdAt: 'DESC' },
+    });
+    if (existing && existing.expiresAt.getTime() > Date.now()) {
+      if (Number(existing.requesterId) !== Number(requesterId)) {
+        throw new BadRequestException('本群已有待审核的会议申请，请稍后再试');
+      }
+      return this.meetingRequestResponse(existing, conversation.name || '群聊');
+    }
+
+    const request = await this.meetingRequestRepo.save(
+      this.meetingRequestRepo.create({
+        groupId: conversation.id,
+        requesterId,
+        reviewerId: null,
+        status: 0,
+        title: title || `${conversation.name || '群聊'}的会议`,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        reviewedAt: null,
+        meetingId: null,
+      }),
+    );
+    const requester = await this.userRepo.findOne({ where: { id: requesterId } });
+    const customerService = await this.userRepo.findOne({
+      where: { account: 'admin', status: 1 },
+    });
+    if (customerService) {
+      const requesterName =
+        requester?.nickname?.trim() || requester?.account?.trim() || `用户${requesterId}`;
+      await this.serviceNotificationService.notifyUser({
+        recipientId: customerService.id,
+        type: 'meeting_request',
+        title: '群会议申请',
+        content: `${requesterName}申请在「${conversation.name || '群聊'}」发起群会议，请在10分钟内处理`,
+        fromUserId: requesterId,
+        payload: {
+          requestId: request.id,
+          groupId: conversation.id,
+          groupName: conversation.name || '群聊',
+          requesterId,
+          status: 0,
+          expiresAt: request.expiresAt,
+        },
+      });
+    }
+    return this.meetingRequestResponse(request, conversation.name || '群聊');
+  }
+
+  async reviewMeetingRequest(
+    reviewerId: number,
+    requestId: number,
+    action: 'approve' | 'reject',
+  ) {
+    await this.expirePendingMeetingRequests();
+    const reviewer = await this.userRepo.findOne({ where: { id: reviewerId } });
+    if (reviewer?.account?.trim().toLowerCase() !== 'admin') {
+      throw new ForbiddenException('仅客服账号可审批群会议申请');
+    }
+    const request = await this.meetingRequestRepo.findOne({ where: { id: requestId } });
+    if (!request) throw new NotFoundException('会议申请不存在');
+    if (request.status !== 0) throw new BadRequestException('该会议申请已处理');
+    if (request.expiresAt.getTime() <= Date.now()) {
+      await this.markMeetingRequestExpired(request);
+      throw new BadRequestException('会议申请已超时并自动拒绝');
+    }
+
+    const conversation = await this.convRepo.findOne({
+      where: { id: request.groupId, type: 2 },
+    });
+    if (!conversation) throw new NotFoundException('群聊不存在');
+    request.reviewerId = reviewerId;
+    request.reviewedAt = new Date();
+
+    if (action === 'reject') {
+      request.status = 2;
+      await this.meetingRequestRepo.save(request);
+      await this.updateMeetingRequestNotification(request.id, 2);
+      await this.notifyMeetingRequestResult(request, conversation, false);
+      return { message: '已拒绝会议申请', requestId: request.id, status: 2 };
+    }
+
+    const created = await this.createMeeting(
+      request.requesterId,
+      conversation,
+      request.title,
+    );
+    request.status = 1;
+    request.meetingId = Number((created as any).id || 0) || null;
+    await this.meetingRequestRepo.save(request);
+    await this.updateMeetingRequestNotification(request.id, 1);
+    await this.notifyMeetingRequestResult(request, conversation, true);
+    return {
+      ...created,
+      requestId: request.id,
+      requestStatus: 1,
+      message: '已同意会议申请',
+    };
+  }
+
+  async listPendingMeetingRequests(userId: number) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (user?.account?.trim().toLowerCase() !== 'admin') {
+      throw new ForbiddenException('仅客服账号可查看会议申请');
+    }
+    await this.expirePendingMeetingRequests();
+    return this.meetingRequestRepo.find({
+      where: { status: 0 },
+      order: { createdAt: 'ASC' },
+    });
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async expirePendingMeetingRequests() {
+    const expired = await this.meetingRequestRepo.find({
+      where: { status: 0, expiresAt: LessThan(new Date()) },
+    });
+    for (const request of expired) {
+      await this.markMeetingRequestExpired(request);
+    }
+    return expired.length;
+  }
+
+  private async markMeetingRequestExpired(request: GroupMeetingRequest) {
+    request.status = 3;
+    request.reviewedAt = new Date();
+    await this.meetingRequestRepo.save(request);
+    await this.updateMeetingRequestNotification(request.id, 3);
+    const conversation = await this.convRepo.findOne({
+      where: { id: request.groupId, type: 2 },
+    });
+    if (conversation) await this.notifyMeetingRequestResult(request, conversation, false, true);
+  }
+
+  private async updateMeetingRequestNotification(requestId: number, status: number) {
+    try {
+      await this.meetingRequestRepo.manager.query(
+        `UPDATE service_notifications
+         SET payload_json = JSON_SET(COALESCE(payload_json, '{}'), '$.status', ?)
+         WHERE type = 'meeting_request'
+           AND CAST(JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.requestId')) AS UNSIGNED) = ?`,
+        [status, requestId],
+      );
+    } catch (error) {
+      this.logger.warn(
+        `更新会议申请通知状态失败 request=${requestId}: ${String(error)}`,
+      );
+    }
+  }
+
+  private async notifyMeetingRequestResult(
+    request: GroupMeetingRequest,
+    conversation: Conversation,
+    approved: boolean,
+    expired = false,
+  ) {
+    const content = approved
+      ? `客服已同意你在「${conversation.name || '群聊'}」发起群会议`
+      : expired
+        ? `你在「${conversation.name || '群聊'}」的群会议申请10分钟内未处理，已自动拒绝`
+        : `客服已拒绝你在「${conversation.name || '群聊'}」发起群会议`;
+    await this.serviceNotificationService.notifyUser({
+      recipientId: request.requesterId,
+      type: 'meeting_request_result',
+      title: approved ? '群会议申请已通过' : '群会议申请未通过',
+      content,
+      payload: {
+        requestId: request.id,
+        groupId: request.groupId,
+        meetingId: request.meetingId,
+        status: request.status,
+      },
+    });
+  }
+
+  private meetingRequestResponse(request: GroupMeetingRequest, groupName: string) {
+    return {
+      approvalRequired: true,
+      requestId: request.id,
+      requestStatus: request.status,
+      groupId: request.groupId,
+      groupName,
+      expiresAt: request.expiresAt,
+      message: '会议申请已提交，请等待客服审核',
+    };
+  }
+
+  private async ensureMeetingRequestSchema() {
+    await this.meetingRequestRepo.manager.query(`
+      CREATE TABLE IF NOT EXISTS group_meeting_requests (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        group_id INT NOT NULL,
+        requester_id INT NOT NULL,
+        reviewer_id INT NULL,
+        status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 1同意 2拒绝 3超时拒绝',
+        title VARCHAR(200) NULL,
+        expires_at DATETIME NOT NULL,
+        reviewed_at DATETIME NULL,
+        meeting_id INT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_meeting_request_group (group_id),
+        INDEX idx_meeting_request_requester (requester_id),
+        INDEX idx_meeting_request_status (status),
+        INDEX idx_meeting_request_expires (expires_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
   }
 
   async joinMeeting(userId: number, meetingId: number) {

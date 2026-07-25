@@ -373,6 +373,24 @@ export class UserService implements OnModuleInit {
     return code;
   }
 
+  private async ensureSystemGroupMembership(userId: number) {
+    const systemGroup = await this.convRepo.findOne({
+      where: { type: 2, isSystem: true, status: 1 },
+    });
+    if (!systemGroup) return;
+    const existing = await this.convMemberRepo.findOne({
+      where: { conversationId: systemGroup.id, userId },
+    });
+    if (existing) return;
+    await this.convMemberRepo.save(
+      this.convMemberRepo.create({
+        conversationId: systemGroup.id,
+        userId,
+        role: 1,
+      }),
+    );
+  }
+
   /** 注册 */
   async register(dto: RegisterDto, ip: string) {
     await this.checkSwitch('register');
@@ -424,6 +442,7 @@ export class UserService implements OnModuleInit {
     await this.currencyRepo.save(
       this.currencyRepo.create({ userId: savedUser.id }),
     );
+    await this.ensureSystemGroupMembership(savedUser.id);
 
     // 签发 token
     const token = this.jwtService.sign({
@@ -471,6 +490,7 @@ export class UserService implements OnModuleInit {
     user.loginIp = ip;
     user.loginTime = new Date();
     await this.userRepo.save(user);
+    await this.ensureSystemGroupMembership(user.id);
 
     const token = this.jwtService.sign({ sub: user.id, account: user.account });
 
@@ -842,9 +862,43 @@ export class UserService implements OnModuleInit {
       [userId],
     );
 
+    const historicalSummaryRows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(return_amount), 0) AS totalReturnedPoints
+       FROM weekly_point_return_daily_records
+       WHERE user_id = ? AND status = 1`,
+      [userId],
+    );
+    const returnHistoryRows = await this.dataSource.query(
+      `SELECT
+         r.id,
+         r.account_id AS accountId,
+         DATE_FORMAT(r.return_date, '%Y-%m-%d') AS returnDate,
+         r.day_index AS dayIndex,
+         r.return_amount AS returnAmount,
+         r.currency_log_id AS currencyLogId,
+         DATE_FORMAT(p.week_start_date, '%Y-%m-%d') AS weekStartDate,
+         DATE_FORMAT(p.week_end_date, '%Y-%m-%d') AS weekEndDate
+       FROM weekly_point_return_daily_records r
+       LEFT JOIN weekly_point_return_periods p ON p.id = r.period_id
+       WHERE r.user_id = ? AND r.status = 1
+       ORDER BY r.return_date DESC, r.id DESC`,
+      [userId],
+    );
+
     return {
       current,
       records,
+      historicalReturnedPoints: this.roundPoints(
+        Number(historicalSummaryRows?.[0]?.totalReturnedPoints || 0),
+      ),
+      returnHistory: returnHistoryRows.map((row: any) => ({
+        ...row,
+        id: Number(row.id),
+        accountId: Number(row.accountId),
+        dayIndex: Number(row.dayIndex),
+        returnAmount: this.roundPoints(Number(row.returnAmount || 0)),
+        currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
+      })),
       schedule: this.buildWeeklyReturnSchedule(current, records),
       history: historyRows
         .map((row: any) => this.mapWeeklyPointReturnAccount(row))

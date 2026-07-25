@@ -43,7 +43,8 @@ $Endpoint = Resolve-JjyxNetworkEndpoint `
 function Test-LocalPort {
     param([int]$Port)
 
-    $rows = netstat -ano | Select-String ":$Port\s"
+    $rows = netstat -ano -p tcp |
+        Select-String "^\s*TCP\s+\S+:$Port\s+\S+\s+LISTENING\s+\d+\s*$"
     return [bool]$rows
 }
 
@@ -122,7 +123,7 @@ function Start-BackendIfNeeded {
     Start-HiddenPowerShell `
         -Name 'backend' `
         -WorkingDirectory $serverRoot `
-        -Command 'npm run start:dev'
+        -Command 'npm run build; if ($LASTEXITCODE -eq 0) { for ($attempt = 1; $attempt -le 3; $attempt++) { npm run start:prod; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep -Seconds 3 } }'
 }
 
 function Start-AdminIfNeeded {
@@ -234,7 +235,7 @@ Start-MahjongWsIfNeeded
 Start-FlutterWebIfNeeded
 Start-NginxIfNeeded
 
-Start-Sleep -Seconds 6
+Start-Sleep -Seconds 12
 
 $ports = @(3306, 6379, $ServerPort, 3100, 7272, 1236, $SaimaPort, 15103, 42001)
 if ($WithFlutterWeb) { $ports += $WebPort }

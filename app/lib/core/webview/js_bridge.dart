@@ -16,6 +16,9 @@ class GameUserInfo {
   final String avatar;
   final double points;
   final int gameId;
+  final bool? entryFeeCharged;
+  final double? entryFeeAmount;
+  final bool? entryFeePaidToday;
 
   const GameUserInfo({
     required this.token,
@@ -25,6 +28,9 @@ class GameUserInfo {
     required this.avatar,
     required this.points,
     this.gameId = 0,
+    this.entryFeeCharged,
+    this.entryFeeAmount,
+    this.entryFeePaidToday,
   });
 
   Map<String, dynamic> toJson() => {
@@ -42,6 +48,10 @@ class GameUserInfo {
         'saimaWsUrl': AppConstants.saimaWsUrl,
         'mahjongHttpUrl': AppConstants.mahjongHttpUrl,
         'mahjongWsUrl': AppConstants.mahjongWsUrl,
+        if (entryFeeCharged != null) 'entryFeeCharged': entryFeeCharged,
+        if (entryFeeAmount != null) 'entryFeeAmount': entryFeeAmount,
+        if (entryFeePaidToday != null)
+          'entryFeePaidToday': entryFeePaidToday,
       };
 }
 

@@ -19,7 +19,14 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { ServiceNotificationService } from '../notification/service-notification.service';
 import * as bcrypt from 'bcryptjs';
 
-type CurrencyType = 'points' | 'gold' | 'silver' | 'copper' | 'special' | 'reward' | 'invite';
+type CurrencyType =
+  | 'points'
+  | 'gold'
+  | 'silver'
+  | 'copper'
+  | 'special'
+  | 'reward'
+  | 'invite';
 
 const WEEKLY_POINT_RETURN_SWITCH_KEY = 'weekly_point_return';
 const WEEKLY_POINT_RETURN_MULTIPLIER_KEY = 'weekly_point_return_multiplier';
@@ -40,7 +47,9 @@ const WITHDRAW_COPPER_COST_PER_UNIT_KEY = 'withdraw_copper_cost_per_unit';
 const GAME_COPPER_MINUTES_PER_COIN_KEY = 'game_copper_minutes_per_coin';
 const GAME_COPPER_DAILY_MAX_KEY = 'game_copper_daily_max';
 const GAME_DURATION_REPORT_MAX_SECONDS = 6 * 60 * 60;
-const SILVER_SYNTHESIS_POINTS = 50000;
+const SILVER_SYNTHESIS_POINTS_KEY = 'silver_synthesis_points_per_coin';
+const SILVER_SYNTHESIS_POINTS_DEFAULT = 5000;
+const LOW_TIER_SILVER_SYNTHESIS_POINTS = 20000;
 const GOLD_EXCHANGE_RATE_KEY = 'gold_exchange_rate';
 const GOLD_TRADE_DEPOSIT = 100;
 const GOLD_TRADE_FEE_RATE = 0.05;
@@ -102,7 +111,15 @@ export class CurrencyService {
   }
 
   private startOfLocalDay(date: Date) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+    return new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      0,
+      0,
+      0,
+      0,
+    );
   }
 
   private addDays(date: Date, days: number) {
@@ -119,7 +136,10 @@ export class CurrencyService {
     return `${date.getFullYear()}-${this.pad2(date.getMonth() + 1)}-${this.pad2(date.getDate())}`;
   }
 
-  private async requireActivatedForCurrencyTrade(userId: number, manager?: EntityManager) {
+  private async requireActivatedForCurrencyTrade(
+    userId: number,
+    manager?: EntityManager,
+  ) {
     const mgr = manager || this.dataSource.manager;
     const rows = await mgr.query(
       `SELECT id, status, is_activated AS isActivated FROM users WHERE id = ? LIMIT 1`,
@@ -140,7 +160,15 @@ export class CurrencyService {
 
   private parseLocalDate(value: any) {
     if (value instanceof Date) {
-      return new Date(value.getFullYear(), value.getMonth(), value.getDate(), 0, 0, 0, 0);
+      return new Date(
+        value.getFullYear(),
+        value.getMonth(),
+        value.getDate(),
+        0,
+        0,
+        0,
+        0,
+      );
     }
     const text = String(value || '').slice(0, 10);
     const [year, month, day] = text.split('-').map((part) => Number(part));
@@ -189,7 +217,11 @@ export class CurrencyService {
   private parseBackfillEndDateTime(value: any, fallback?: Date | null) {
     const parsed = this.parseBackfillDateTime(value, fallback);
     if (!parsed) return parsed;
-    if (String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)) {
+    if (
+      String(value || '')
+        .trim()
+        .match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    ) {
       return this.endOfLocalDay(parsed);
     }
     return parsed;
@@ -459,7 +491,8 @@ export class CurrencyService {
         const available = this.roundGold(
           Math.max(
             0,
-            Number(incomeRows?.[0]?.total || 0) - Number(withdrawalRows?.[0]?.total || 0),
+            Number(incomeRows?.[0]?.total || 0) -
+              Number(withdrawalRows?.[0]?.total || 0),
           ),
         );
         if (available <= 0) {
@@ -539,6 +572,10 @@ export class CurrencyService {
 
   private async ensureDefaultSynthesisConfigs() {
     await this.ensureSynthesisConfigTable();
+    const consumePoints = await this.getPositiveIntegerConfig(
+      SILVER_SYNTHESIS_POINTS_KEY,
+      SILVER_SYNTHESIS_POINTS_DEFAULT,
+    );
     await this.dataSource.query(
       `INSERT INTO point_synthesis (consume_points, target_currency, target_amount, status)
        SELECT ?, 'silver', 1, 1
@@ -547,13 +584,13 @@ export class CurrencyService {
          SELECT 1 FROM point_synthesis
          WHERE target_currency = 'silver' AND target_amount = 1 AND status = 1
        )`,
-      [SILVER_SYNTHESIS_POINTS],
+      [consumePoints],
     );
     await this.dataSource.query(
       `UPDATE point_synthesis
        SET consume_points = ?, target_amount = 1, status = 1
        WHERE target_currency = 'silver'`,
-      [SILVER_SYNTHESIS_POINTS],
+      [consumePoints],
     );
   }
 
@@ -621,6 +658,25 @@ export class CurrencyService {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
   }
 
+  private async getSilverSynthesisPointsForUser(
+    userId: number,
+    manager?: EntityManager,
+  ) {
+    const executor = manager || this.dataSource.manager;
+    const users = await executor.query(
+      `SELECT activation_amount AS activationAmount FROM users WHERE id = ? LIMIT 1`,
+      [userId],
+    );
+    if (Number(users?.[0]?.activationAmount) === 500) {
+      return LOW_TIER_SILVER_SYNTHESIS_POINTS;
+    }
+    return this.getPositiveIntegerConfig(
+      SILVER_SYNTHESIS_POINTS_KEY,
+      SILVER_SYNTHESIS_POINTS_DEFAULT,
+      manager,
+    );
+  }
+
   private async getWithdrawCopperConfig(manager?: EntityManager) {
     const goldUnit = await this.getPositiveIntegerConfig(
       WITHDRAW_COPPER_GOLD_UNIT_KEY,
@@ -639,7 +695,8 @@ export class CurrencyService {
     amount: number,
     config: { goldUnit: number; copperPerUnit: number },
   ) {
-    if (amount <= 0 || config.goldUnit <= 0 || config.copperPerUnit <= 0) return 0;
+    if (amount <= 0 || config.goldUnit <= 0 || config.copperPerUnit <= 0)
+      return 0;
     return Math.ceil(amount / config.goldUnit) * config.copperPerUnit;
   }
 
@@ -872,13 +929,26 @@ export class CurrencyService {
 
     let fieldName: keyof UserCurrency;
     switch (type) {
-      case 'points': fieldName = 'points'; break;
-      case 'gold': fieldName = 'gold'; break;
-      case 'silver': fieldName = 'silver'; break;
-      case 'copper': fieldName = 'copper'; break;
-      case 'reward': fieldName = 'rewardPoints'; break;
-      case 'invite': fieldName = 'invitePoints'; break;
-      default: throw new BadRequestException('不支持的货币类型');
+      case 'points':
+        fieldName = 'points';
+        break;
+      case 'gold':
+        fieldName = 'gold';
+        break;
+      case 'silver':
+        fieldName = 'silver';
+        break;
+      case 'copper':
+        fieldName = 'copper';
+        break;
+      case 'reward':
+        fieldName = 'rewardPoints';
+        break;
+      case 'invite':
+        fieldName = 'invitePoints';
+        break;
+      default:
+        throw new BadRequestException('不支持的货币类型');
     }
 
     const before = Number(currency[fieldName]);
@@ -887,7 +957,9 @@ export class CurrencyService {
 
     (currency as any)[fieldName] = after;
     if (type === 'gold' && this.shouldCountOriginalGold(logType, amount)) {
-      currency.totalGoldEarned = this.roundGold(Number(currency.totalGoldEarned || 0) + amount);
+      currency.totalGoldEarned = this.roundGold(
+        Number(currency.totalGoldEarned || 0) + amount,
+      );
     }
     await mgr.save(UserCurrency, currency);
 
@@ -908,8 +980,13 @@ export class CurrencyService {
   }
 
   /** 货币明细查询 */
-  async getLogs(userId: number, currencyType: string | undefined, pagination: PaginationDto) {
-    const qb = this.logRepo.createQueryBuilder('log')
+  async getLogs(
+    userId: number,
+    currencyType: string | undefined,
+    pagination: PaginationDto,
+  ) {
+    const qb = this.logRepo
+      .createQueryBuilder('log')
       .where('log.user_id = :userId', { userId })
       .orderBy('log.created_at', 'DESC');
 
@@ -973,7 +1050,12 @@ export class CurrencyService {
       ...(extraByLogId.get(Number(item.id)) || {}),
     }));
 
-    return { list: enrichedList, total, page: pagination.page, pageSize: pagination.pageSize };
+    return {
+      list: enrichedList,
+      total,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    };
   }
 
   async recordGamePlayDuration(
@@ -982,7 +1064,9 @@ export class CurrencyService {
     data: { sessionId?: string; durationSeconds?: number },
   ) {
     await this.ensureGameDurationCopperTables();
-    const sessionId = String(data.sessionId || '').trim().slice(0, 100);
+    const sessionId = String(data.sessionId || '')
+      .trim()
+      .slice(0, 100);
     if (!sessionId) throw new BadRequestException('缺少游戏会话ID');
 
     const durationSeconds = Math.floor(Number(data.durationSeconds || 0));
@@ -994,7 +1078,10 @@ export class CurrencyService {
         durationSeconds: 0,
       };
     }
-    const safeDurationSeconds = Math.min(durationSeconds, GAME_DURATION_REPORT_MAX_SECONDS);
+    const safeDurationSeconds = Math.min(
+      durationSeconds,
+      GAME_DURATION_REPORT_MAX_SECONDS,
+    );
     const playDate = this.formatLocalDate(new Date());
 
     return this.dataSource.transaction(async (mgr) => {
@@ -1122,7 +1209,11 @@ export class CurrencyService {
     let currentUserId = Number(userId);
     const visited = new Set<number>([currentUserId]);
 
-    for (let generation = 2; generation <= DIRECT_GAME_REWARD_MAX_GENERATION; generation += 1) {
+    for (
+      let generation = 2;
+      generation <= DIRECT_GAME_REWARD_MAX_GENERATION;
+      generation += 1
+    ) {
       const rows = await manager.query(
         `SELECT invited_by FROM users WHERE id = ? LIMIT 1`,
         [currentUserId],
@@ -1136,7 +1227,11 @@ export class CurrencyService {
         [parentId],
       );
       const parent = parentRows?.[0];
-      if (parent && Number(parent.status) === 1 && (parent.is_activated === true || Number(parent.is_activated) === 1)) {
+      if (
+        parent &&
+        Number(parent.status) === 1 &&
+        (parent.is_activated === true || Number(parent.is_activated) === 1)
+      ) {
         chain.push({ userId: parentId, generation });
       }
       currentUserId = parentId;
@@ -1161,7 +1256,9 @@ export class CurrencyService {
   ) {
     const turnoverId = Number(turnover.id);
     const sourceUserId = Number(turnover.userId);
-    const amount = this.roundPoints(Math.abs(this.toFiniteNumber(turnover.turnoverAmount)));
+    const amount = this.roundPoints(
+      Math.abs(this.toFiniteNumber(turnover.turnoverAmount)),
+    );
 
     if (!turnoverId || !sourceUserId || amount <= 0) {
       await manager.update(GameTurnoverRecord, turnoverId, {
@@ -1198,7 +1295,10 @@ export class CurrencyService {
     }> = [];
 
     for (const ancestor of ancestors) {
-      const validDirectCount = await this.getValidDirectCount(ancestor.userId, manager);
+      const validDirectCount = await this.getValidDirectCount(
+        ancestor.userId,
+        manager,
+      );
       const maxGeneration = this.maxDirectRewardGeneration(validDirectCount);
       if (maxGeneration <= 0 || ancestor.generation > maxGeneration) continue;
 
@@ -1216,7 +1316,9 @@ export class CurrencyService {
           rewardEntries.push({
             ancestorUserId: ancestor.userId,
             generation: ancestor.generation,
-            validDirectCount: Number(existing.validDirectCount || validDirectCount),
+            validDirectCount: Number(
+              existing.validDirectCount || validDirectCount,
+            ),
             maxGeneration: Number(existing.maxGeneration || maxGeneration),
             turnoverAmount: amount,
             rewardRate: this.toFiniteNumber(existing.rewardRate, rate),
@@ -1277,14 +1379,29 @@ export class CurrencyService {
       rewardProcessedAt: new Date(),
     });
 
-    return { turnoverId, rewardCount, rewardAmount, rewardEntries, skipped: false };
+    return {
+      turnoverId,
+      rewardCount,
+      rewardAmount,
+      rewardEntries,
+      skipped: false,
+    };
   }
 
   async processPendingDirectGameRewards(limit = 200) {
     await this.ensureDirectGameRewardTables();
-    const safeLimit = Math.min(1000, Math.max(1, Math.floor(Number(limit) || 200)));
+    const safeLimit = Math.min(
+      1000,
+      Math.max(1, Math.floor(Number(limit) || 200)),
+    );
     if (!(await this.isDirectGameRewardEnabled())) {
-      return { processed: 0, rewardCount: 0, rewardAmount: 0, skipped: true, reason: 'switch_disabled' };
+      return {
+        processed: 0,
+        rewardCount: 0,
+        rewardAmount: 0,
+        skipped: true,
+        reason: 'switch_disabled',
+      };
     }
 
     const rows = await this.dataSource.query(
@@ -1312,7 +1429,12 @@ export class CurrencyService {
           );
           const locked = lockedRows[0];
           if (!locked || Number(locked.rewardStatus) !== 0) {
-            return { turnoverId: Number(row.id), rewardCount: 0, rewardAmount: 0, skipped: true };
+            return {
+              turnoverId: Number(row.id),
+              rewardCount: 0,
+              rewardAmount: 0,
+              skipped: true,
+            };
           }
           return this.issueDirectGameRewardsForTurnover(
             {
@@ -1325,7 +1447,9 @@ export class CurrencyService {
         });
         processed += result.skipped ? 0 : 1;
         rewardCount += Number(result.rewardCount || 0);
-        rewardAmount = this.roundPoints(rewardAmount + this.toFiniteNumber(result.rewardAmount));
+        rewardAmount = this.roundPoints(
+          rewardAmount + this.toFiniteNumber(result.rewardAmount),
+        );
       } catch (_) {
         failed += 1;
       }
@@ -1354,7 +1478,10 @@ export class CurrencyService {
     }> = [];
 
     for (const ancestor of ancestors) {
-      const validDirectCount = await this.getValidDirectCount(ancestor.userId, manager);
+      const validDirectCount = await this.getValidDirectCount(
+        ancestor.userId,
+        manager,
+      );
       const maxGeneration = this.maxDirectRewardGeneration(validDirectCount);
       if (maxGeneration <= 0 || ancestor.generation > maxGeneration) continue;
 
@@ -1375,7 +1502,9 @@ export class CurrencyService {
   }
 
   async recordGameTurnover(input: GameTurnoverInput) {
-    const amount = this.roundPoints(Math.abs(this.toFiniteNumber(input.amount)));
+    const amount = this.roundPoints(
+      Math.abs(this.toFiniteNumber(input.amount)),
+    );
     const sourceUserId = Number(input.userId);
     if (!sourceUserId || amount <= 0) {
       return { turnoverId: 0, rewardCount: 0, rewardAmount: 0, skipped: true };
@@ -1383,7 +1512,8 @@ export class CurrencyService {
 
     const manager = input.manager || this.dataSource.manager;
     const shouldOwnTransaction = !input.manager;
-    const runner = async (mgr: EntityManager) => this.recordGameTurnoverInTransaction(input, amount, mgr);
+    const runner = async (mgr: EntityManager) =>
+      this.recordGameTurnoverInTransaction(input, amount, mgr);
 
     if (shouldOwnTransaction) {
       return this.dataSource.transaction(runner);
@@ -1405,7 +1535,10 @@ export class CurrencyService {
         sourceType: String(input.sourceType || 'game_turnover').slice(0, 50),
         turnoverAmount: amount,
         currencyLogId: input.currencyLogId ? Number(input.currencyLogId) : null,
-        bizId: input.bizId === undefined || input.bizId === null ? null : String(input.bizId).slice(0, 100),
+        bizId:
+          input.bizId === undefined || input.bizId === null
+            ? null
+            : String(input.bizId).slice(0, 100),
         description: String(input.description || '').slice(0, 200),
         rewardStatus: 0,
         rewardCount: 0,
@@ -1417,7 +1550,11 @@ export class CurrencyService {
   }
 
   /** 特殊积分三档位发放（后台调用） */
-  async addSpecialPoints(userId: number, amount: number, manager?: EntityManager) {
+  async addSpecialPoints(
+    userId: number,
+    amount: number,
+    manager?: EntityManager,
+  ) {
     const mgr = manager || this.dataSource.manager;
     const currency = await mgr.findOne(UserCurrency, { where: { userId } });
     if (!currency) throw new NotFoundException('货币账户不存在');
@@ -1457,11 +1594,18 @@ export class CurrencyService {
       const t1 = Number(c.specialPointsTier1);
       const t2 = Number(c.specialPointsTier2);
       const t3 = Number(c.specialPointsTier3);
-      const daily = ((t1 * 0.3) / 365) + ((t2 * 0.3) / 365) + ((t3 * 0.3) / 365);
+      const daily = (t1 * 0.3) / 365 + (t2 * 0.3) / 365 + (t3 * 0.3) / 365;
 
       if (daily > 0) {
         await this.dataSource.transaction(async (mgr) => {
-          await this.changeCurrency(c.userId, 'copper', daily, 'daily_reward', '每日铜币产出', mgr);
+          await this.changeCurrency(
+            c.userId,
+            'copper',
+            daily,
+            'daily_reward',
+            '每日铜币产出',
+            mgr,
+          );
         });
       }
     }
@@ -1492,9 +1636,14 @@ export class CurrencyService {
     }
 
     await this.dataSource.transaction(async (mgr) => {
-      const consumePoints = Number(config.consumePoints) * quantity;
+      const targetCurrency =
+        config.targetCurrency === 'reward' ? 'copper' : config.targetCurrency;
+      const unitConsumePoints =
+        targetCurrency === 'silver'
+          ? await this.getSilverSynthesisPointsForUser(userId, mgr)
+          : Number(config.consumePoints);
+      const consumePoints = unitConsumePoints * quantity;
       const targetAmount = Number(config.targetAmount) * quantity;
-      const targetCurrency = config.targetCurrency === 'reward' ? 'copper' : config.targetCurrency;
       if (
         !Number.isFinite(consumePoints) ||
         consumePoints <= 0 ||
@@ -1525,9 +1674,16 @@ export class CurrencyService {
   }
 
   /** 获取合成配置列表 */
-  async getSynthesisConfigs() {
+  async getSynthesisConfigs(userId: number) {
     await this.ensureDefaultSynthesisConfigs();
-    return this.synthesisRepo.find({ where: { status: 1 } });
+    const configs = await this.synthesisRepo.find({ where: { status: 1 } });
+    const silverConsumePoints =
+      await this.getSilverSynthesisPointsForUser(userId);
+    return configs.map((config) =>
+      config.targetCurrency === 'silver'
+        ? { ...config, consumePoints: silverConsumePoints }
+        : config,
+    );
   }
 
   private async ensureWithdrawSecurityTable() {
@@ -1588,7 +1744,9 @@ export class CurrencyService {
     }
     const phone = this.normalizeWithdrawPhone(data.phone);
     const password = this.normalizeWithdrawPassword(data.password);
-    const confirmPassword = this.normalizeWithdrawPassword(data.confirmPassword);
+    const confirmPassword = this.normalizeWithdrawPassword(
+      data.confirmPassword,
+    );
     if (password !== confirmPassword) {
       throw new BadRequestException('两次输入的提现密码不一致');
     }
@@ -1618,7 +1776,9 @@ export class CurrencyService {
       throw new BadRequestException('预留手机号验证失败');
     }
     const password = this.normalizeWithdrawPassword(data.password);
-    const confirmPassword = this.normalizeWithdrawPassword(data.confirmPassword);
+    const confirmPassword = this.normalizeWithdrawPassword(
+      data.confirmPassword,
+    );
     if (password !== confirmPassword) {
       throw new BadRequestException('两次输入的提现密码不一致');
     }
@@ -1630,7 +1790,10 @@ export class CurrencyService {
     return { message: '提现密码重置成功' };
   }
 
-  private async verifyWithdrawPassword(userId: number, withdrawPassword?: string) {
+  private async verifyWithdrawPassword(
+    userId: number,
+    withdrawPassword?: string,
+  ) {
     await this.ensureWithdrawSecurityTable();
     const rows = await this.dataSource.query(
       `SELECT password_hash FROM withdraw_securities WHERE user_id = ? LIMIT 1`,
@@ -1656,7 +1819,9 @@ export class CurrencyService {
 
   private mapGoldTradeRow(row: any, currentUserId?: number) {
     const quantity = this.roundGold(Number(row.quantity || 0));
-    const totalPrice = this.roundMoney(Number(row.totalPrice ?? row.total_price ?? 0));
+    const totalPrice = this.roundMoney(
+      Number(row.totalPrice ?? row.total_price ?? 0),
+    );
     const sellerUserId = Number(row.sellerUserId ?? row.seller_user_id ?? 0);
     const buyerUserId = row.buyerUserId ?? row.buyer_user_id;
     const status = Number(row.status || 0);
@@ -1673,16 +1838,31 @@ export class CurrencyService {
       totalPrice,
       unitPrice: quantity > 0 ? this.roundMoney(totalPrice / quantity) : 0,
       feeGold: this.roundGold(Number(row.feeGold ?? row.fee_gold ?? 0)),
-      depositGold: this.roundGold(Number(row.depositGold ?? row.deposit_gold ?? 0)),
+      depositGold: this.roundGold(
+        Number(row.depositGold ?? row.deposit_gold ?? 0),
+      ),
       alipayName: row.alipayName ?? row.alipay_name ?? '',
       alipayQrcode: row.alipayQrcode ?? row.alipay_qrcode ?? '',
       status,
-      statusText: status === 0 ? '出售中' : status === 1 ? '待卖家确认' : status === 2 ? '已完成' : '已取消',
+      statusText:
+        status === 0
+          ? '出售中'
+          : status === 1
+            ? '待卖家确认'
+            : status === 2
+              ? '已完成'
+              : '已取消',
       isSeller: currentUserId ? sellerUserId === Number(currentUserId) : false,
-      isBuyer: currentUserId && buyerUserId != null ? Number(buyerUserId) === Number(currentUserId) : false,
-      canBuy: currentUserId ? status === 0 && sellerUserId !== Number(currentUserId) : status === 0,
+      isBuyer:
+        currentUserId && buyerUserId != null
+          ? Number(buyerUserId) === Number(currentUserId)
+          : false,
+      canBuy: currentUserId
+        ? status === 0 && sellerUserId !== Number(currentUserId)
+        : status === 0,
       buyerConfirmedAt: row.buyerConfirmedAt ?? row.buyer_confirmed_at ?? null,
-      sellerConfirmedAt: row.sellerConfirmedAt ?? row.seller_confirmed_at ?? null,
+      sellerConfirmedAt:
+        row.sellerConfirmedAt ?? row.seller_confirmed_at ?? null,
       createdAt: row.createdAt ?? row.created_at,
       updatedAt: row.updatedAt ?? row.updated_at,
     };
@@ -1698,7 +1878,9 @@ export class CurrencyService {
       gold: balance.gold,
       totalGoldEarned: balance.totalGoldEarned,
       exchangeRate,
-      estimatedCashValue: this.roundMoney(Number(balance.gold || 0) * exchangeRate),
+      estimatedCashValue: this.roundMoney(
+        Number(balance.gold || 0) * exchangeRate,
+      ),
       tradeFeeRate: GOLD_TRADE_FEE_RATE,
       tradeDeposit: GOLD_TRADE_DEPOSIT,
       pendingTradeCount: badge.count,
@@ -1733,7 +1915,12 @@ export class CurrencyService {
 
   async createGoldTrade(
     userId: number,
-    data: { quantity: number; totalPrice: number; alipayName?: string; alipayQrcode?: string },
+    data: {
+      quantity: number;
+      totalPrice: number;
+      alipayName?: string;
+      alipayQrcode?: string;
+    },
   ) {
     await this.ensureGoldModuleTables();
     await this.requireActivatedForCurrencyTrade(userId);
@@ -1846,9 +2033,12 @@ export class CurrencyService {
       );
       if (rows.length === 0) throw new NotFoundException('出售订单不存在');
       const order = rows[0];
-      if (Number(order.status) !== 0) throw new BadRequestException('当前订单不能取消');
+      if (Number(order.status) !== 0)
+        throw new BadRequestException('当前订单不能取消');
       const refundGold = this.roundGold(
-        Number(order.quantity || 0) + Number(order.fee_gold || 0) + Number(order.deposit_gold || 0),
+        Number(order.quantity || 0) +
+          Number(order.fee_gold || 0) +
+          Number(order.deposit_gold || 0),
       );
       const changed = await this.changeCurrency(
         userId,
@@ -1903,11 +2093,17 @@ export class CurrencyService {
       );
       if (rows.length === 0) throw new NotFoundException('出售订单不存在');
       const order = rows[0];
-      if (Number(order.status) !== 1 || !order.buyer_user_id || order.buyer_receive_log_id) {
+      if (
+        Number(order.status) !== 1 ||
+        !order.buyer_user_id ||
+        order.buyer_receive_log_id
+      ) {
         throw new BadRequestException('当前订单还不能确认到账');
       }
       const quantity = this.roundGold(Number(order.quantity || 0));
-      const depositGold = this.roundGold(Number(order.deposit_gold || GOLD_TRADE_DEPOSIT));
+      const depositGold = this.roundGold(
+        Number(order.deposit_gold || GOLD_TRADE_DEPOSIT),
+      );
       const buyerChanged = await this.changeCurrency(
         Number(order.buyer_user_id),
         'gold',
@@ -1961,7 +2157,11 @@ export class CurrencyService {
 
   private validateCopperQuantity(value: any, label = '铜币数量') {
     const quantity = Number(value);
-    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
+    if (
+      !Number.isFinite(quantity) ||
+      quantity <= 0 ||
+      !Number.isInteger(quantity)
+    ) {
       throw new BadRequestException(`${label}必须是大于0的整数`);
     }
     return this.roundGold(quantity);
@@ -1969,7 +2169,9 @@ export class CurrencyService {
 
   private mapCopperTradeRow(row: any, currentUserId?: number) {
     const quantity = this.roundGold(Number(row.quantity || 0));
-    const totalPrice = this.roundMoney(Number(row.totalPrice ?? row.total_price ?? 0));
+    const totalPrice = this.roundMoney(
+      Number(row.totalPrice ?? row.total_price ?? 0),
+    );
     const sellerUserId = Number(row.sellerUserId ?? row.seller_user_id ?? 0);
     const buyerUserId = row.buyerUserId ?? row.buyer_user_id;
     const status = Number(row.status || 0);
@@ -1986,16 +2188,31 @@ export class CurrencyService {
       totalPrice,
       unitPrice: quantity > 0 ? this.roundMoney(totalPrice / quantity) : 0,
       feeCopper: 0,
-      depositCopper: this.roundGold(Number(row.depositCopper ?? row.deposit_copper ?? 0)),
+      depositCopper: this.roundGold(
+        Number(row.depositCopper ?? row.deposit_copper ?? 0),
+      ),
       alipayName: row.alipayName ?? row.alipay_name ?? '',
       alipayQrcode: row.alipayQrcode ?? row.alipay_qrcode ?? '',
       status,
-      statusText: status === 0 ? '出售中' : status === 1 ? '待卖家确认' : status === 2 ? '已完成' : '已取消',
+      statusText:
+        status === 0
+          ? '出售中'
+          : status === 1
+            ? '待卖家确认'
+            : status === 2
+              ? '已完成'
+              : '已取消',
       isSeller: currentUserId ? sellerUserId === Number(currentUserId) : false,
-      isBuyer: currentUserId && buyerUserId != null ? Number(buyerUserId) === Number(currentUserId) : false,
-      canBuy: currentUserId ? status === 0 && sellerUserId !== Number(currentUserId) : status === 0,
+      isBuyer:
+        currentUserId && buyerUserId != null
+          ? Number(buyerUserId) === Number(currentUserId)
+          : false,
+      canBuy: currentUserId
+        ? status === 0 && sellerUserId !== Number(currentUserId)
+        : status === 0,
       buyerConfirmedAt: row.buyerConfirmedAt ?? row.buyer_confirmed_at ?? null,
-      sellerConfirmedAt: row.sellerConfirmedAt ?? row.seller_confirmed_at ?? null,
+      sellerConfirmedAt:
+        row.sellerConfirmedAt ?? row.seller_confirmed_at ?? null,
       createdAt: row.createdAt ?? row.created_at,
       updatedAt: row.updatedAt ?? row.updated_at,
     };
@@ -2015,11 +2232,19 @@ export class CurrencyService {
 
   async createCopperTrade(
     userId: number,
-    data: { quantity: number; totalPrice: number; alipayName?: string; alipayQrcode?: string },
+    data: {
+      quantity: number;
+      totalPrice: number;
+      alipayName?: string;
+      alipayQrcode?: string;
+    },
   ) {
     await this.ensureGoldModuleTables();
     await this.requireActivatedForCurrencyTrade(userId);
-    const quantity = this.validateCopperQuantity(data?.quantity, '出售铜币数量');
+    const quantity = this.validateCopperQuantity(
+      data?.quantity,
+      '出售铜币数量',
+    );
     const totalPrice = this.roundMoney(Number(data?.totalPrice));
     if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
       throw new BadRequestException('请填写正确的出售价格');
@@ -2126,7 +2351,8 @@ export class CurrencyService {
       );
       if (rows.length === 0) throw new NotFoundException('出售订单不存在');
       const order = rows[0];
-      if (Number(order.status) !== 0) throw new BadRequestException('当前订单不能取消');
+      if (Number(order.status) !== 0)
+        throw new BadRequestException('当前订单不能取消');
       const refundCopper = this.roundGold(
         Number(order.quantity || 0) + Number(order.deposit_copper || 0),
       );
@@ -2183,7 +2409,11 @@ export class CurrencyService {
       );
       if (rows.length === 0) throw new NotFoundException('出售订单不存在');
       const order = rows[0];
-      if (Number(order.status) !== 1 || !order.buyer_user_id || order.buyer_receive_log_id) {
+      if (
+        Number(order.status) !== 1 ||
+        !order.buyer_user_id ||
+        order.buyer_receive_log_id
+      ) {
         throw new BadRequestException('当前订单还不能确认到账');
       }
       const quantity = this.roundGold(Number(order.quantity || 0));
@@ -2240,43 +2470,69 @@ export class CurrencyService {
   }
 
   /** 提现申请 */
-  async withdraw(userId: number, data: { amount: number; paymentMethod: string; accountName: string; accountNumber: string; content?: string; withdrawPassword?: string }) {
-    const { amount, paymentMethod, accountName, accountNumber, content, withdrawPassword } = data;
+  async withdraw(
+    userId: number,
+    data: {
+      amount: number;
+      paymentMethod: string;
+      accountName: string;
+      accountNumber: string;
+      content?: string;
+      withdrawPassword?: string;
+    },
+  ) {
+    const {
+      amount,
+      paymentMethod,
+      accountName,
+      accountNumber,
+      content,
+      withdrawPassword,
+    } = data;
     if (!amount || amount < 100) throw new BadRequestException('提现最低100元');
-    if (amount % 100 !== 0) throw new BadRequestException('提现金额必须是100的整数倍');
+    if (amount % 100 !== 0)
+      throw new BadRequestException('提现金额必须是100的整数倍');
     if (!paymentMethod || !['alipay', 'bank'].includes(paymentMethod)) {
       throw new BadRequestException('请选择提现方式（支付宝或银行卡）');
     }
-    if (!accountName || !accountName.trim()) throw new BadRequestException('请填写收款人姓名');
-    if (!accountNumber || !accountNumber.trim()) throw new BadRequestException('请填写收款账号');
+    if (!accountName || !accountName.trim())
+      throw new BadRequestException('请填写收款人姓名');
+    if (!accountNumber || !accountNumber.trim())
+      throw new BadRequestException('请填写收款账号');
     await this.verifyWithdrawPassword(userId, withdrawPassword);
     await this.ensureWithdrawalCopperColumns();
 
     // 校验可提现余额 = 金币转入提现模块额度 - 迁移后的待审核/已通过提现总额。
-    const { totalEarned, totalWithdrawn, copper } = await this.getWithdrawableBalance(userId);
+    const { totalEarned, totalWithdrawn, copper } =
+      await this.getWithdrawableBalance(userId);
     const available = totalEarned - totalWithdrawn;
     if (amount > available) {
-      throw new BadRequestException(`可提现余额不足，当前可提现 ${available.toFixed(0)} 元`);
+      throw new BadRequestException(
+        `可提现余额不足，当前可提现 ${available.toFixed(0)} 元`,
+      );
     }
     const copperConfig = await this.getWithdrawCopperConfig();
     const copperCost = this.calculateWithdrawCopperCost(amount, copperConfig);
     if (copperCost > copper) {
-      throw new BadRequestException(`铜币不足，本次提现需消耗 ${copperCost} 个铜币`);
+      throw new BadRequestException(
+        `铜币不足，本次提现需消耗 ${copperCost} 个铜币`,
+      );
     }
 
     const fee = Math.floor(amount * 0.2);
     const actualAmount = amount - fee;
     const withdrawal = await this.dataSource.transaction(async (mgr) => {
-      const changed = copperCost > 0
-        ? await this.changeCurrency(
-            userId,
-            'copper',
-            -copperCost,
-            'withdraw_copper_cost',
-            `提现${amount}金币消耗铜币`,
-            mgr,
-          )
-        : null;
+      const changed =
+        copperCost > 0
+          ? await this.changeCurrency(
+              userId,
+              'copper',
+              -copperCost,
+              'withdraw_copper_cost',
+              `提现${amount}金币消耗铜币`,
+              mgr,
+            )
+          : null;
 
       const record = mgr.create(Withdrawal, {
         userId,
@@ -2284,7 +2540,9 @@ export class CurrencyService {
         paymentMethod,
         accountName: accountName.trim(),
         accountNumber: accountNumber.trim(),
-        content: `提现${amount}元，手续费${fee}元（20%），实际到账${actualAmount}元` + (content?.trim() ? `；备注：${content.trim()}` : ''),
+        content:
+          `提现${amount}元，手续费${fee}元（20%），实际到账${actualAmount}元` +
+          (content?.trim() ? `；备注：${content.trim()}` : ''),
         copperCost,
         copperLogId: changed?.logId ?? null,
         copperRefundLogId: null,
@@ -2299,7 +2557,24 @@ export class CurrencyService {
       title: '新的提现申请',
       content: `${accountName.trim()} 申请提现 ${amount} 元（实际到账 ${actualAmount} 元，消耗铜币 ${copperCost}），收款方式：${paymentMethod}`,
       fromUserId: userId,
-      payload: { withdrawalId: withdrawal.id, amount, actualAmount, copperCost },
+      payload: {
+        withdrawalId: withdrawal.id,
+        amount,
+        actualAmount,
+        copperCost,
+      },
+    });
+    await this.serviceNotificationService.notifyUser({
+      recipientId: userId,
+      type: 'withdrawal_progress',
+      title: '提现申请处理中',
+      content: `你的 ${amount} 元提现申请已提交，管理员处理中，请等待。`,
+      payload: {
+        withdrawalId: withdrawal.id,
+        amount,
+        actualAmount,
+        status: 'pending',
+      },
     });
 
     return { message: '提现申请已提交，请等待审核', copperCost };
@@ -2379,7 +2654,7 @@ export class CurrencyService {
       sourceNickname: '',
       createdAt: r.createdAt,
     }));
-    const withdrawalRecords = withdrawals.map(r => ({
+    const withdrawalRecords = withdrawals.map((r) => ({
       id: `withdrawal-${r.id}`,
       transactionType: 'withdrawal',
       amount: Number(r.amount),
@@ -2391,7 +2666,8 @@ export class CurrencyService {
       copperCost: Number(r.copperCost || 0),
       copperRefunded: !!r.copperRefundLogId,
       status: r.status, // 0待审核 1已打款 2驳回
-      statusText: r.status === 0 ? '审核中' : r.status === 1 ? '已打款' : '已驳回',
+      statusText:
+        r.status === 0 ? '审核中' : r.status === 1 ? '已打款' : '已驳回',
       createdAt: r.createdAt,
       reviewTime: r.reviewTime,
     }));
@@ -2405,7 +2681,7 @@ export class CurrencyService {
   /** 提现审核（管理端） */
   async reviewWithdrawal(id: number, approve: boolean) {
     await this.ensureWithdrawalCopperColumns();
-    await this.dataSource.transaction(async (mgr) => {
+    const reviewed = await this.dataSource.transaction(async (mgr) => {
       const w = await mgr.findOne(Withdrawal, { where: { id } });
       if (!w) throw new NotFoundException('提现记录不存在');
       if (w.status !== 0) throw new BadRequestException('该申请已处理');
@@ -2437,7 +2713,9 @@ export class CurrencyService {
         const migrationAt = migrationRows?.[0]?.createdAt
           ? new Date(migrationRows[0].createdAt).getTime()
           : 0;
-        const withdrawalAt = w.createdAt ? new Date(w.createdAt).getTime() : Date.now();
+        const withdrawalAt = w.createdAt
+          ? new Date(w.createdAt).getTime()
+          : Date.now();
         if (migrationAt > 0 && withdrawalAt <= migrationAt) {
           await this.changeCurrency(
             w.userId,
@@ -2451,6 +2729,27 @@ export class CurrencyService {
       }
 
       await mgr.save(Withdrawal, w);
+      return {
+        userId: Number(w.userId),
+        amount: Number(w.amount || 0),
+        copperRefunded: !approve && Number(w.copperCost || 0) > 0,
+      };
+    });
+
+    const actualAmount = reviewed.amount - Math.floor(reviewed.amount * 0.2);
+    await this.serviceNotificationService.notifyUser({
+      recipientId: reviewed.userId,
+      type: 'withdrawal_result',
+      title: approve ? '提现申请已通过' : '提现申请未通过',
+      content: approve
+        ? `你的 ${reviewed.amount} 元提现申请已通过，实际到账 ${actualAmount} 元。`
+        : `你的 ${reviewed.amount} 元提现申请未通过${reviewed.copperRefunded ? '，本次消耗的铜币已退回账户' : ''}。`,
+      payload: {
+        withdrawalId: id,
+        amount: reviewed.amount,
+        actualAmount,
+        status: approve ? 'approved' : 'rejected',
+      },
     });
 
     return { message: approve ? '已通过' : '已驳回' };
@@ -2466,7 +2765,68 @@ export class CurrencyService {
 
   /** 获取所有配置 */
   async getAllConfigs() {
-    return this.configRepo.find();
+    const categoryOrder = [
+      'points',
+      'currency',
+      'game',
+      'recharge',
+      'meeting',
+      'ai',
+      'other',
+    ];
+    const categoryNames: Record<string, string> = {
+      points: '积分返还',
+      currency: '币种交易',
+      game: '游戏奖励',
+      recharge: '充值管理',
+      meeting: '会议社交',
+      ai: '云AI',
+      other: '其他配置',
+    };
+    const getCategory = (key: string) => {
+      if (
+        key === 'daily_deduction_rate' ||
+        key === 'weekly_return_multiplier' ||
+        key.startsWith('weekly_point_return_')
+      ) {
+        return 'points';
+      }
+      if (
+        key === SILVER_SYNTHESIS_POINTS_KEY ||
+        key === GOLD_EXCHANGE_RATE_KEY ||
+        key.startsWith('withdraw_copper_')
+      ) {
+        return 'currency';
+      }
+      if (
+        key.startsWith('game_copper_') ||
+        key.startsWith('direct_game_reward_')
+      ) {
+        return 'game';
+      }
+      if (key.startsWith('recharge_')) return 'recharge';
+      if (key.startsWith('meeting_') || key === 'data_retention_days')
+        return 'meeting';
+      if (key.startsWith('ai_')) return 'ai';
+      return 'other';
+    };
+    const configs = await this.configRepo.find();
+    return configs
+      .map((config) => {
+        const category = getCategory(config.configKey);
+        return {
+          ...config,
+          category,
+          categoryName: categoryNames[category],
+        };
+      })
+      .sort((a, b) => {
+        const categoryDiff =
+          categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category);
+        return (
+          categoryDiff || a.configName.localeCompare(b.configName, 'zh-CN')
+        );
+      });
   }
 
   /** 更新配置 */
@@ -2476,6 +2836,7 @@ export class CurrencyService {
       WITHDRAW_COPPER_COST_PER_UNIT_KEY,
       GAME_COPPER_MINUTES_PER_COIN_KEY,
       GAME_COPPER_DAILY_MAX_KEY,
+      SILVER_SYNTHESIS_POINTS_KEY,
     ]);
     if (positiveIntegerKeys.has(key)) {
       const parsed = Number(value);
@@ -2490,6 +2851,9 @@ export class CurrencyService {
       }
     }
     await this.configRepo.update({ configKey: key }, { configValue: value });
+    if (key === SILVER_SYNTHESIS_POINTS_KEY) {
+      await this.ensureDefaultSynthesisConfigs();
+    }
     return { message: '配置已更新' };
   }
 
@@ -2506,36 +2870,186 @@ export class CurrencyService {
     await this.ensureGoldModuleTables();
     await this.migrateLegacyMatrixWithdrawableToGold();
     const defaults = [
-      { configKey: 'daily_deduction_rate', configName: '每日积分扣除比例', configValue: '0.01', description: '每天扣除用户积分的百分比，0.01表示1%' },
-      { configKey: 'weekly_return_multiplier', configName: '每周返还倍率', configValue: '1.5', description: '旧版每周返还逻辑使用的倍率，与新的积分返还功能无关' },
-      { configKey: WEEKLY_POINT_RETURN_MULTIPLIER_KEY, configName: '积分返还倍率', configValue: '1.5', description: '新的积分返还功能独立倍率：剩余返还基数×该倍率×每日比例' },
-      { configKey: WEEKLY_POINT_RETURN_DAILY_RATE_KEY, configName: '积分返还每日比例', configValue: '0.01', description: '每周积分返还每天使用的比例，0.01表示1%' },
-      { configKey: WEEKLY_POINT_RETURN_STARTED_AT_KEY, configName: '积分返还开始时间', configValue: this.formatLocalDateTime(new Date()), description: '功能首次初始化时间；只结算结束时间不早于该时间的消费周，避免上线时追溯发放历史周' },
-      { configKey: DIRECT_GAME_REWARD_RATE_KEY, configName: '直推流水奖励比例', configValue: String(DIRECT_GAME_REWARD_DEFAULT_RATE), description: '下级有效游戏流水给符合条件上级的普通积分收益比例，0.0015表示千分之1.5' },
-      { configKey: WITHDRAW_COPPER_GOLD_UNIT_KEY, configName: '提现金币单位', configValue: '100', description: '提现金币与铜币消耗比例的金币单位，例如100表示每100金币计算一次铜币消耗' },
-      { configKey: WITHDRAW_COPPER_COST_PER_UNIT_KEY, configName: '每单位提现消耗铜币', configValue: '1', description: '提现每个金币单位需要消耗的铜币数量，例如100:1填1，100:2填2' },
-      { configKey: GAME_COPPER_MINUTES_PER_COIN_KEY, configName: '游戏时长铜币分钟数', configValue: '15', description: '用户当天所有游戏时长累计每满多少分钟获得1个铜币' },
-      { configKey: GAME_COPPER_DAILY_MAX_KEY, configName: '游戏时长每日铜币上限', configValue: '2', description: '用户每天最多可通过游戏时长获得的铜币数量' },
-      { configKey: GOLD_EXCHANGE_RATE_KEY, configName: '金币兑换现金比例', configValue: '1', description: '1金币可兑换多少元，默认1，可填0.9或1.1' },
-      { configKey: 'meeting_start_cost', configName: '普通成员发起会议消耗', configValue: '10000', description: '普通群成员发起群会议需要扣除的积分，群主和管理员免费' },
-      { configKey: 'data_retention_days', configName: '聊天/会议数据保留天数', configValue: '7', description: '后台清理聊天记录和已结束会议时使用的保留天数' },
-      { configKey: 'meeting_media_mode', configName: '会议媒体模式', configValue: 'p2p', description: 'p2p、trtc 或 sfu；腾讯云 TRTC 接入稳定后可切换为 trtc' },
-      { configKey: 'meeting_sfu_endpoint', configName: '会议SFU地址', configValue: '', description: 'mediasoup/Janus 信令或控制服务地址，未配置时客户端继续使用 P2P' },
-      { configKey: 'meeting_turn_urls', configName: '会议TURN地址', configValue: '', description: 'TURN/STUN 地址，多个地址用英文逗号或换行分隔' },
-      { configKey: 'meeting_turn_username', configName: '会议TURN用户名', configValue: '', description: 'TURN 服务用户名' },
-      { configKey: 'meeting_turn_credential', configName: '会议TURN密码', configValue: '', description: 'TURN 服务密码或凭据' },
-      { configKey: 'meeting_recording_enabled', configName: '会议录制开关', configValue: 'false', description: '是否启用服务端录制能力' },
-      { configKey: 'meeting_recording_auto', configName: '会议自动录制', configValue: 'false', description: '启用录制后是否自动开始录制' },
-      { configKey: 'ai_api_key', configName: '云AI API Key', configValue: '', description: '云AI服务密钥，例如 SiliconFlow / DeepSeek 的 API Key' },
-      { configKey: 'ai_base_url', configName: '云AI接口地址', configValue: 'https://api.siliconflow.cn/v1', description: '兼容 OpenAI Chat Completions 的接口地址' },
-      { configKey: 'ai_model', configName: '云AI模型', configValue: 'deepseek-ai/DeepSeek-V3', description: '云AI使用的模型名称' },
-      { configKey: 'recharge_qrcode', configName: '充值收款码', configValue: '', description: '充值页展示的收款二维码图片地址（后台上传）' },
-      { configKey: 'recharge_payee_name', configName: '充值收款人', configValue: '', description: '充值页展示的收款人姓名' },
-      { configKey: 'recharge_notice', configName: '充值说明', configValue: '请先扫码付款，再填写姓名和手机号提交，管理员核实后会通过短信发送激活码。', description: '充值页展示的操作说明' },
-      { configKey: 'recharge_packages', configName: '充值套餐', configValue: '', description: '充值套餐档位，多个用英文逗号分隔，如 100,200,500' },
+      {
+        configKey: 'daily_deduction_rate',
+        configName: '每日积分扣除比例',
+        configValue: '0.01',
+        description: '每天扣除用户积分的百分比，0.01表示1%',
+      },
+      {
+        configKey: 'weekly_return_multiplier',
+        configName: '每周返还倍率',
+        configValue: '1.5',
+        description: '旧版每周返还逻辑使用的倍率，与新的积分返还功能无关',
+      },
+      {
+        configKey: WEEKLY_POINT_RETURN_MULTIPLIER_KEY,
+        configName: '积分返还倍率',
+        configValue: '1.5',
+        description: '新的积分返还功能独立倍率：剩余返还基数×该倍率×每日比例',
+      },
+      {
+        configKey: WEEKLY_POINT_RETURN_DAILY_RATE_KEY,
+        configName: '积分返还每日比例',
+        configValue: '0.01',
+        description: '每周积分返还每天使用的比例，0.01表示1%',
+      },
+      {
+        configKey: WEEKLY_POINT_RETURN_STARTED_AT_KEY,
+        configName: '积分返还开始时间',
+        configValue: this.formatLocalDateTime(new Date()),
+        description:
+          '功能首次初始化时间；只结算结束时间不早于该时间的消费周，避免上线时追溯发放历史周',
+      },
+      {
+        configKey: DIRECT_GAME_REWARD_RATE_KEY,
+        configName: '直推流水奖励比例',
+        configValue: String(DIRECT_GAME_REWARD_DEFAULT_RATE),
+        description:
+          '下级有效游戏流水给符合条件上级的普通积分收益比例，0.0015表示千分之1.5',
+      },
+      {
+        configKey: WITHDRAW_COPPER_GOLD_UNIT_KEY,
+        configName: '提现金币单位',
+        configValue: '100',
+        description:
+          '提现金币与铜币消耗比例的金币单位，例如100表示每100金币计算一次铜币消耗',
+      },
+      {
+        configKey: WITHDRAW_COPPER_COST_PER_UNIT_KEY,
+        configName: '每单位提现消耗铜币',
+        configValue: '1',
+        description:
+          '提现每个金币单位需要消耗的铜币数量，例如100:1填1，100:2填2',
+      },
+      {
+        configKey: GAME_COPPER_MINUTES_PER_COIN_KEY,
+        configName: '游戏时长铜币分钟数',
+        configValue: '15',
+        description: '用户当天所有游戏时长累计每满多少分钟获得1个铜币',
+      },
+      {
+        configKey: GAME_COPPER_DAILY_MAX_KEY,
+        configName: '游戏时长每日铜币上限',
+        configValue: '2',
+        description: '用户每天最多可通过游戏时长获得的铜币数量',
+      },
+      {
+        configKey: GOLD_EXCHANGE_RATE_KEY,
+        configName: '金币兑换现金比例',
+        configValue: '1',
+        description: '1金币可兑换多少元，默认1，可填0.9或1.1',
+      },
+      {
+        configKey: SILVER_SYNTHESIS_POINTS_KEY,
+        configName: '银币合成积分比例',
+        configValue: String(SILVER_SYNTHESIS_POINTS_DEFAULT),
+        description:
+          '2000档及非500档账户合成1个银币需要消耗的积分数量；500档固定为20000积分',
+      },
+      {
+        configKey: 'meeting_start_cost',
+        configName: '普通成员发起会议消耗',
+        configValue: '10000',
+        description: '普通群成员发起群会议需要扣除的积分，群主和管理员免费',
+      },
+      {
+        configKey: 'data_retention_days',
+        configName: '聊天/会议数据保留天数',
+        configValue: '7',
+        description: '后台清理聊天记录和已结束会议时使用的保留天数',
+      },
+      {
+        configKey: 'meeting_media_mode',
+        configName: '会议媒体模式',
+        configValue: 'p2p',
+        description: 'p2p、trtc 或 sfu；腾讯云 TRTC 接入稳定后可切换为 trtc',
+      },
+      {
+        configKey: 'meeting_sfu_endpoint',
+        configName: '会议SFU地址',
+        configValue: '',
+        description:
+          'mediasoup/Janus 信令或控制服务地址，未配置时客户端继续使用 P2P',
+      },
+      {
+        configKey: 'meeting_turn_urls',
+        configName: '会议TURN地址',
+        configValue: '',
+        description: 'TURN/STUN 地址，多个地址用英文逗号或换行分隔',
+      },
+      {
+        configKey: 'meeting_turn_username',
+        configName: '会议TURN用户名',
+        configValue: '',
+        description: 'TURN 服务用户名',
+      },
+      {
+        configKey: 'meeting_turn_credential',
+        configName: '会议TURN密码',
+        configValue: '',
+        description: 'TURN 服务密码或凭据',
+      },
+      {
+        configKey: 'meeting_recording_enabled',
+        configName: '会议录制开关',
+        configValue: 'false',
+        description: '是否启用服务端录制能力',
+      },
+      {
+        configKey: 'meeting_recording_auto',
+        configName: '会议自动录制',
+        configValue: 'false',
+        description: '启用录制后是否自动开始录制',
+      },
+      {
+        configKey: 'ai_api_key',
+        configName: '云AI API Key',
+        configValue: '',
+        description: '云AI服务密钥，例如 SiliconFlow / DeepSeek 的 API Key',
+      },
+      {
+        configKey: 'ai_base_url',
+        configName: '云AI接口地址',
+        configValue: 'https://api.siliconflow.cn/v1',
+        description: '兼容 OpenAI Chat Completions 的接口地址',
+      },
+      {
+        configKey: 'ai_model',
+        configName: '云AI模型',
+        configValue: 'deepseek-ai/DeepSeek-V3',
+        description: '云AI使用的模型名称',
+      },
+      {
+        configKey: 'recharge_qrcode',
+        configName: '充值收款码',
+        configValue: '',
+        description: '充值页展示的收款二维码图片地址（后台上传）',
+      },
+      {
+        configKey: 'recharge_payee_name',
+        configName: '充值收款人',
+        configValue: '',
+        description: '充值页展示的收款人姓名',
+      },
+      {
+        configKey: 'recharge_notice',
+        configName: '充值说明',
+        configValue:
+          '请先扫码付款，再填写姓名和手机号提交，管理员核实后会通过短信发送激活码。',
+        description: '充值页展示的操作说明',
+      },
+      {
+        configKey: 'recharge_packages',
+        configName: '充值套餐',
+        configValue: '',
+        description: '充值套餐档位，多个用英文逗号分隔，如 100,200,500',
+      },
     ];
     for (const d of defaults) {
-      const exists = await this.configRepo.findOne({ where: { configKey: d.configKey } });
+      const exists = await this.configRepo.findOne({
+        where: { configKey: d.configKey },
+      });
       if (!exists) {
         await this.configRepo.save(this.configRepo.create(d));
       }
@@ -2561,7 +3075,14 @@ export class CurrencyService {
       if (deductAmount <= 0) continue;
 
       await this.dataSource.transaction(async (mgr) => {
-        await this.changeCurrency(c.userId, 'points', -deductAmount, 'daily_deduction', `每日积分扣除(${(rate * 100).toFixed(2)}%)`, mgr);
+        await this.changeCurrency(
+          c.userId,
+          'points',
+          -deductAmount,
+          'daily_deduction',
+          `每日积分扣除(${(rate * 100).toFixed(2)}%)`,
+          mgr,
+        );
 
         const record = mgr.create(DailyDeduction, {
           userId: c.userId,
@@ -2583,9 +3104,9 @@ export class CurrencyService {
   }
 
   private async getWeeklyPointReturnConsumeRows(startAt: Date, endAt: Date) {
-    const excludedPlaceholders = WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES
-      .map(() => '?')
-      .join(', ');
+    const excludedPlaceholders = WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES.map(
+      () => '?',
+    ).join(', ');
     return this.dataSource.query(
       `SELECT
          user_id AS userId,
@@ -2615,7 +3136,10 @@ export class CurrencyService {
   /** 统计刚结束的一周消费，并按用户创建独立返还账户。 */
   async setupWeeklyPointReturnPeriod(
     now = new Date(),
-    options: { allowBeforeFeatureStart?: boolean; forceWeekStartAt?: Date } = {},
+    options: {
+      allowBeforeFeatureStart?: boolean;
+      forceWeekStartAt?: Date;
+    } = {},
   ) {
     await this.ensureWeeklyPointReturnTables();
     if (!(await this.isWeeklyPointReturnEnabled())) {
@@ -2626,7 +3150,10 @@ export class CurrencyService {
       WEEKLY_POINT_RETURN_MULTIPLIER_KEY,
       '1.5',
     );
-    const dailyRateStr = await this.getConfigValue(WEEKLY_POINT_RETURN_DAILY_RATE_KEY, '0.01');
+    const dailyRateStr = await this.getConfigValue(
+      WEEKLY_POINT_RETURN_DAILY_RATE_KEY,
+      '0.01',
+    );
     const multiplier = this.toFiniteNumber(multiplierStr);
     const dailyRate = this.toFiniteNumber(dailyRateStr);
     if (multiplier <= 0 || dailyRate <= 0) {
@@ -2639,7 +3166,11 @@ export class CurrencyService {
       '',
     );
     const startedAt = this.parseLocalDateTime(startedAtText);
-    if (!options.allowBeforeFeatureStart && startedAt && week.weekEndAt.getTime() < startedAt.getTime()) {
+    if (
+      !options.allowBeforeFeatureStart &&
+      startedAt &&
+      week.weekEndAt.getTime() < startedAt.getTime()
+    ) {
       return {
         created: false,
         periodId: 0,
@@ -2938,7 +3469,8 @@ export class CurrencyService {
   }
 
   private isLotteryGameForBackfill(gameName: any, gameUrl: any, result: any) {
-    const text = `${gameName || ''} ${gameUrl || ''} ${result || ''}`.toLowerCase();
+    const text =
+      `${gameName || ''} ${gameUrl || ''} ${result || ''}`.toLowerCase();
     return (
       text.includes('lottery') ||
       text.includes('wheel') ||
@@ -2955,10 +3487,16 @@ export class CurrencyService {
     gameName?: any,
     gameUrl?: any,
   ) {
-    if (this.isLotteryGameForBackfill(gameName, gameUrl, resultValue)) return null;
+    if (this.isLotteryGameForBackfill(gameName, gameUrl, resultValue))
+      return null;
 
     const result = String(resultValue || '').toLowerCase();
-    const xiangqiSource = this.inferXiangqiTurnoverSourceForBackfill(result, amount, gameName, gameUrl);
+    const xiangqiSource = this.inferXiangqiTurnoverSourceForBackfill(
+      result,
+      amount,
+      gameName,
+      gameUrl,
+    );
     if (xiangqiSource) return xiangqiSource;
 
     const excludedKeywords = [
@@ -2987,7 +3525,8 @@ export class CurrencyService {
       'daily',
       'login',
     ];
-    if (excludedKeywords.some((keyword) => result.includes(keyword))) return null;
+    if (excludedKeywords.some((keyword) => result.includes(keyword)))
+      return null;
 
     if (
       result.includes('fish_sell') ||
@@ -2999,7 +3538,11 @@ export class CurrencyService {
     ) {
       return amount > 0 ? 'fish_sell' : null;
     }
-    if (result.includes('revive') || result.includes('resurrect') || result.includes('复活')) {
+    if (
+      result.includes('revive') ||
+      result.includes('resurrect') ||
+      result.includes('复活')
+    ) {
       return amount < 0 ? 'revive' : null;
     }
     if (
@@ -3035,7 +3578,8 @@ export class CurrencyService {
     gameName?: any,
     gameUrl?: any,
   ) {
-    const text = `${gameName || ''} ${gameUrl || ''} ${normalizedResult || ''}`.toLowerCase();
+    const text =
+      `${gameName || ''} ${gameUrl || ''} ${normalizedResult || ''}`.toLowerCase();
     const isXiangqi =
       text.includes('xiangqi') ||
       text.includes('象棋') ||
@@ -3058,7 +3602,10 @@ export class CurrencyService {
       ) {
         return 'xiangqi_hint';
       }
-      if (normalizedResult.includes('entry') || normalizedResult.includes('入场')) {
+      if (
+        normalizedResult.includes('entry') ||
+        normalizedResult.includes('入场')
+      ) {
         return 'xiangqi_entry';
       }
       if (
@@ -3074,7 +3621,10 @@ export class CurrencyService {
     }
 
     if (amount > 0) {
-      if (normalizedResult.includes('study') || normalizedResult.includes('canju')) {
+      if (
+        normalizedResult.includes('study') ||
+        normalizedResult.includes('canju')
+      ) {
         return 'xiangqi_study_level';
       }
       if (
@@ -3122,16 +3672,25 @@ export class CurrencyService {
     }));
   }
 
-  async backfillLegacyGameTurnoverRewards(options: LegacyRewardBackfillOptions = {}) {
+  async backfillLegacyGameTurnoverRewards(
+    options: LegacyRewardBackfillOptions = {},
+  ) {
     await this.ensureDirectGameRewardTables();
     await this.ensureCurrencyAccountsForExistingUsers();
 
     const dryRun = options.dryRun !== false;
-    const startedAtText = await this.getConfigValue(WEEKLY_POINT_RETURN_STARTED_AT_KEY, '');
+    const startedAtText = await this.getConfigValue(
+      WEEKLY_POINT_RETURN_STARTED_AT_KEY,
+      '',
+    );
     const defaultTo = this.parseLocalDateTime(startedAtText) || new Date();
     const fromAt = this.parseBackfillDateTime(options.from, null);
-    const toAt = this.parseBackfillEndDateTime(options.to, defaultTo) || defaultTo;
-    const safeLimit = Math.min(20_000, Math.max(1, Math.floor(Number(options.limit) || 5000)));
+    const toAt =
+      this.parseBackfillEndDateTime(options.to, defaultTo) || defaultTo;
+    const safeLimit = Math.min(
+      20_000,
+      Math.max(1, Math.floor(Number(options.limit) || 5000)),
+    );
     const where: string[] = [
       `(gr.points_earned > 0 OR gr.points_spent > 0)`,
       `gr.created_at <= ?`,
@@ -3193,10 +3752,22 @@ export class CurrencyService {
         current.turnoverAmount = this.roundPoints(
           current.turnoverAmount + this.toFiniteNumber(entry.turnoverAmount),
         );
-        current.minGeneration = Math.min(current.minGeneration || Number(entry.generation), Number(entry.generation));
-        current.maxGeneration = Math.max(current.maxGeneration || Number(entry.generation), Number(entry.generation));
-        current.validDirectCount = Math.max(current.validDirectCount || 0, Number(entry.validDirectCount || 0));
-        current.allowedGeneration = Math.max(current.allowedGeneration || 0, Number(entry.maxGeneration || 0));
+        current.minGeneration = Math.min(
+          current.minGeneration || Number(entry.generation),
+          Number(entry.generation),
+        );
+        current.maxGeneration = Math.max(
+          current.maxGeneration || Number(entry.generation),
+          Number(entry.generation),
+        );
+        current.validDirectCount = Math.max(
+          current.validDirectCount || 0,
+          Number(entry.validDirectCount || 0),
+        );
+        current.allowedGeneration = Math.max(
+          current.allowedGeneration || 0,
+          Number(entry.maxGeneration || 0),
+        );
         if (sourceUserId) current.sourceUserIds.add(Number(sourceUserId));
         recipientSummaryMap.set(userId, current);
       }
@@ -3204,8 +3775,14 @@ export class CurrencyService {
 
     for (const row of rows) {
       const parts = [
-        { suffix: 'spent', amount: -Math.abs(this.toFiniteNumber(row.pointsSpent)) },
-        { suffix: 'earned', amount: Math.abs(this.toFiniteNumber(row.pointsEarned)) },
+        {
+          suffix: 'spent',
+          amount: -Math.abs(this.toFiniteNumber(row.pointsSpent)),
+        },
+        {
+          suffix: 'earned',
+          amount: Math.abs(this.toFiniteNumber(row.pointsEarned)),
+        },
       ].filter((part) => Math.abs(part.amount) > 0);
 
       for (const part of parts) {
@@ -3233,7 +3810,8 @@ export class CurrencyService {
           );
           rewardCount += entries.length;
           const entriesAmount = entries.reduce(
-            (sum, entry) => this.roundPoints(sum + this.toFiniteNumber(entry.rewardAmount)),
+            (sum, entry) =>
+              this.roundPoints(sum + this.toFiniteNumber(entry.rewardAmount)),
             0,
           );
           rewardAmount = this.roundPoints(rewardAmount + entriesAmount);
@@ -3260,7 +3838,11 @@ export class CurrencyService {
                 turnoverAmount: amount,
                 currencyLogId: null,
                 bizId,
-                description: `历史游戏流水回补：${row.gameName || '游戏'} ${row.result || ''}`.slice(0, 200),
+                description:
+                  `历史游戏流水回补：${row.gameName || '游戏'} ${row.result || ''}`.slice(
+                    0,
+                    200,
+                  ),
                 rewardStatus: 0,
                 rewardCount: 0,
                 totalRewardAmount: 0,
@@ -3268,7 +3850,10 @@ export class CurrencyService {
               }),
             );
 
-            const reward = await this.issueDirectGameRewardsForTurnover(turnover, mgr);
+            const reward = await this.issueDirectGameRewardsForTurnover(
+              turnover,
+              mgr,
+            );
             return {
               inserted: true,
               rewardCount: Number(reward.rewardCount || 0),
@@ -3279,7 +3864,9 @@ export class CurrencyService {
 
           if (result.inserted) insertedTurnovers += 1;
           rewardCount += Number(result.rewardCount || 0);
-          rewardAmount = this.roundPoints(rewardAmount + this.toFiniteNumber(result.rewardAmount));
+          rewardAmount = this.roundPoints(
+            rewardAmount + this.toFiniteNumber(result.rewardAmount),
+          );
           addGameRewardEntries(result.rewardEntries || [], Number(row.userId));
         } catch (_) {
           failed += 1;
@@ -3296,7 +3883,9 @@ export class CurrencyService {
             sourceUserCount: sourceUserIds?.size || 0,
           };
         })
-        .sort((a: any, b: any) => Number(b.rewardAmount) - Number(a.rewardAmount)),
+        .sort(
+          (a: any, b: any) => Number(b.rewardAmount) - Number(a.rewardAmount),
+        ),
     );
 
     return {
@@ -3316,13 +3905,21 @@ export class CurrencyService {
     };
   }
 
-  async backfillLegacyWeeklyPointReturns(options: LegacyRewardBackfillOptions = {}) {
+  async backfillLegacyWeeklyPointReturns(
+    options: LegacyRewardBackfillOptions = {},
+  ) {
     await this.ensureWeeklyPointReturnTables();
     await this.ensureCurrencyAccountsForExistingUsers();
 
     const dryRun = options.dryRun !== false;
-    const multiplierStr = await this.getConfigValue(WEEKLY_POINT_RETURN_MULTIPLIER_KEY, '1.5');
-    const dailyRateStr = await this.getConfigValue(WEEKLY_POINT_RETURN_DAILY_RATE_KEY, '0.01');
+    const multiplierStr = await this.getConfigValue(
+      WEEKLY_POINT_RETURN_MULTIPLIER_KEY,
+      '1.5',
+    );
+    const dailyRateStr = await this.getConfigValue(
+      WEEKLY_POINT_RETURN_DAILY_RATE_KEY,
+      '0.01',
+    );
     const multiplier = this.toFiniteNumber(multiplierStr);
     const dailyRate = this.toFiniteNumber(dailyRateStr);
     if (multiplier <= 0 || dailyRate <= 0) {
@@ -3341,9 +3938,12 @@ export class CurrencyService {
        FROM currency_logs
        WHERE currency_type = 'points' AND amount < 0`,
     );
-    const firstLogAt = firstLogRows?.[0]?.firstAt ? new Date(firstLogRows[0].firstAt) : null;
+    const firstLogAt = firstLogRows?.[0]?.firstAt
+      ? new Date(firstLogRows[0].firstAt)
+      : null;
     const fromAt = this.parseBackfillDateTime(options.from, firstLogAt);
-    const toAt = this.parseBackfillEndDateTime(options.to, new Date()) || new Date();
+    const toAt =
+      this.parseBackfillEndDateTime(options.to, new Date()) || new Date();
     if (!fromAt) {
       return {
         dryRun,
@@ -3392,7 +3992,9 @@ export class CurrencyService {
     const estimateWeeklyReturn = (baseValue: number, weekEndDate: string) => {
       const returnStartDate = this.addDays(this.parseLocalDate(weekEndDate), 1);
       const elapsedDays = Math.floor(
-        (this.startOfLocalDay(payoutNow).getTime() - returnStartDate.getTime()) / 86_400_000,
+        (this.startOfLocalDay(payoutNow).getTime() -
+          returnStartDate.getTime()) /
+          86_400_000,
       );
       const dueDays = Math.min(7, Math.max(0, elapsedDays + 1));
       let base = this.roundPoints(Math.max(0, baseValue));
@@ -3412,8 +4014,12 @@ export class CurrencyService {
       weekEndDate: string,
       row: any,
     ) => {
-      const eligible = this.roundPoints(Math.max(0, this.toFiniteNumber(row.eligibleConsumed)));
-      const excluded = this.roundPoints(Math.max(0, this.toFiniteNumber(row.excludedConsumed)));
+      const eligible = this.roundPoints(
+        Math.max(0, this.toFiniteNumber(row.eligibleConsumed)),
+      );
+      const excluded = this.roundPoints(
+        Math.max(0, this.toFiniteNumber(row.excludedConsumed)),
+      );
       if (eligible <= 0) return;
       const estimated = estimateWeeklyReturn(eligible, weekEndDate);
       const current = weeklyUserSummaryMap.get(userId) || {
@@ -3426,10 +4032,16 @@ export class CurrencyService {
         periods: [],
       };
       current.weekCount += 1;
-      current.eligibleConsumed = this.roundPoints(current.eligibleConsumed + eligible);
-      current.excludedConsumed = this.roundPoints(current.excludedConsumed + excluded);
+      current.eligibleConsumed = this.roundPoints(
+        current.eligibleConsumed + eligible,
+      );
+      current.excludedConsumed = this.roundPoints(
+        current.excludedConsumed + excluded,
+      );
       current.dueDays += estimated.dueDays;
-      current.returnAmount = this.roundPoints(current.returnAmount + estimated.returnAmount);
+      current.returnAmount = this.roundPoints(
+        current.returnAmount + estimated.returnAmount,
+      );
       current.periods.push({
         weekStartDate,
         weekEndDate,
@@ -3469,17 +4081,29 @@ export class CurrencyService {
         continue;
       }
 
-      const rows = await this.getWeeklyPointReturnConsumeRows(effectiveStartAt, sunday);
+      const rows = await this.getWeeklyPointReturnConsumeRows(
+        effectiveStartAt,
+        sunday,
+      );
       for (const row of rows) {
-        addWeeklyUserSummary(Number(row.userId), weekStartDate, weekEndDate, row);
+        addWeeklyUserSummary(
+          Number(row.userId),
+          weekStartDate,
+          weekEndDate,
+          row,
+        );
       }
-      const weekActiveUsers = rows.filter((row: any) => this.toFiniteNumber(row.eligibleConsumed) > 0).length;
+      const weekActiveUsers = rows.filter(
+        (row: any) => this.toFiniteNumber(row.eligibleConsumed) > 0,
+      ).length;
       const weekEligible = rows.reduce(
-        (sum: number, row: any) => this.roundPoints(sum + this.toFiniteNumber(row.eligibleConsumed)),
+        (sum: number, row: any) =>
+          this.roundPoints(sum + this.toFiniteNumber(row.eligibleConsumed)),
         0,
       );
       const weekExcluded = rows.reduce(
-        (sum: number, row: any) => this.roundPoints(sum + this.toFiniteNumber(row.excludedConsumed)),
+        (sum: number, row: any) =>
+          this.roundPoints(sum + this.toFiniteNumber(row.excludedConsumed)),
         0,
       );
 
@@ -3518,14 +4142,17 @@ export class CurrencyService {
     const payout = dryRun
       ? { paidRecords: 0, paidPoints: 0 }
       : await this.processWeeklyPointReturnPayouts(new Date());
-    if (!blockedReason && (payout as any).reason) blockedReason = (payout as any).reason;
+    if (!blockedReason && (payout as any).reason)
+      blockedReason = (payout as any).reason;
     const userDetails = await this.withUserDisplayInfo(
       Array.from(weeklyUserSummaryMap.values())
         .map((item: any) => ({
           ...item,
           periods: item.periods || [],
         }))
-        .sort((a: any, b: any) => Number(b.returnAmount) - Number(a.returnAmount)),
+        .sort(
+          (a: any, b: any) => Number(b.returnAmount) - Number(a.returnAmount),
+        ),
     );
 
     return {
@@ -3545,16 +4172,24 @@ export class CurrencyService {
     };
   }
 
-  async backfillLegacyRewardMechanisms(options: LegacyRewardBackfillOptions = {}) {
+  async backfillLegacyRewardMechanisms(
+    options: LegacyRewardBackfillOptions = {},
+  ) {
     await this.ensureDefaultConfigs();
     const dryRun = options.dryRun !== false;
     const result: any = { dryRun };
 
     if (options.game !== false) {
-      result.game = await this.backfillLegacyGameTurnoverRewards({ ...options, dryRun });
+      result.game = await this.backfillLegacyGameTurnoverRewards({
+        ...options,
+        dryRun,
+      });
     }
     if (options.weekly !== false) {
-      result.weekly = await this.backfillLegacyWeeklyPointReturns({ ...options, dryRun });
+      result.weekly = await this.backfillLegacyWeeklyPointReturns({
+        ...options,
+        dryRun,
+      });
     }
 
     return result;

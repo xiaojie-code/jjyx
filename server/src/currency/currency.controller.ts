@@ -50,8 +50,8 @@ export class CurrencyController {
   }
 
   @Get('synthesis-configs')
-  async getSynthesisConfigs() {
-    return this.currencyService.getSynthesisConfigs();
+  async getSynthesisConfigs(@CurrentUser('id') userId: number) {
+    return this.currencyService.getSynthesisConfigs(userId);
   }
 
   @Get('gold/overview')

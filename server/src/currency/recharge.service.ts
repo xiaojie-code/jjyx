@@ -122,7 +122,9 @@ export class RechargeService implements OnModuleInit {
     return uuidv4().replace(/-/g, '').substring(0, 16).toUpperCase();
   }
 
-  private async createRechargeActivationCdk(activationAmount: number): Promise<Cdk> {
+  private async createRechargeActivationCdk(
+    activationAmount: number,
+  ): Promise<Cdk> {
     const normalized = this.normalizeRechargeAmount(activationAmount);
     if (!normalized) throw new BadRequestException('请选择CDK档位：500或2000');
 
@@ -151,7 +153,12 @@ export class RechargeService implements OnModuleInit {
       const amount = this.normalizeRechargeAmount(item?.amount ?? item?.value);
       if (
         amount &&
-        ['activation_amount', 'activationAmount', 'recharge_amount', 'rechargeAmount'].includes(key)
+        [
+          'activation_amount',
+          'activationAmount',
+          'recharge_amount',
+          'rechargeAmount',
+        ].includes(key)
       ) {
         return amount;
       }
@@ -159,13 +166,17 @@ export class RechargeService implements OnModuleInit {
     return null;
   }
 
-  private async resolveCdkActivationAmount(code: string): Promise<number | null> {
+  private async resolveCdkActivationAmount(
+    code: string,
+  ): Promise<number | null> {
     const cdk = await this.cdkRepo.findOne({ where: { code } });
     if (!cdk) return null;
     const directAmount = this.normalizeRechargeAmount(cdk.activationAmount);
     if (directAmount) return directAmount;
 
-    const cdkType = await this.cdkTypeRepo.findOne({ where: { id: cdk.cdkTypeId } });
+    const cdkType = await this.cdkTypeRepo.findOne({
+      where: { id: cdk.cdkTypeId },
+    });
     const typeAmount = this.normalizeRechargeAmount(cdkType?.activationAmount);
     if (typeAmount) return typeAmount;
 
@@ -181,13 +192,24 @@ export class RechargeService implements OnModuleInit {
       '请先扫码付款，再填写姓名和手机号提交，管理员核实后会通过短信发送激活码。',
     );
     const packages = RECHARGE_AMOUNT_OPTIONS.join(',');
-    return { qrcode, payeeName, notice, packages, amountOptions: RECHARGE_AMOUNT_OPTIONS };
+    return {
+      qrcode,
+      payeeName,
+      notice,
+      packages,
+      amountOptions: RECHARGE_AMOUNT_OPTIONS,
+    };
   }
 
   /** App 端：提交充值申请 */
   async submitOrder(
     userId: number,
-    data: { realName?: string; phone?: string; amount?: number; packageName?: string },
+    data: {
+      realName?: string;
+      phone?: string;
+      amount?: number;
+      packageName?: string;
+    },
   ) {
     const realName = String(data.realName || '').trim();
     const phone = String(data.phone || '').trim();
@@ -209,7 +231,9 @@ export class RechargeService implements OnModuleInit {
       where: { userId: Number(userId), status: 0 },
     });
     if (pending) {
-      throw new BadRequestException('你有一笔待核实的充值申请，请等待管理员处理');
+      throw new BadRequestException(
+        '你有一笔待核实的充值申请，请等待管理员处理',
+      );
     }
 
     const order = this.orderRepo.create({
@@ -232,6 +256,13 @@ export class RechargeService implements OnModuleInit {
       fromUserId: userId,
       payload: { orderId: order.id, phone, amount },
     });
+    await this.serviceNotificationService.notifyUser({
+      recipientId: userId,
+      type: 'recharge_progress',
+      title: '充值申请处理中',
+      content: `你的 ${amount} 元充值申请已提交，管理员处理中，请等待。`,
+      payload: { orderId: order.id, amount, status: 'pending' },
+    });
 
     return { message: '充值申请已提交，管理员核实后会通过短信发送激活码' };
   }
@@ -250,7 +281,8 @@ export class RechargeService implements OnModuleInit {
       amount: o.amount == null ? null : Number(o.amount),
       packageName: o.packageName,
       status: o.status,
-      statusText: o.status === 0 ? '待核实' : o.status === 1 ? '已发码' : '已驳回',
+      statusText:
+        o.status === 0 ? '待核实' : o.status === 1 ? '已发码' : '已驳回',
       adminRemark: o.adminRemark,
       createdAt: o.createdAt,
       handledAt: o.handledAt,
@@ -260,7 +292,12 @@ export class RechargeService implements OnModuleInit {
   // ==================== 管理端 ====================
 
   /** 管理端：充值订单列表（支持状态/关键词筛选） */
-  async adminList(query: { status?: string; keyword?: string; page?: string; pageSize?: string }) {
+  async adminList(query: {
+    status?: string;
+    keyword?: string;
+    page?: string;
+    pageSize?: string;
+  }) {
     const page = parseInt(query.page || '1', 10) || 1;
     const pageSize = parseInt(query.pageSize || '20', 10) || 20;
     const offset = (page - 1) * pageSize;
@@ -268,7 +305,11 @@ export class RechargeService implements OnModuleInit {
     const conditions: string[] = [];
     const params: any[] = [];
 
-    if (query.status !== undefined && query.status !== '' && query.status !== null) {
+    if (
+      query.status !== undefined &&
+      query.status !== '' &&
+      query.status !== null
+    ) {
       conditions.push('o.status = ?');
       params.push(Number(query.status));
     }
@@ -279,7 +320,8 @@ export class RechargeService implements OnModuleInit {
       const kw = `%${query.keyword}%`;
       params.push(kw, kw, kw, kw);
     }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where =
+      conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const totalRows = await this.orderRepo.query(
       `SELECT COUNT(*) AS cnt
@@ -309,7 +351,11 @@ export class RechargeService implements OnModuleInit {
         amount: r.amount == null ? null : Number(r.amount),
         status: Number(r.status),
         statusText:
-          Number(r.status) === 0 ? '待核实' : Number(r.status) === 1 ? '已发码' : '已驳回',
+          Number(r.status) === 0
+            ? '待核实'
+            : Number(r.status) === 1
+              ? '已发码'
+              : '已驳回',
       })),
       total,
       page,
@@ -363,13 +409,16 @@ export class RechargeService implements OnModuleInit {
     const realName = String(order.realName || '').trim();
     const phone = String(order.phone || '').trim();
 
-    if (!realName) throw new BadRequestException('付款人姓名为空，不能发送短信');
+    if (!realName)
+      throw new BadRequestException('付款人姓名为空，不能发送短信');
     if (!this.isValidMainlandMobile(phone)) {
       throw new BadRequestException('手机号格式不正确，需为11位且以13-19开头');
     }
     const orderAmount = this.normalizeRechargeAmount(order.amount);
     if (!orderAmount) {
-      throw new BadRequestException('订单充值金额不合法，请让用户重新选择500或2000提交');
+      throw new BadRequestException(
+        '订单充值金额不合法，请让用户重新选择500或2000提交',
+      );
     }
 
     const cdk = await this.createRechargeActivationCdk(orderAmount);
@@ -396,7 +445,12 @@ export class RechargeService implements OnModuleInit {
       type: 'recharge_result',
       title: '充值已处理',
       content: `你的充值申请已核实，激活码已通过短信发送至 ${phone}，请注意查收。`,
-      payload: { orderId: order.id, status: 1, cdkId: cdk.id, activationAmount: orderAmount },
+      payload: {
+        orderId: order.id,
+        status: 1,
+        cdkId: cdk.id,
+        activationAmount: orderAmount,
+      },
     });
 
     return {

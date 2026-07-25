@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -178,9 +182,10 @@ export class AdminService {
 
   async getPasswordResetRequests(query: any) {
     await this.ensurePasswordResetTable();
-    const status = query.status === undefined || query.status === ''
-      ? null
-      : Number(query.status);
+    const status =
+      query.status === undefined || query.status === ''
+        ? null
+        : Number(query.status);
     const params: any[] = [];
     let where = '';
     if (status !== null && !Number.isNaN(status)) {
@@ -206,7 +211,9 @@ export class AdminService {
     );
     const request = rows?.[0];
     if (!request) throw new NotFoundException('重置申请不存在');
-    const user = await this.userRepo.findOne({ where: { id: Number(request.user_id) } });
+    const user = await this.userRepo.findOne({
+      where: { id: Number(request.user_id) },
+    });
     if (!user) throw new NotFoundException('用户不存在');
     const newPassword = this.generateRandomPassword();
     const passwordHash = await bcrypt.hash(newPassword, 10);
@@ -250,7 +257,9 @@ export class AdminService {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     try {
-      await this.dataSource.query(`ALTER TABLE app_versions ADD COLUMN file_md5 VARCHAR(64) NULL`);
+      await this.dataSource.query(
+        `ALTER TABLE app_versions ADD COLUMN file_md5 VARCHAR(64) NULL`,
+      );
     } catch (_) {}
   }
 
@@ -268,26 +277,37 @@ export class AdminService {
   }
 
   private parseAppVersionPayload(data: any) {
-    const platform = String(data.platform || 'android').trim().toLowerCase();
+    const platform = String(data.platform || 'android')
+      .trim()
+      .toLowerCase();
     const versionName = String(data.versionName || '').trim();
     const versionCode = Number(data.versionCode);
     const downloadUrl = String(data.downloadUrl || '').trim();
     const changelog = String(data.changelog || '').trim();
-    const fileMd5Text = String(data.fileMd5 || '').trim().toLowerCase();
+    const fileMd5Text = String(data.fileMd5 || '')
+      .trim()
+      .toLowerCase();
     const fileMd5 = fileMd5Text || null;
-    const fileSizeValue = data.fileSize === undefined || data.fileSize === null || data.fileSize === ''
-      ? null
-      : Number(data.fileSize);
+    const fileSizeValue =
+      data.fileSize === undefined ||
+      data.fileSize === null ||
+      data.fileSize === ''
+        ? null
+        : Number(data.fileSize);
 
     if (!platform) throw new BadRequestException('平台不能为空');
-    if (platform !== 'android') throw new BadRequestException('当前仅支持Android版本');
+    if (platform !== 'android')
+      throw new BadRequestException('当前仅支持Android版本');
     if (!versionName) throw new BadRequestException('版本名称不能为空');
     if (!Number.isInteger(versionCode) || versionCode <= 0) {
       throw new BadRequestException('版本号必须是大于0的整数');
     }
     if (!downloadUrl) throw new BadRequestException('下载地址不能为空');
     this.validateAppDownloadUrl(downloadUrl);
-    if (fileSizeValue !== null && (!Number.isInteger(fileSizeValue) || fileSizeValue <= 0)) {
+    if (
+      fileSizeValue !== null &&
+      (!Number.isInteger(fileSizeValue) || fileSizeValue <= 0)
+    ) {
       throw new BadRequestException('文件大小必须是大于0的整数');
     }
     if (fileMd5 && !/^[a-f0-9]{32}$/.test(fileMd5)) {
@@ -315,7 +335,9 @@ export class AdminService {
 
     if (downloadUrl.startsWith('/')) {
       if (downloadUrl.startsWith('//')) {
-        throw new BadRequestException('下载地址不能使用协议相对地址，请填写http/https或/downloads路径');
+        throw new BadRequestException(
+          '下载地址不能使用协议相对地址，请填写http/https或/downloads路径',
+        );
       }
       return;
     }
@@ -324,7 +346,9 @@ export class AdminService {
     try {
       parsed = new URL(downloadUrl);
     } catch (_) {
-      throw new BadRequestException('下载地址格式不正确，请填写http/https直链或/downloads路径');
+      throw new BadRequestException(
+        '下载地址格式不正确，请填写http/https直链或/downloads路径',
+      );
     }
 
     if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
@@ -356,7 +380,10 @@ export class AdminService {
 
   async updateAppVersion(id: number, data: any) {
     await this.ensureAppVersionsTable();
-    const rows = await this.dataSource.query('SELECT id FROM app_versions WHERE id = ? LIMIT 1', [id]);
+    const rows = await this.dataSource.query(
+      'SELECT id FROM app_versions WHERE id = ? LIMIT 1',
+      [id],
+    );
     if (rows.length === 0) throw new NotFoundException('版本不存在');
     const payload = this.parseAppVersionPayload(data);
     await this.dataSource.query(
@@ -497,18 +524,28 @@ export class AdminService {
   async generateCdks(data: any) {
     await this.ensureCdkActivationColumns();
     const count = Math.floor(Number(data?.count) || 0);
-    if (count < 1 || count > 1000) throw new BadRequestException('生成数量需要在1到1000之间');
-    const requestedActivationAmount = this.normalizeActivationAmount(data?.activationAmount);
+    if (count < 1 || count > 1000)
+      throw new BadRequestException('生成数量需要在1到1000之间');
+    const requestedActivationAmount = this.normalizeActivationAmount(
+      data?.activationAmount,
+    );
     let cdkType: CdkType | null = null;
 
     if (requestedActivationAmount) {
-      cdkType = await this.findOrCreateCdkTypeByAmount(requestedActivationAmount);
+      cdkType = await this.findOrCreateCdkTypeByAmount(
+        requestedActivationAmount,
+      );
     } else {
-      cdkType = await this.cdkTypeRepo.findOne({ where: { id: Number(data?.cdkTypeId) } });
+      cdkType = await this.cdkTypeRepo.findOne({
+        where: { id: Number(data?.cdkTypeId) },
+      });
     }
     if (!cdkType) throw new NotFoundException('CDK类型不存在');
-    const cdkActivationAmount = this.normalizeActivationAmount(cdkType.activationAmount);
-    if (!cdkActivationAmount) throw new BadRequestException('请先给CDK类型配置500或2000档位');
+    const cdkActivationAmount = this.normalizeActivationAmount(
+      cdkType.activationAmount,
+    );
+    if (!cdkActivationAmount)
+      throw new BadRequestException('请先给CDK类型配置500或2000档位');
     const itemsJson = Array.isArray(data?.itemsJson) ? data.itemsJson : [];
     const cdks = [];
     for (let i = 0; i < count; i++) {
@@ -523,7 +560,11 @@ export class AdminService {
       );
     }
     await this.cdkRepo.save(cdks);
-    return { generated: count, activationAmount: cdkActivationAmount, cdkTypeId: cdkType.id };
+    return {
+      generated: count,
+      activationAmount: cdkActivationAmount,
+      cdkTypeId: cdkType.id,
+    };
   }
   async getCdkList(query: any, pagination: PaginationDto) {
     await this.ensureCdkActivationColumns();
@@ -533,7 +574,9 @@ export class AdminService {
       qb.where('c.status = :status', { status: Number(query.status) });
       hasWhere = true;
     }
-    const activationAmount = this.normalizeActivationAmount(query.activationAmount);
+    const activationAmount = this.normalizeActivationAmount(
+      query.activationAmount,
+    );
     if (activationAmount) {
       const typeIds = (
         await this.cdkTypeRepo.find({
@@ -544,7 +587,9 @@ export class AdminService {
       const clauses = ['c.activation_amount = :activationAmount'];
       const params: any = { activationAmount };
       if (typeIds.length > 0) {
-        clauses.push('(c.activation_amount IS NULL AND c.cdk_type_id IN (:...typeIds))');
+        clauses.push(
+          '(c.activation_amount IS NULL AND c.cdk_type_id IN (:...typeIds))',
+        );
         params.typeIds = typeIds;
       }
       const clause = `(${clauses.join(' OR ')})`;
@@ -557,10 +602,16 @@ export class AdminService {
       .take(pagination.pageSize)
       .orderBy('c.created_at', 'DESC')
       .getMany();
-    const typeIds = [...new Set(list.map((item) => Number(item.cdkTypeId)).filter(Boolean))];
-    const types = typeIds.length > 0
-      ? await this.cdkTypeRepo.createQueryBuilder('t').where('t.id IN (:...ids)', { ids: typeIds }).getMany()
-      : [];
+    const typeIds = [
+      ...new Set(list.map((item) => Number(item.cdkTypeId)).filter(Boolean)),
+    ];
+    const types =
+      typeIds.length > 0
+        ? await this.cdkTypeRepo
+            .createQueryBuilder('t')
+            .where('t.id IN (:...ids)', { ids: typeIds })
+            .getMany()
+        : [];
     const typeMap = new Map(types.map((type) => [Number(type.id), type]));
     return {
       list: list.map((item) => {
@@ -571,8 +622,10 @@ export class AdminService {
         return {
           ...item,
           activationAmount,
-          activationAmountLabel: this.getActivationAmountLabel(activationAmount),
-          cdkTypeName: this.getActivationAmountLabel(activationAmount) || type?.name || '',
+          activationAmountLabel:
+            this.getActivationAmountLabel(activationAmount),
+          cdkTypeName:
+            this.getActivationAmountLabel(activationAmount) || type?.name || '',
           rawCdkTypeName: type?.name || '',
         };
       }),
@@ -583,26 +636,37 @@ export class AdminService {
   }
   async getCdkTypes() {
     await this.ensureCdkActivationColumns();
-    return this.cdkTypeRepo.find({ order: { activationAmount: 'ASC', id: 'ASC' } });
+    return this.cdkTypeRepo.find({
+      order: { activationAmount: 'ASC', id: 'ASC' },
+    });
   }
   async createCdkType(data: any) {
     await this.ensureCdkActivationColumns();
-    const activationAmount = this.normalizeActivationAmount(data.activationAmount);
-    if (!activationAmount) throw new BadRequestException('请选择CDK档位：500或2000');
-    return this.cdkTypeRepo.save(this.cdkTypeRepo.create({
-      name: String(data.name || '').trim(),
-      description: String(data.description || '').trim() || null,
-      activationAmount,
-    }));
+    const activationAmount = this.normalizeActivationAmount(
+      data.activationAmount,
+    );
+    if (!activationAmount)
+      throw new BadRequestException('请选择CDK档位：500或2000');
+    return this.cdkTypeRepo.save(
+      this.cdkTypeRepo.create({
+        name: String(data.name || '').trim(),
+        description: String(data.description || '').trim() || null,
+        activationAmount,
+      }),
+    );
   }
   async updateCdkType(id: number, data: any) {
     await this.ensureCdkActivationColumns();
     const payload: any = {};
     if (data.name !== undefined) payload.name = String(data.name || '').trim();
-    if (data.description !== undefined) payload.description = String(data.description || '').trim() || null;
+    if (data.description !== undefined)
+      payload.description = String(data.description || '').trim() || null;
     if (data.activationAmount !== undefined) {
-      const activationAmount = this.normalizeActivationAmount(data.activationAmount);
-      if (!activationAmount) throw new BadRequestException('请选择CDK档位：500或2000');
+      const activationAmount = this.normalizeActivationAmount(
+        data.activationAmount,
+      );
+      if (!activationAmount)
+        throw new BadRequestException('请选择CDK档位：500或2000');
       payload.activationAmount = activationAmount;
     }
     await this.cdkTypeRepo.update(id, payload);
@@ -624,7 +688,13 @@ export class AdminService {
         where.push(
           '(w.user_id = ? OR u.account LIKE ? OR u.nickname LIKE ? OR w.account_name LIKE ? OR w.account_number LIKE ?)',
         );
-        params.push(keywordNumber, keywordLike, keywordLike, keywordLike, keywordLike);
+        params.push(
+          keywordNumber,
+          keywordLike,
+          keywordLike,
+          keywordLike,
+          keywordLike,
+        );
       } else {
         where.push(
           '(u.account LIKE ? OR u.nickname LIKE ? OR w.account_name LIKE ? OR w.account_number LIKE ?)',
@@ -716,7 +786,13 @@ export class AdminService {
              ) s ON s.user_id = mu.id
            ) t`,
           Number.isFinite(Number(keyword)) && Number(keyword) > 0
-            ? [Number(keyword), `%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`]
+            ? [
+                Number(keyword),
+                `%${keyword}%`,
+                `%${keyword}%`,
+                `%${keyword}%`,
+                `%${keyword}%`,
+              ]
             : [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`],
         )
       : [{ total: 0, userCount: 0 }];
@@ -739,10 +815,18 @@ export class AdminService {
   async getRechargeOrders(query: any) {
     return this.rechargeService.adminList(query);
   }
-  async reviewRecharge(id: number, operatorId: number, data: { action: 'approve' | 'reject'; remark?: string }) {
+  async reviewRecharge(
+    id: number,
+    operatorId: number,
+    data: { action: 'approve' | 'reject'; remark?: string },
+  ) {
     return this.rechargeService.adminReview(id, operatorId, data);
   }
-  async sendRechargeActivationCode(id: number, operatorId: number, data: { code?: string }) {
+  async sendRechargeActivationCode(
+    id: number,
+    operatorId: number,
+    data: { code?: string },
+  ) {
     return this.rechargeService.adminSendActivationCode(id, operatorId, data);
   }
   async getRechargeStats() {
@@ -831,14 +915,26 @@ export class AdminService {
 
   private calculateWeeklyReturnProjection(row: any) {
     const status = Number(row.status || 0);
-    const paidDays = Math.max(0, Math.min(7, Number(row.paidDays ?? row.paid_days ?? 0)));
+    const paidDays = Math.max(
+      0,
+      Math.min(7, Number(row.paidDays ?? row.paid_days ?? 0)),
+    );
     const multiplier = Number(row.multiplier || 0);
     const dailyRate = Number(row.dailyRate ?? row.daily_rate ?? 0);
     let base = this.roundAdminPoints(
-      Math.max(0, Number(row.remainingBasePoints ?? row.remaining_base_points ?? 0)),
+      Math.max(
+        0,
+        Number(row.remainingBasePoints ?? row.remaining_base_points ?? 0),
+      ),
     );
 
-    if (status !== 0 || paidDays >= 7 || multiplier <= 0 || dailyRate <= 0 || base <= 0) {
+    if (
+      status !== 0 ||
+      paidDays >= 7 ||
+      multiplier <= 0 ||
+      dailyRate <= 0 ||
+      base <= 0
+    ) {
       return { unpaidDays: 0, nextReturnAmount: 0, pendingReturnPoints: 0 };
     }
 
@@ -915,7 +1011,9 @@ export class AdminService {
        LIMIT ${offset}, ${pageSize}`,
     );
 
-    const periodIds = periods.map((item: any) => Number(item.id)).filter(Boolean);
+    const periodIds = periods
+      .map((item: any) => Number(item.id))
+      .filter(Boolean);
     const pendingByPeriod = new Map<number, number>();
     if (periodIds.length > 0) {
       const accountRows = await this.dataSource.query(
@@ -930,7 +1028,10 @@ export class AdminService {
         const projection = this.calculateWeeklyReturnProjection(row);
         pendingByPeriod.set(
           periodId,
-          this.roundAdminPoints((pendingByPeriod.get(periodId) || 0) + projection.pendingReturnPoints),
+          this.roundAdminPoints(
+            (pendingByPeriod.get(periodId) || 0) +
+              projection.pendingReturnPoints,
+          ),
         );
       }
     }
@@ -952,10 +1053,16 @@ export class AdminService {
     const summaryRow = summaryRows?.[0] || {};
 
     const mappedPeriods = periods.map((row: any) => {
-      const eligible = this.roundAdminPoints(Number(row.eligibleConsumedPoints || 0));
-      const excluded = this.roundAdminPoints(Number(row.excludedConsumedPoints || 0));
+      const eligible = this.roundAdminPoints(
+        Number(row.eligibleConsumedPoints || 0),
+      );
+      const excluded = this.roundAdminPoints(
+        Number(row.excludedConsumedPoints || 0),
+      );
       const returned = this.roundAdminPoints(Number(row.returnedPoints || 0));
-      const pending = this.roundAdminPoints(pendingByPeriod.get(Number(row.id)) || 0);
+      const pending = this.roundAdminPoints(
+        pendingByPeriod.get(Number(row.id)) || 0,
+      );
       return {
         ...row,
         id: Number(row.id),
@@ -967,18 +1074,30 @@ export class AdminService {
         excludedConsumedPoints: excluded,
         totalConsumedPoints: this.roundAdminPoints(eligible + excluded),
         returnedPoints: returned,
-        remainingBasePoints: this.roundAdminPoints(Number(row.remainingBasePoints || 0)),
+        remainingBasePoints: this.roundAdminPoints(
+          Number(row.remainingBasePoints || 0),
+        ),
         pendingReturnPoints: pending,
         expectedReturnPoints: this.roundAdminPoints(returned + pending),
         dailyRecordCount: Number(row.dailyRecordCount || 0),
-        dailyReturnedPoints: this.roundAdminPoints(Number(row.dailyReturnedPoints || 0)),
+        dailyReturnedPoints: this.roundAdminPoints(
+          Number(row.dailyReturnedPoints || 0),
+        ),
       };
     });
 
-    const totalEligible = this.roundAdminPoints(Number(summaryRow.eligibleConsumedPoints || 0));
-    const totalExcluded = this.roundAdminPoints(Number(summaryRow.excludedConsumedPoints || 0));
-    const totalReturned = this.roundAdminPoints(Number(summaryRow.returnedPoints || 0));
-    const totalPending = this.roundAdminPoints(Number(summaryRow.pendingReturnPoints || 0));
+    const totalEligible = this.roundAdminPoints(
+      Number(summaryRow.eligibleConsumedPoints || 0),
+    );
+    const totalExcluded = this.roundAdminPoints(
+      Number(summaryRow.excludedConsumedPoints || 0),
+    );
+    const totalReturned = this.roundAdminPoints(
+      Number(summaryRow.returnedPoints || 0),
+    );
+    const totalPending = this.roundAdminPoints(
+      Number(summaryRow.pendingReturnPoints || 0),
+    );
 
     return {
       summary: {
@@ -987,10 +1106,14 @@ export class AdminService {
         pendingUsers: Number(summaryRow.pendingUsers || 0),
         eligibleConsumedPoints: totalEligible,
         excludedConsumedPoints: totalExcluded,
-        totalConsumedPoints: this.roundAdminPoints(totalEligible + totalExcluded),
+        totalConsumedPoints: this.roundAdminPoints(
+          totalEligible + totalExcluded,
+        ),
         returnedPoints: totalReturned,
         pendingReturnPoints: totalPending,
-        expectedReturnPoints: this.roundAdminPoints(totalReturned + totalPending),
+        expectedReturnPoints: this.roundAdminPoints(
+          totalReturned + totalPending,
+        ),
         latestPeriodId: mappedPeriods[0]?.id || 0,
       },
       periods: mappedPeriods,
@@ -1005,7 +1128,9 @@ export class AdminService {
     const page = this.safePositiveInt(query.page, 1, 100000);
     const pageSize = this.safePositiveInt(query.pageSize, 20, 100);
     const offset = (page - 1) * pageSize;
-    const periodId = Number(query.periodId || 0) || await this.getLatestWeeklyPointReturnPeriodId();
+    const periodId =
+      Number(query.periodId || 0) ||
+      (await this.getLatestWeeklyPointReturnPeriodId());
     if (!periodId) {
       return { list: [], total: 0, page, pageSize, period: null };
     }
@@ -1073,8 +1198,12 @@ export class AdminService {
     );
 
     const list = listRows.map((row: any) => {
-      const eligible = this.roundAdminPoints(Number(row.eligibleConsumedPoints || 0));
-      const excluded = this.roundAdminPoints(Number(row.excludedConsumedPoints || 0));
+      const eligible = this.roundAdminPoints(
+        Number(row.eligibleConsumedPoints || 0),
+      );
+      const excluded = this.roundAdminPoints(
+        Number(row.excludedConsumedPoints || 0),
+      );
       const returned = this.roundAdminPoints(Number(row.returnedPoints || 0));
       const projection = this.calculateWeeklyReturnProjection(row);
       return {
@@ -1083,7 +1212,8 @@ export class AdminService {
         periodId: Number(row.periodId),
         userId: Number(row.userId),
         isActivated: Boolean(row.isActivated),
-        activationAmount: row.activationAmount === null ? null : Number(row.activationAmount),
+        activationAmount:
+          row.activationAmount === null ? null : Number(row.activationAmount),
         status: Number(row.status),
         paidDays: Number(row.paidDays || 0),
         multiplier: Number(row.multiplier || 0),
@@ -1092,11 +1222,15 @@ export class AdminService {
         excludedConsumedPoints: excluded,
         totalConsumedPoints: this.roundAdminPoints(eligible + excluded),
         lastWeekConsumedPoints: this.roundAdminPoints(eligible + excluded),
-        remainingBasePoints: this.roundAdminPoints(Number(row.remainingBasePoints || 0)),
+        remainingBasePoints: this.roundAdminPoints(
+          Number(row.remainingBasePoints || 0),
+        ),
         returnedPoints: returned,
         pendingReturnPoints: projection.pendingReturnPoints,
         currentWeekPendingReturnPoints: projection.pendingReturnPoints,
-        expectedReturnPoints: this.roundAdminPoints(returned + projection.pendingReturnPoints),
+        expectedReturnPoints: this.roundAdminPoints(
+          returned + projection.pendingReturnPoints,
+        ),
         nextReturnAmount: projection.nextReturnAmount,
         unpaidDays: projection.unpaidDays,
       };
@@ -1170,8 +1304,12 @@ export class AdminService {
     );
 
     const projection = this.calculateWeeklyReturnProjection(account);
-    const eligible = this.roundAdminPoints(Number(account.eligibleConsumedPoints || 0));
-    const excluded = this.roundAdminPoints(Number(account.excludedConsumedPoints || 0));
+    const eligible = this.roundAdminPoints(
+      Number(account.eligibleConsumedPoints || 0),
+    );
+    const excluded = this.roundAdminPoints(
+      Number(account.excludedConsumedPoints || 0),
+    );
     const returned = this.roundAdminPoints(Number(account.returnedPoints || 0));
 
     return {
@@ -1187,10 +1325,14 @@ export class AdminService {
         eligibleConsumedPoints: eligible,
         excludedConsumedPoints: excluded,
         totalConsumedPoints: this.roundAdminPoints(eligible + excluded),
-        remainingBasePoints: this.roundAdminPoints(Number(account.remainingBasePoints || 0)),
+        remainingBasePoints: this.roundAdminPoints(
+          Number(account.remainingBasePoints || 0),
+        ),
         returnedPoints: returned,
         pendingReturnPoints: projection.pendingReturnPoints,
-        expectedReturnPoints: this.roundAdminPoints(returned + projection.pendingReturnPoints),
+        expectedReturnPoints: this.roundAdminPoints(
+          returned + projection.pendingReturnPoints,
+        ),
         nextReturnAmount: projection.nextReturnAmount,
         unpaidDays: projection.unpaidDays,
       },
@@ -1199,11 +1341,15 @@ export class AdminService {
         id: Number(row.id),
         dayIndex: Number(row.dayIndex),
         status: Number(row.status),
-        baseBeforeReturn: this.roundAdminPoints(Number(row.baseBeforeReturn || 0)),
+        baseBeforeReturn: this.roundAdminPoints(
+          Number(row.baseBeforeReturn || 0),
+        ),
         multiplier: Number(row.multiplier || 0),
         dailyRate: Number(row.dailyRate || 0),
         returnAmount: this.roundAdminPoints(Number(row.returnAmount || 0)),
-        baseAfterReturn: this.roundAdminPoints(Number(row.baseAfterReturn || 0)),
+        baseAfterReturn: this.roundAdminPoints(
+          Number(row.baseAfterReturn || 0),
+        ),
         currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
       })),
     };
@@ -1516,7 +1662,8 @@ export class AdminService {
         ownerAccount: userMap.get(Number(m.ownerId))?.account || '',
         totalWithdrawn: withdrawalTotalMap.get(Number(m.ownerId)) || 0,
         directUserCount: directStatsMap.get(Number(m.ownerId))?.total || 0,
-        activatedDirectUserCount: directStatsMap.get(Number(m.ownerId))?.activated || 0,
+        activatedDirectUserCount:
+          directStatsMap.get(Number(m.ownerId))?.activated || 0,
       })),
       total,
       page: pagination.page,
@@ -1525,7 +1672,11 @@ export class AdminService {
   }
 
   private async getDirectInviteStatsMap(userIds: number[]) {
-    const ids = [...new Set((userIds || []).map((id) => Number(id)).filter((id) => id > 0))];
+    const ids = [
+      ...new Set(
+        (userIds || []).map((id) => Number(id)).filter((id) => id > 0),
+      ),
+    ];
     const result = new Map<number, { total: number; activated: number }>();
     if (!ids.length) return result;
     const placeholders = ids.map(() => '?').join(',');
@@ -1548,7 +1699,11 @@ export class AdminService {
   }
 
   private async getWithdrawalTotalMap(userIds: number[]) {
-    const ids = [...new Set((userIds || []).map((id) => Number(id)).filter((id) => id > 0))];
+    const ids = [
+      ...new Set(
+        (userIds || []).map((id) => Number(id)).filter((id) => id > 0),
+      ),
+    ];
     const result = new Map<number, number>();
     if (!ids.length) return result;
     const placeholders = ids.map(() => '?').join(',');
@@ -1578,7 +1733,10 @@ export class AdminService {
         account: user.account,
         nickname: user.nickname,
       },
-      totalWithdrawn: list.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+      totalWithdrawn: list.reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0,
+      ),
       list,
     };
   }
@@ -1594,7 +1752,9 @@ export class AdminService {
       .addOrderBy('u.id', 'DESC')
       .getMany();
 
-    const activatedCount = list.filter((item) => item.isActivated === true || Number(item.isActivated) === 1).length;
+    const activatedCount = list.filter(
+      (item) => item.isActivated === true || Number(item.isActivated) === 1,
+    ).length;
     return {
       user: {
         id: user.id,
@@ -1655,7 +1815,8 @@ export class AdminService {
         ...s,
         userNickname: userMap.get(Number(s.userId))?.nickname || '',
         userAccount: userMap.get(Number(s.userId))?.account || '',
-        userActivationAmount: userMap.get(Number(s.userId))?.activationAmount || null,
+        userActivationAmount:
+          userMap.get(Number(s.userId))?.activationAmount || null,
       })),
     };
   }
@@ -1694,9 +1855,15 @@ export class AdminService {
       list: list.map((i) => ({
         ...i,
         ownerNickname: userMap.get(Number(i.ownerId))?.nickname || '',
-        ownerActivationAmount: i.ownerActivationAmount || userMap.get(Number(i.ownerId))?.activationAmount || null,
+        ownerActivationAmount:
+          i.ownerActivationAmount ||
+          userMap.get(Number(i.ownerId))?.activationAmount ||
+          null,
         fromUserNickname: userMap.get(Number(i.fromUserId))?.nickname || '',
-        fromUserActivationAmount: i.sourceActivationAmount || userMap.get(Number(i.fromUserId))?.activationAmount || null,
+        fromUserActivationAmount:
+          i.sourceActivationAmount ||
+          userMap.get(Number(i.fromUserId))?.activationAmount ||
+          null,
         ownerTotalWithdrawn: withdrawalTotalMap.get(Number(i.ownerId)) || 0,
       })),
       total,
@@ -1760,7 +1927,8 @@ export class AdminService {
   // ===== 建群审核 =====
   /** 获取待审核群列表 */
   async getPendingGroups(pagination: PaginationDto) {
-    const qb = this.conversationRepo.createQueryBuilder('c')
+    const qb = this.conversationRepo
+      .createQueryBuilder('c')
       .where('c.type = 2 AND c.status = 0')
       .orderBy('c.created_at', 'DESC');
     const total = await qb.getCount();
@@ -1768,28 +1936,90 @@ export class AdminService {
       .skip((pagination.page - 1) * pagination.pageSize)
       .take(pagination.pageSize)
       .getMany();
-    return { list, total, page: pagination.page, pageSize: pagination.pageSize };
+    return {
+      list,
+      total,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    };
   }
 
   /** 审核群聊（通过/拒绝） */
   async reviewGroup(groupId: number, action: 'approve' | 'reject') {
-    const conv = await this.conversationRepo.findOne({ where: { id: groupId, type: 2 } });
+    const conv = await this.conversationRepo.findOne({
+      where: { id: groupId, type: 2 },
+    });
     if (!conv) throw new NotFoundException('群聊不存在');
     if (action === 'approve') {
       await this.conversationRepo.update(groupId, { status: 1 });
+      const customerService = await this.userRepo.findOne({
+        where: { account: 'admin', status: 1 },
+      });
+      if (customerService) {
+        const existing = await this.conversationMemberRepo.findOne({
+          where: { conversationId: groupId, userId: customerService.id },
+        });
+        if (!existing) {
+          await this.conversationMemberRepo.save(
+            this.conversationMemberRepo.create({
+              conversationId: groupId,
+              userId: customerService.id,
+              role: 2,
+            }),
+          );
+        } else if (Number(existing.role) < 2) {
+          await this.conversationMemberRepo.update(existing.id, { role: 2 });
+        }
+      }
+      if (Number(conv.creatorId) > 0) {
+        await this.serviceNotificationService.notifyUser({
+          recipientId: Number(conv.creatorId),
+          type: 'group_result',
+          title: '建群申请已通过',
+          content: `你创建群聊「${conv.name || '群聊'}」的申请已通过，现在可以正常使用该群聊。`,
+          payload: {
+            conversationId: groupId,
+            groupName: conv.name || '群聊',
+            status: 'approved',
+          },
+        });
+      }
       return { message: '已通过' };
     } else {
       await this.conversationRepo.update(groupId, { status: 2 });
+      if (Number(conv.creatorId) > 0) {
+        await this.serviceNotificationService.notifyUser({
+          recipientId: Number(conv.creatorId),
+          type: 'group_result',
+          title: '建群申请未通过',
+          content: `你创建群聊「${conv.name || '群聊'}」的申请未通过，如有疑问请联系客服。`,
+          payload: {
+            conversationId: groupId,
+            groupName: conv.name || '群聊',
+            status: 'rejected',
+          },
+        });
+      }
       return { message: '已拒绝' };
     }
   }
 
   /** 创建系统总群（仅一次） */
   async createSystemGroup(name: string) {
-    const existing = await this.conversationRepo.findOne({ where: { isSystem: true } });
-    if (existing) throw new NotFoundException('系统总群已存在，ID=' + existing.id);
+    const existing = await this.conversationRepo.findOne({
+      where: { isSystem: true },
+    });
+    if (existing)
+      throw new NotFoundException('系统总群已存在，ID=' + existing.id);
     const conv = await this.conversationRepo.save(
-      this.conversationRepo.create({ type: 2, name, creatorId: 0, status: 1, isSystem: true }),
+      this.conversationRepo.create({
+        type: 2,
+        name,
+        creatorId: 0,
+        status: 1,
+        isSystem: true,
+        allMuted: true,
+      }),
     );
     return { message: '系统总群创建成功', conversationId: conv.id, name };
   }

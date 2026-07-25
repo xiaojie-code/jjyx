@@ -11,6 +11,7 @@ import { UserSetting } from '../entities/user-setting.entity';
 import { Meeting } from '../entities/meeting.entity';
 import { MeetingParticipant } from '../entities/meeting-participant.entity';
 import { MeetingBan } from '../entities/meeting-ban.entity';
+import { GroupMeetingRequest } from '../entities/group-meeting-request.entity';
 import { ChatGateway } from './chat.gateway';
 import { MeetingGateway } from './meeting.gateway';
 import { ChatService } from './chat.service';
@@ -38,6 +39,7 @@ import { PushModule } from '../push/push.module';
       Meeting,
       MeetingParticipant,
       MeetingBan,
+      GroupMeetingRequest,
     ]),
     AuthModule,
     CurrencyModule,

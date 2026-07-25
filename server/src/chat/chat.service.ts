@@ -51,7 +51,13 @@ export class ChatService {
       senderId,
       conversationId,
     );
-    if (member.isMuted)
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+    const canBypassAllMuted =
+      Number(member.role) >= 2 ||
+      Number(conversation?.creatorId) === Number(senderId);
+    if (member.isMuted || (conversation?.allMuted && !canBypassAllMuted))
       throw new ForbiddenException('你已被禁言，无法发送消息');
     if (!content?.trim()) throw new BadRequestException('消息内容不能为空');
     const msg = this.msgRepo.create({
@@ -215,6 +221,7 @@ export class ChatService {
         type: conv.type,
         name: conv.name,
         avatar: conv.avatar || '',
+        createdAt: conv.createdAt,
         isPinned: m.isPinned,
         unreadCount: m.unreadCount,
         peerUser,
@@ -231,13 +238,17 @@ export class ChatService {
           : null,
       });
     }
-    // 按置顶优先、最新消息时间降序排列
+    // 四个系统入口由客户端固定；手动置顶优先，其余按最近活动时间倒序。
     result.sort((a: any, b: any) => {
-      if (a.isPinned && !b.isPinned) return -1;
-      if (!a.isPinned && b.isPinned) return 1;
-      const aTime = a.lastMessage?.createdAt || '';
-      const bTime = b.lastMessage?.createdAt || '';
-      return bTime > aTime ? 1 : bTime < aTime ? -1 : 0;
+      if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      const aTime = new Date(
+        a.lastMessage?.createdAt || a.createdAt || 0,
+      ).getTime();
+      const bTime = new Date(
+        b.lastMessage?.createdAt || b.createdAt || 0,
+      ).getTime();
+      if (aTime !== bTime) return bTime - aTime;
+      return Number(b.conversationId) - Number(a.conversationId);
     });
     return result;
   }
@@ -407,6 +418,12 @@ export class ChatService {
   /** 不显示会话（不删除聊天记录，仅当前用户隐藏） */
   async hideConversation(userId: number, conversationId: number) {
     await this.ensureConversationMember(userId, conversationId);
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+    if (conversation?.isSystem) {
+      throw new ForbiddenException('系统总群不可隐藏');
+    }
     await this.memberRepo.update(
       { conversationId, userId },
       { isHidden: true, isPinned: false, unreadCount: 0 },
@@ -417,6 +434,12 @@ export class ChatService {
   /** 删除会话（仅删除当前用户这一侧的聊天记录，不影响对方） */
   async deleteConversation(userId: number, conversationId: number) {
     await this.ensureConversationMember(userId, conversationId);
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+    if (conversation?.isSystem) {
+      throw new ForbiddenException('系统总群不可删除');
+    }
     // 不物理删除消息，只标记当前用户的清除时间点 + 隐藏会话
     // 该用户后续只能看到 clearedAt 之后的新消息，对方记录不受影响
     await this.memberRepo.update(
@@ -765,7 +788,16 @@ export class ChatService {
     const member = await this.memberRepo.findOne({
       where: { conversationId, userId },
     });
-    return member?.isMuted ?? false;
+    if (!member) return false;
+    if (member.isMuted) return true;
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+    return !!(
+      conversation?.allMuted &&
+      Number(member.role) < 2 &&
+      Number(conversation.creatorId) !== Number(userId)
+    );
   }
 
   /** 获取用户昵称 */
@@ -837,6 +869,7 @@ export class ChatService {
       where: { id: conversationId, type: 2 },
     });
     if (!conv) throw new NotFoundException('群聊不存在');
+    if (conv.isSystem) throw new ForbiddenException('系统总群不可退出');
     if (Number(conv.creatorId) === Number(userId))
       throw new ForbiddenException('群主不能退出，请先转让或解散');
     await this.memberRepo.delete({ conversationId, userId });

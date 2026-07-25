@@ -58,6 +58,8 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
     return n.toStringAsFixed(digits);
   }
 
+  String _summaryAmount(dynamic value) => _num(value).toStringAsFixed(2);
+
   String _dateRange(Map<String, dynamic> item, String startKey, String endKey) {
     final start = item[startKey]?.toString() ?? '';
     final end = item[endKey]?.toString() ?? '';
@@ -100,6 +102,8 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
         : null;
     final schedule = _listOfMaps(_data['schedule']);
     final history = _listOfMaps(_data['history']);
+    final returnHistory = _listOfMaps(_data['returnHistory']);
+    final historicalReturnedPoints = _data['historicalReturnedPoints'];
 
     return Scaffold(
       appBar: AppBar(title: const Text('积分返还')),
@@ -112,6 +116,11 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(16),
                 children: [
+                  _historicalTotalCard(
+                    historicalReturnedPoints,
+                    returnHistory,
+                  ),
+                  const SizedBox(height: 12),
                   if (current == null)
                     _emptyCard()
                   else ...[
@@ -126,6 +135,156 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _historicalTotalCard(
+    dynamic total,
+    List<Map<String, dynamic>> returnHistory,
+  ) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _showReturnHistory(returnHistory),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE8F6ED),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.history_rounded,
+                  color: Color(0xFF28A745),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '历史已返还积分',
+                      style: TextStyle(fontSize: 14, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _summaryAmount(total),
+                      style: const TextStyle(
+                        color: Color(0xFF28A745),
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Text(
+                '查看明细',
+                style: TextStyle(
+                  color: Color(0xFF409EFF),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF98A2B3),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showReturnHistory(
+    List<Map<String, dynamic>> returnHistory,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.68,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Text(
+                  '已返还积分明细',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: returnHistory.isEmpty
+                    ? const Center(
+                        child: Text(
+                          '暂无已返还记录',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        itemCount: returnHistory.length,
+                        separatorBuilder: (_, __) => const Divider(
+                          height: 1,
+                          indent: 20,
+                          endIndent: 20,
+                        ),
+                        itemBuilder: (context, index) {
+                          final item = returnHistory[index];
+                          return ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 4,
+                            ),
+                            leading: CircleAvatar(
+                              backgroundColor: const Color(0xFFE8F6ED),
+                              child: Text(
+                                '${_int(item['dayIndex'])}',
+                                style: const TextStyle(
+                                  color: Color(0xFF28A745),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              item['returnDate']?.toString() ?? '-',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '消费周期 ${_dateRange(item, 'weekStartDate', 'weekEndDate')}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: Text(
+                              '+${_amount(item['returnAmount'], digits: 6)}',
+                              style: const TextStyle(
+                                color: Color(0xFF28A745),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -182,7 +341,8 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: _statusColor(current['status']).withOpacity(0.1),
                   borderRadius: BorderRadius.circular(999),
@@ -200,7 +360,7 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            _amount(current['pendingReturnPoints'], digits: 6),
+            _summaryAmount(current['pendingReturnPoints']),
             style: const TextStyle(
               fontSize: 34,
               fontWeight: FontWeight.bold,
@@ -215,16 +375,25 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
           const Divider(height: 28),
           Row(
             children: [
-              Expanded(child: _miniStat('已返还', _amount(current['returnedPoints']))),
-              Expanded(child: _miniStat('预计总返还', _amount(current['expectedReturnPoints']))),
-              Expanded(child: _miniStat('下次预计', _amount(current['nextReturnAmount']))),
+              Expanded(
+                  child: _miniStat('已返还', _amount(current['returnedPoints']))),
+              Expanded(
+                  child: _miniStat(
+                      '预计总返还', _amount(current['expectedReturnPoints']))),
+              Expanded(
+                  child:
+                      _miniStat('下次预计', _amount(current['nextReturnAmount']))),
             ],
           ),
           const SizedBox(height: 14),
           Row(
             children: [
-              Expanded(child: _miniStat('消费周期', _dateRange(current, 'weekStartDate', 'weekEndDate'))),
-              Expanded(child: _miniStat('上周消费', _amount(current['totalConsumedPoints']))),
+              Expanded(
+                  child: _miniStat('消费周期',
+                      _dateRange(current, 'weekStartDate', 'weekEndDate'))),
+              Expanded(
+                  child: _miniStat(
+                      '上周消费', _amount(current['totalConsumedPoints']))),
             ],
           ),
         ],
@@ -267,9 +436,15 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
           const SizedBox(height: 14),
           Row(
             children: [
-              Expanded(child: _miniStat('可返还消费', _amount(current['eligibleConsumedPoints']))),
-              Expanded(child: _miniStat('排除消费', _amount(current['excludedConsumedPoints']))),
-              Expanded(child: _miniStat('剩余基数', _amount(current['remainingBasePoints']))),
+              Expanded(
+                  child: _miniStat(
+                      '可返还消费', _amount(current['eligibleConsumedPoints']))),
+              Expanded(
+                  child: _miniStat(
+                      '排除消费', _amount(current['excludedConsumedPoints']))),
+              Expanded(
+                  child: _miniStat(
+                      '剩余基数', _amount(current['remainingBasePoints']))),
             ],
           ),
         ],
@@ -283,7 +458,8 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
       child: schedule.isEmpty
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 18),
-              child: Center(child: Text('暂无明细', style: TextStyle(color: Colors.grey))),
+              child: Center(
+                  child: Text('暂无明细', style: TextStyle(color: Colors.grey))),
             )
           : Column(
               children: schedule.map((item) {
@@ -317,7 +493,8 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
                           children: [
                             Text(
                               item['returnDate']?.toString() ?? '',
-                              style: const TextStyle(fontWeight: FontWeight.w600),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600),
                             ),
                             const SizedBox(height: 2),
                             Text(
@@ -351,7 +528,8 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
       child: history.isEmpty
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 18),
-              child: Center(child: Text('暂无历史周期', style: TextStyle(color: Colors.grey))),
+              child: Center(
+                  child: Text('暂无历史周期', style: TextStyle(color: Colors.grey))),
             )
           : Column(
               children: history.map((item) {
@@ -365,12 +543,14 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
                           children: [
                             Text(
                               _dateRange(item, 'weekStartDate', 'weekEndDate'),
-                              style: const TextStyle(fontWeight: FontWeight.w600),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600),
                             ),
                             const SizedBox(height: 2),
                             Text(
                               '消费 ${_amount(item['totalConsumedPoints'])} · 已返还 ${_amount(item['returnedPoints'])}',
-                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.grey),
                             ),
                           ],
                         ),
@@ -398,7 +578,9 @@ class _WeeklyPointReturnPageState extends ConsumerState<WeeklyPointReturnPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 14),
           child,
         ],

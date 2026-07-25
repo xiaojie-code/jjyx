@@ -31,6 +31,7 @@ class _MainShellState extends ConsumerState<MainShell>
     with WidgetsBindingObserver {
   static const _platformChannel =
       MethodChannel('com.example.app/notifications');
+  late final SocketService _socketService;
   bool _isAppInForeground = true;
   bool _notificationGuideShown = false;
 
@@ -51,31 +52,37 @@ class _MainShellState extends ConsumerState<MainShell>
   @override
   void initState() {
     super.initState();
+    _socketService = ref.read(socketServiceProvider);
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      _loadBadgesForCurrentUser();
+      if (!mounted) return;
+      await _loadBadgesForCurrentUser();
+      if (!mounted) return;
       await Future.delayed(const Duration(milliseconds: 500));
       if (mounted && _isChatListVisible) {
         await maybeShowDailySignInPrompt(context, ref);
       }
+      if (!mounted) return;
       final settings = await _loadNotificationSettings();
+      if (!mounted) return;
       await _ensureMessageAlertPermission(settings: settings);
+      if (!mounted) return;
       await PushRegistrationService.instance.register(
         ref.read(apiClientProvider),
       );
+      if (!mounted) return;
       // 静默检测应用更新（用于"我的"红点提示）
       AppUpdateService.checkSilently(ref);
     });
     // 建立 Socket 连接（先注册监听器，再连接，避免离线消息在监听器注册前到达）
-    final socket = ref.read(socketServiceProvider);
     // 监听 Socket 新消息，更新未读数
-    socket.addMessageListener(_onNewMessage);
+    _socketService.addMessageListener(_onNewMessage);
     // 监听好友申请，更新红点
-    socket.addFriendRequestListener(_onFriendRequest);
+    _socketService.addFriendRequestListener(_onFriendRequest);
     // 监听服务通知，提示音 + 后台弹窗
-    socket.addServiceNotificationListener(_onServiceNotification);
+    _socketService.addServiceNotificationListener(_onServiceNotification);
     // 最后再连接（连接成功后会推送离线消息，此时监听器已就绪）
-    socket.connect();
+    _socketService.connect();
 
     // 设置通知点击回调
     NotificationService.instance.onTap = _onNotificationTap;
@@ -180,6 +187,7 @@ class _MainShellState extends ConsumerState<MainShell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
     _isAppInForeground = state == AppLifecycleState.resumed;
     if (_isAppInForeground) {
       NotificationService.instance.stopBackgroundKeepAlive();
@@ -280,6 +288,7 @@ class _MainShellState extends ConsumerState<MainShell>
 
   /// 收到服务通知（提现/建群/充值申请）：提示音 + 后台系统通知
   void _onServiceNotification(Map<String, dynamic> data) {
+    if (!mounted) return;
     final title = data['title']?.toString() ?? '服务通知';
     final content = data['content']?.toString() ?? '';
     ref.read(badgeProvider.notifier).incrementServiceNotifications();
@@ -297,12 +306,9 @@ class _MainShellState extends ConsumerState<MainShell>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    try {
-      final socket = ref.read(socketServiceProvider);
-      socket.removeMessageListener(_onNewMessage);
-      socket.removeFriendRequestListener(_onFriendRequest);
-      socket.removeServiceNotificationListener(_onServiceNotification);
-    } catch (_) {}
+    _socketService.removeMessageListener(_onNewMessage);
+    _socketService.removeFriendRequestListener(_onFriendRequest);
+    _socketService.removeServiceNotificationListener(_onServiceNotification);
     super.dispose();
   }
 

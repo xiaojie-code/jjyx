@@ -888,12 +888,12 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
             width: 42,
             height: 42,
             decoration: const BoxDecoration(
-              color: Color(0xFFFDF2E9),
+              color: Color(0xFFFFE9D5),
               shape: BoxShape.circle,
             ),
             child: const Icon(
-              Icons.savings_rounded,
-              color: Color(0xFFB45309),
+              Icons.paid_rounded,
+              color: Color(0xFFC65D16),
               size: 23,
             ),
           ),

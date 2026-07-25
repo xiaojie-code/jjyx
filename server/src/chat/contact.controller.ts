@@ -118,6 +118,15 @@ export class ContactController {
     return this.contactService.updateAnnouncement(userId, id, announcement);
   }
 
+  @Put('groups/:id/all-muted')
+  updateAllMuted(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('muted') muted: boolean,
+  ) {
+    return this.contactService.updateAllMuted(userId, id, muted !== false);
+  }
+
   @Put('groups/:id/my-nickname')
   updateMyGroupNickname(
     @CurrentUser('id') userId: number,

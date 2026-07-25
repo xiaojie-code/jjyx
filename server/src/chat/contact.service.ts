@@ -39,7 +39,7 @@ export class ContactService implements OnModuleInit {
     private readonly serviceNotificationService: ServiceNotificationService,
   ) {}
 
-  /** 启动时只确保系统总群存在，并把 admin 设置为客服/群主 */
+  /** 启动时确保系统总群存在，并补齐所有正常用户的总群成员关系 */
   async onModuleInit() {
     try {
       await this.ensureChatSchema();
@@ -54,12 +54,13 @@ export class ContactService implements OnModuleInit {
             creatorId: 0,
             status: 1,
             isSystem: true,
+            allMuted: true,
           }),
         );
         this.logger.log(`系统总群"沧恒云芯"已自动创建，ID=${systemGroup.id}`);
       }
       const admin = await this.userRepo.findOne({
-        where: { account: 'admin' },
+        where: { account: 'admin', status: 1 },
       });
       if (admin) {
         if (admin.nickname !== '客服') {
@@ -83,7 +84,28 @@ export class ContactService implements OnModuleInit {
           await this.memberRepo.update(existing.id, { role: 2 });
         }
       }
-      this.logger.log('系统总群初始化完成：已关闭激活用户自动入群');
+      await this.initializeSystemGroupMuteDefault(systemGroup.id);
+      await this.dataSource.query(
+        `INSERT IGNORE INTO conversation_members
+          (conversation_id, user_id, role, joined_at)
+         SELECT ?, u.id, CASE WHEN LOWER(u.account) = 'admin' THEN 2 ELSE 1 END, NOW()
+         FROM users u
+         WHERE u.status = 1`,
+        [systemGroup.id],
+      );
+      await this.dataSource.query(
+        `UPDATE conversation_members cm
+         INNER JOIN users u ON u.id = cm.user_id AND u.status = 1
+         SET cm.is_hidden = 0
+         WHERE cm.conversation_id = ?`,
+        [systemGroup.id],
+      );
+      if (admin) {
+        await this.backfillCustomerServiceIntoApprovedGroups(admin.id);
+      }
+      this.logger.log(
+        '系统总群初始化完成：所有正常用户已自动入群，历史群客服成员已补齐',
+      );
     } catch (e) {
       this.logger.error('系统总群初始化失败', e);
     }
@@ -101,6 +123,7 @@ export class ContactService implements OnModuleInit {
         avatar VARCHAR(255) NULL,
         status TINYINT NOT NULL DEFAULT 1 COMMENT '0待审核 1正常 2拒绝',
         is_system TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否系统群',
+        all_muted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否开启全员禁言',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_conversations_type (type),
@@ -160,6 +183,7 @@ export class ContactService implements OnModuleInit {
       `ALTER TABLE conversations ADD COLUMN avatar VARCHAR(255) NULL`,
       `ALTER TABLE conversations ADD COLUMN status TINYINT NOT NULL DEFAULT 1 COMMENT '0待审核 1正常 2拒绝'`,
       `ALTER TABLE conversations ADD COLUMN is_system TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否系统群'`,
+      `ALTER TABLE conversations ADD COLUMN all_muted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否开启全员禁言'`,
       `ALTER TABLE conversations ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`,
       `ALTER TABLE conversations ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`,
       `ALTER TABLE conversation_members ADD COLUMN conversation_id INT NOT NULL DEFAULT 0`,
@@ -210,6 +234,46 @@ export class ContactService implements OnModuleInit {
         // 索引已存在则忽略
       }
     }
+  }
+
+  private async initializeSystemGroupMuteDefault(conversationId: number) {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS chat_schema_flags (
+        flag_key VARCHAR(80) NOT NULL PRIMARY KEY,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    const flagKey = 'system_group_default_all_muted_v1';
+    const rows = await this.dataSource.query(
+      `SELECT flag_key FROM chat_schema_flags WHERE flag_key = ? LIMIT 1`,
+      [flagKey],
+    );
+    if (rows.length > 0) return;
+    await this.convRepo.update(conversationId, { allMuted: true });
+    await this.dataSource.query(
+      `INSERT IGNORE INTO chat_schema_flags (flag_key) VALUES (?)`,
+      [flagKey],
+    );
+  }
+
+  /** 为功能上线前已经审核通过的群聊补入 admin 客服管理员 */
+  private async backfillCustomerServiceIntoApprovedGroups(adminId: number) {
+    await this.dataSource.query(
+      `INSERT IGNORE INTO conversation_members
+        (conversation_id, user_id, role, is_hidden, joined_at)
+       SELECT c.id, ?, 2, 0, NOW()
+       FROM conversations c
+       WHERE c.type = 2 AND c.status = 1 AND c.is_system = 0`,
+      [adminId],
+    );
+    await this.dataSource.query(
+      `UPDATE conversation_members cm
+       INNER JOIN conversations c ON c.id = cm.conversation_id
+       SET cm.role = 2, cm.is_hidden = 0
+       WHERE cm.user_id = ?
+         AND c.type = 2 AND c.status = 1 AND c.is_system = 0`,
+      [adminId],
+    );
   }
 
   /** 发送好友申请 */
@@ -463,6 +527,17 @@ export class ContactService implements OnModuleInit {
         memberCount: allIds.length,
       },
     });
+    await this.serviceNotificationService.notifyUser({
+      recipientId: creatorId,
+      type: 'group_progress',
+      title: '建群申请处理中',
+      content: `你创建群聊「${groupName}」的申请已发送，管理员处理中，请等待。`,
+      payload: {
+        conversationId: conv.id,
+        groupName,
+        status: 'pending',
+      },
+    });
 
     return {
       conversationId: conv.id,
@@ -508,6 +583,30 @@ export class ContactService implements OnModuleInit {
       avatar: conv.avatar || '',
       myGroupNickname: member.groupNickname || '',
       creatorId: conv.creatorId,
+      isSystem: conv.isSystem,
+      allMuted: conv.allMuted,
+    };
+  }
+
+  /** 开启或关闭群聊全员禁言 */
+  async updateAllMuted(userId: number, conversationId: number, muted: boolean) {
+    const conv = await this.convRepo.findOne({
+      where: { id: conversationId, type: 2 },
+    });
+    if (!conv) throw new NotFoundException('群聊不存在');
+    const member = await this.memberRepo.findOne({
+      where: { conversationId, userId },
+    });
+    if (
+      !member ||
+      (Number(member.role) < 2 && Number(conv.creatorId) !== Number(userId))
+    ) {
+      throw new ForbiddenException('仅群主或管理员可设置全员禁言');
+    }
+    await this.convRepo.update(conversationId, { allMuted: !!muted });
+    return {
+      message: muted ? '已开启全员禁言' : '已关闭全员禁言',
+      allMuted: !!muted,
     };
   }
 
@@ -575,6 +674,7 @@ export class ContactService implements OnModuleInit {
       where: { id: conversationId, type: 2 },
     });
     if (!conv) throw new NotFoundException('群聊不存在');
+    if (conv.isSystem) throw new ForbiddenException('系统总群不可解散');
     if (Number(conv.creatorId) !== Number(userId))
       throw new ForbiddenException('仅创建者可解散');
 
@@ -888,6 +988,8 @@ export class ContactService implements OnModuleInit {
           role: m.role,
           isMuted: m.isMuted,
           isOwner: Number(user.id) === Number(conv.creatorId),
+          allMuted: conv.allMuted,
+          isSystem: conv.isSystem,
         });
       }
     }

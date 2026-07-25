@@ -17,25 +17,126 @@ type ShopProduct = {
   imageName?: string;
   cashPrice?: number | null;
   silverPrice: number;
+  silverOnly?: boolean;
+  available?: boolean;
 };
 
 const DEFAULT_SILVER_PRICE = 1000;
 const SHOP_PRODUCTS: ShopProduct[] = [
-  { key: 'health-ring', title: '云芯智能健康指环', imageName: 'd31a7373-c4e4-4a6a-9d09-c50f5c7fcab6.png', cashPrice: 925, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'health-watch', title: '云芯健康陪伴手表', imageName: 'product-health-watch.png', cashPrice: 628, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'health-watch-2', title: '云芯健康陪伴手表二代', imageName: 'product-health-watch-2.jpg', cashPrice: 1598, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'ai-glasses', title: '云芯ai智能眼镜', imageName: '0da22a71-4ed1-42b3-9037-51f839110739.png', cashPrice: 728, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'water-dispenser', title: '云芯智能饮水机', imageName: 'wecom-temp-104741-4729fce3272ce5f72e4c37a95c51e0b4.jpg', cashPrice: 3150, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'sweeping-robot', title: '云芯扫地机器人 R10', imageName: 'wecom-temp-106614-d3636a8da16208935187051b9af7d1b0.jpg', cashPrice: 4050, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'ai-companion-robot', title: '云芯 AI 伴侣机器人', imageName: '9da8bf4b-bdb6-4783-8041-ab01ffb146e0.jpg', cashPrice: 61668, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'water-heater', title: '云芯即热式电热水器', imageName: 'wecom-temp-81610-3123efb8a6290ed8802926f63a996ab5.jpg', cashPrice: 7515, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'range-hood', title: '云芯抽油烟机', imageName: '3082d493-56e4-445e-8025-24748e08d55a.png', cashPrice: 4068, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'dishwasher-dryer', title: '云芯洗碗机-带烘干', imageName: '31f8b0f3-454e-4b00-9a4e-29b6dd93abdd.png', cashPrice: 6299, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'cooking-machine', title: '云芯智能炒菜机', imageName: 'wecom-temp-102952-7f383878d5d4ae179ab2335d5ebe12a1.jpg', cashPrice: 4500, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'air-conditioner', title: '云芯空调（上门安装）', imageName: '3ec9c07d-3382-4c4a-9944-c9d4f0789b48.jpg', cashPrice: 5788, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'three-wheel', title: '云芯三轮车', imageName: 'slc-composite.png', cashPrice: 30000, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'fridge-605l', title: '云芯大屏对开门冰箱 605L', imageName: 'wecom-temp-118430-281e0c3401f86df1e1c929e80d621e2b.jpg', cashPrice: 8089, silverPrice: DEFAULT_SILVER_PRICE },
-  { key: 'tv-100', title: '云芯智慧大屏 100 寸', imageName: 'wecom-temp-66807-eeaeb548f43a250372d3c78260367bdf.jpg', cashPrice: 17098, silverPrice: DEFAULT_SILVER_PRICE },
+  {
+    key: 'cag',
+    title: 'CAG',
+    imageName: '28c6042b-83b9-423f-89a3-8b5042532853.png',
+    cashPrice: null,
+    silverPrice: 0,
+    silverOnly: true,
+    available: false,
+  },
+  {
+    key: 'health-ring',
+    title: '云芯智能健康指环',
+    imageName: 'd31a7373-c4e4-4a6a-9d09-c50f5c7fcab6.png',
+    cashPrice: 925,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'health-watch',
+    title: '云芯健康陪伴手表',
+    imageName: 'product-health-watch.png',
+    cashPrice: 628,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'health-watch-2',
+    title: '云芯健康陪伴手表二代',
+    imageName: 'product-health-watch-2.jpg',
+    cashPrice: 1598,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'ai-glasses',
+    title: '云芯ai智能眼镜',
+    imageName: '0da22a71-4ed1-42b3-9037-51f839110739.png',
+    cashPrice: 728,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'water-dispenser',
+    title: '云芯智能饮水机',
+    imageName: 'wecom-temp-104741-4729fce3272ce5f72e4c37a95c51e0b4.jpg',
+    cashPrice: 3150,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'sweeping-robot',
+    title: '云芯扫地机器人 R10',
+    imageName: 'wecom-temp-106614-d3636a8da16208935187051b9af7d1b0.jpg',
+    cashPrice: 4050,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'ai-companion-robot',
+    title: '云芯 AI 伴侣机器人',
+    imageName: 'a7246507-baef-40e4-88be-cdc79ccf5700.png',
+    cashPrice: 61668,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'water-heater',
+    title: '云芯即热式电热水器',
+    imageName: 'wecom-temp-81610-3123efb8a6290ed8802926f63a996ab5.jpg',
+    cashPrice: 7515,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'range-hood',
+    title: '云芯抽油烟机',
+    imageName: '3082d493-56e4-445e-8025-24748e08d55a.png',
+    cashPrice: 4068,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'dishwasher-dryer',
+    title: '云芯洗碗机-带烘干',
+    imageName: '31f8b0f3-454e-4b00-9a4e-29b6dd93abdd.png',
+    cashPrice: 6299,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'cooking-machine',
+    title: '云芯智能炒菜机',
+    imageName: 'wecom-temp-102952-7f383878d5d4ae179ab2335d5ebe12a1.jpg',
+    cashPrice: 4500,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'air-conditioner',
+    title: '云芯空调（上门安装）',
+    imageName: '3ec9c07d-3382-4c4a-9944-c9d4f0789b48.jpg',
+    cashPrice: 5788,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'three-wheel',
+    title: '云芯三轮车',
+    imageName: 'slc-composite.png',
+    cashPrice: 30000,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'fridge-605l',
+    title: '云芯大屏对开门冰箱 605L',
+    imageName: 'wecom-temp-118430-281e0c3401f86df1e1c929e80d621e2b.jpg',
+    cashPrice: 8089,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
+  {
+    key: 'tv-100',
+    title: '云芯智慧大屏 100 寸',
+    imageName: 'wecom-temp-66807-eeaeb548f43a250372d3c78260367bdf.jpg',
+    cashPrice: 17098,
+    silverPrice: DEFAULT_SILVER_PRICE,
+  },
 ];
 
 @Injectable()
@@ -138,9 +239,12 @@ export class ShopService implements OnModuleInit {
     if (!receiverName || !receiverPhone || !receiverAddress) {
       throw new BadRequestException('请填写完整收货信息');
     }
-    if (receiverName.length > 30) throw new BadRequestException('收货人姓名过长');
-    if (receiverPhone.length > 20) throw new BadRequestException('收货手机号过长');
-    if (receiverAddress.length > 200) throw new BadRequestException('收货地址过长');
+    if (receiverName.length > 30)
+      throw new BadRequestException('收货人姓名过长');
+    if (receiverPhone.length > 20)
+      throw new BadRequestException('收货手机号过长');
+    if (receiverAddress.length > 200)
+      throw new BadRequestException('收货地址过长');
     return { receiverName, receiverPhone, receiverAddress };
   }
 
@@ -148,7 +252,9 @@ export class ShopService implements OnModuleInit {
     const now = new Date();
     const pad = (n: number, len = 2) => String(n).padStart(len, '0');
     const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}${pad(now.getMilliseconds(), 3)}`;
-    return `SO${stamp}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+    return `SO${stamp}${Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, '0')}`;
   }
 
   private async getConfig(key: string, defaultValue = '') {
@@ -172,8 +278,12 @@ export class ShopService implements OnModuleInit {
       productImage: row.productImage ?? row.product_image,
       paymentMethod: row.paymentMethod ?? row.payment_method,
       quantity: Number(row.quantity || 0),
-      unitSilverPrice: Number(row.unitSilverPrice ?? row.unit_silver_price ?? 0),
-      totalSilverAmount: Number(row.totalSilverAmount ?? row.total_silver_amount ?? 0),
+      unitSilverPrice: Number(
+        row.unitSilverPrice ?? row.unit_silver_price ?? 0,
+      ),
+      totalSilverAmount: Number(
+        row.totalSilverAmount ?? row.total_silver_amount ?? 0,
+      ),
       unitCashPrice:
         (row.unitCashPrice ?? row.unit_cash_price) == null
           ? null
@@ -186,12 +296,14 @@ export class ShopService implements OnModuleInit {
       receiverPhone: row.receiverPhone ?? row.receiver_phone,
       receiverAddress: row.receiverAddress ?? row.receiver_address,
       status,
-      statusText: status === 0 ? '待审核' : status === 1 ? '已确认发货' : '已驳回',
+      statusText:
+        status === 0 ? '待审核' : status === 1 ? '已确认发货' : '已驳回',
       adminRemark: row.adminRemark ?? row.admin_remark,
       logisticsCompany: row.logisticsCompany ?? row.logistics_company,
       logisticsNo: row.logisticsNo ?? row.logistics_no,
       currencyLogId: row.currencyLogId ?? row.currency_log_id,
-      refundCurrencyLogId: row.refundCurrencyLogId ?? row.refund_currency_log_id,
+      refundCurrencyLogId:
+        row.refundCurrencyLogId ?? row.refund_currency_log_id,
       handledAt: row.handledAt ?? row.handled_at,
       createdAt: row.createdAt ?? row.created_at,
     };
@@ -217,22 +329,33 @@ export class ShopService implements OnModuleInit {
        LIMIT 1`,
       [userId],
     );
-    return rows?.[0] || { receiverName: '', receiverPhone: '', receiverAddress: '' };
+    return (
+      rows?.[0] || { receiverName: '', receiverPhone: '', receiverAddress: '' }
+    );
   }
 
   async createOrder(userId: number, data: any) {
     const product = this.getProduct(data.productKey);
+    if (product.available === false) {
+      throw new BadRequestException('该商品暂未开放');
+    }
     const quantity = this.normalizeQuantity(data.quantity);
-    const paymentMethod = String(data.paymentMethod || '').trim() as PaymentMethod;
+    const paymentMethod = String(
+      data.paymentMethod || '',
+    ).trim() as PaymentMethod;
     if (!['silver', 'cash'].includes(paymentMethod)) {
       throw new BadRequestException('请选择支付方式');
+    }
+    if (product.silverOnly && paymentMethod !== 'silver') {
+      throw new BadRequestException('该商品仅支持银币兑换');
     }
     if (paymentMethod === 'cash' && product.cashPrice == null) {
       throw new BadRequestException('该商品暂不支持现金购买');
     }
     const address = this.normalizeAddress(data);
     const totalSilver = product.silverPrice * quantity;
-    const totalCash = product.cashPrice == null ? null : product.cashPrice * quantity;
+    const totalCash =
+      product.cashPrice == null ? null : product.cashPrice * quantity;
     const orderSn = this.createOrderSn();
 
     const result = await this.dataSource.transaction(async (mgr) => {
@@ -245,7 +368,12 @@ export class ShopService implements OnModuleInit {
           receiver_phone = VALUES(receiver_phone),
           receiver_address = VALUES(receiver_address),
           updated_at = NOW()`,
-        [userId, address.receiverName, address.receiverPhone, address.receiverAddress],
+        [
+          userId,
+          address.receiverName,
+          address.receiverPhone,
+          address.receiverAddress,
+        ],
       );
 
       let currencyLogId: number | null = null;
@@ -297,6 +425,17 @@ export class ShopService implements OnModuleInit {
       fromUserId: userId,
       payload: { shopOrderId: result.id },
     });
+    await this.serviceNotificationService.notifyUser({
+      recipientId: userId,
+      type: 'shop_order_progress',
+      title: '商城订单处理中',
+      content: `你的商城订单「${product.title} x${quantity}」已提交，管理员处理中，请等待。`,
+      payload: {
+        shopOrderId: result.id,
+        orderSn: result.orderSn,
+        status: 'pending',
+      },
+    });
 
     return {
       id: result.id,
@@ -337,7 +476,16 @@ export class ShopService implements OnModuleInit {
         where.push(
           '(o.id = ? OR o.user_id = ? OR o.order_sn LIKE ? OR u.account LIKE ? OR u.nickname LIKE ? OR o.product_title LIKE ? OR o.receiver_name LIKE ? OR o.receiver_phone LIKE ?)',
         );
-        params.push(keywordNumber, keywordNumber, like, like, like, like, like, like);
+        params.push(
+          keywordNumber,
+          keywordNumber,
+          like,
+          like,
+          like,
+          like,
+          like,
+          like,
+        );
       } else {
         where.push(
           '(o.order_sn LIKE ? OR u.account LIKE ? OR u.nickname LIKE ? OR o.product_title LIKE ? OR o.receiver_name LIKE ? OR o.receiver_phone LIKE ?)',
@@ -409,9 +557,18 @@ export class ShopService implements OnModuleInit {
     if (!['approve', 'reject'].includes(action)) {
       throw new BadRequestException('请选择审核操作');
     }
-    const remark = String(data.remark || '').trim().slice(0, 200) || null;
-    const logisticsCompany = String(data.logisticsCompany || '').trim().slice(0, 80) || null;
-    const logisticsNo = String(data.logisticsNo || '').trim().slice(0, 100) || null;
+    const remark =
+      String(data.remark || '')
+        .trim()
+        .slice(0, 200) || null;
+    const logisticsCompany =
+      String(data.logisticsCompany || '')
+        .trim()
+        .slice(0, 80) || null;
+    const logisticsNo =
+      String(data.logisticsNo || '')
+        .trim()
+        .slice(0, 100) || null;
 
     const reviewed = await this.dataSource.transaction(async (mgr) => {
       const rows = await mgr.query(
@@ -420,7 +577,8 @@ export class ShopService implements OnModuleInit {
       );
       const order = rows?.[0];
       if (!order) throw new NotFoundException('订单不存在');
-      if (Number(order.status) !== 0) throw new BadRequestException('订单已处理');
+      if (Number(order.status) !== 0)
+        throw new BadRequestException('订单已处理');
 
       let refundLogId: number | null = null;
       if (action === 'reject' && order.payment_method === 'silver') {
@@ -479,7 +637,11 @@ export class ShopService implements OnModuleInit {
               remark ? `，原因：${remark}` : ''
             }`,
       fromUserId: operatorId || undefined,
-      payload: { shopOrderId: id, orderSn: reviewed.orderSn },
+      payload: {
+        shopOrderId: id,
+        orderSn: reviewed.orderSn,
+        status: action === 'approve' ? 'approved' : 'rejected',
+      },
     });
     return { message: action === 'approve' ? '订单已确认发货' : '订单已驳回' };
   }

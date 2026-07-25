@@ -47,6 +47,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _hasMore = true;
   int _page = 1;
   bool _isMuted = false;
+  bool _allMuted = false;
   bool _canManageMeeting = false;
   bool get _canManageGroup => _canManageMeeting;
   bool _isRecordingVoice = false;
@@ -405,20 +406,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
       final members = result ?? [];
       bool muted = false;
+      bool allMuted = false;
       bool canManageMeeting = false;
       for (final item in members) {
         final member = Map<String, dynamic>.from(item as Map);
         final userId = int.tryParse(member['userId']?.toString() ?? '') ?? 0;
         if (userId == myId) {
           muted = member['isMuted'] == true;
+          allMuted = member['allMuted'] == true;
           final role = int.tryParse(member['role']?.toString() ?? '') ?? 1;
           canManageMeeting = member['isOwner'] == true || role >= 2;
+          muted = muted || (allMuted && !canManageMeeting);
           break;
         }
       }
       if (mounted) {
         setState(() {
           _isMuted = muted;
+          _allMuted = allMuted;
           _canManageMeeting = canManageMeeting;
         });
       }
@@ -882,10 +887,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _openMeetingFromNotice(_MeetingNotice notice) async {
     try {
-      var meeting =
-          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
-                ApiEndpoints.groupMeetingActive(notice.groupId),
-              );
+      var meeting = await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+            ApiEndpoints.groupMeetingActive(notice.groupId),
+          );
       meeting = normalizeActiveMeeting(meeting);
       if (!mounted) return;
       final activeMeetingId =
@@ -916,48 +920,42 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       meeting = normalizeActiveMeeting(meeting);
       if (meeting == null) {
         if (!mounted) return;
-        // 所有成员都可以发起会议，普通成员需要消耗积分
-        String confirmText = '当前没有进行中的会议，是否立即发起？';
-        var needsCost = false;
-        var currentPoints = 0;
-        if (!_canManageMeeting) {
-          needsCost = true;
-          // 获取当前积分余额
-          try {
-            final balance = await ref
-                .read(apiClientProvider)
-                .get<Map<String, dynamic>>('/api/currency/balance');
-            currentPoints =
-                (double.tryParse(balance?['points']?.toString() ?? '0') ?? 0)
-                    .toInt();
-          } catch (_) {}
-          if (!mounted) return;
-          confirmText = '发起会议将消耗10000积分\n当前积分余额：$currentPoints';
+        final authState = ref.read(authProvider);
+        final account =
+            authState.user?.account ?? authState.profile?.user.account ?? '';
+        final isCustomerService = account.trim().toLowerCase() == 'admin';
+        if (!isCustomerService && !_canManageMeeting) {
+          Toast.warning(context, '仅群主或管理员可申请发起群会议');
+          return;
         }
         final start = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('发起群会议'),
-            content: Text(confirmText),
+            content: Text(isCustomerService
+                ? '当前没有进行中的会议，是否立即发起？'
+                : '提交后需等待客服审核，10分钟未处理将自动拒绝。是否提交申请？'),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
                   child: const Text('取消')),
               ElevatedButton(
                   onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('发起')),
+                  child: Text(isCustomerService ? '发起' : '提交申请')),
             ],
           ),
         );
         if (start != true) return;
-        if (needsCost && currentPoints < 10000) {
-          Toast.warning(context, '积分不足，无法发起会议');
+        final response =
+            await ref.read(apiClientProvider).post<Map<String, dynamic>>(
+          ApiEndpoints.groupMeetingStart(widget.conversationId),
+          data: {'title': '${widget.title}的会议'},
+        );
+        if (response?['approvalRequired'] == true) {
+          if (mounted) Toast.success(context, '会议申请已提交，请等待客服审核');
           return;
         }
-        meeting = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
-          ApiEndpoints.groupMeetingStart(widget.conversationId),
-          data: {'title': '${widget.title}的会议', 'confirmCost': needsCost},
-        );
+        meeting = response;
         if (meeting != null && mounted) _appendMeetingNoticeIfNeeded(meeting);
       }
       if (!mounted || meeting == null) return;
@@ -1581,7 +1579,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           controller: _inputCtrl,
                           enabled: !_isMuted,
                           decoration: InputDecoration(
-                            hintText: _isMuted ? '您已被禁言' : '输入消息...',
+                            hintText: _isMuted
+                                ? (_allMuted ? '全员禁言中' : '您已被禁言')
+                                : '输入消息...',
                             border: InputBorder.none,
                             contentPadding:
                                 const EdgeInsets.symmetric(horizontal: 12),

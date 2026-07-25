@@ -39,6 +39,15 @@ class _ShopPageState extends ConsumerState<ShopPage> {
 
   static const List<_ShopProduct> _products = [
     _ShopProduct(
+      key: 'cag',
+      title: 'CAG',
+      subtitle: '银币专属兑换',
+      imageName: '28c6042b-83b9-423f-89a3-8b5042532853.png',
+      cashPrice: null,
+      silverOnly: true,
+      comingSoon: true,
+    ),
+    _ShopProduct(
       key: 'health-ring',
       title: '云芯智能健康指环',
       subtitle: '血压血氧心电、血脂尿酸、睡眠监测',
@@ -85,7 +94,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
       key: 'ai-companion-robot',
       title: '云芯 AI 伴侣机器人',
       subtitle: '可定制专属脸模与声音，支持陪伴互动、日程提醒和情绪交流',
-      imageName: '9da8bf4b-bdb6-4783-8041-ab01ffb146e0.jpg',
+      imageName: 'a7246507-baef-40e4-88be-cdc79ccf5700.png',
       imageFit: BoxFit.contain,
       cashPrice: 61668,
     ),
@@ -158,9 +167,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
         setState(() {});
         _controller
           ..setLooping(true)
-          ..setVolume(0)
-          ..play();
-        _autoHideControls();
+          ..setVolume(0);
       }).catchError((_) {
         if (mounted) setState(() => _hasError = true);
       });
@@ -426,6 +433,10 @@ class _ShopPageState extends ConsumerState<ShopPage> {
   }
 
   Future<void> _showOrderDialog(_ShopProduct product) async {
+    if (product.silverOnly && product.comingSoon) {
+      await _showComingSoonSilverDialog(product);
+      return;
+    }
     final imageAsset = product.imageName == null
         ? null
         : _productImageAsset(product.imageName!);
@@ -668,6 +679,124 @@ class _ShopPageState extends ConsumerState<ShopPage> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Future<void> _showComingSoonSilverDialog(_ShopProduct product) async {
+    final imageAsset = product.imageName == null
+        ? null
+        : _productImageAsset(product.imageName!);
+    var quantity = 1;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => Dialog(
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        product.title,
+                        style: const TextStyle(
+                          color: Color(0xFF101828),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                      tooltip: '关闭',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    height: 210,
+                    child: _buildOrderImage(imageAsset, fit: product.imageFit),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF4F7FB),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFD7DFEA)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.toll_rounded, color: Color(0xFF667085)),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '银币兑换',
+                          style: TextStyle(
+                            color: Color(0xFF344054),
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '购买数量',
+                        style: TextStyle(
+                          color: Color(0xFF344054),
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: quantity > 1
+                          ? () => setDialogState(() => quantity--)
+                          : null,
+                      icon: const Icon(Icons.remove_rounded),
+                      tooltip: '减少数量',
+                    ),
+                    SizedBox(
+                      width: 44,
+                      child: Text(
+                        '$quantity',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: quantity < 99
+                          ? () => setDialogState(() => quantity++)
+                          : null,
+                      icon: const Icon(Icons.add_rounded),
+                      tooltip: '增加数量',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1266,18 +1395,17 @@ class _ProductCardState extends State<_ProductCard> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          widget.product.cashPrice == null
-                              ? '价格待定'
-                              : '¥${_formatShopAmount(widget.product.cashPrice!)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFFFF4D24),
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
+                        if (widget.product.cashPrice != null)
+                          Text(
+                            '¥${_formatShopAmount(widget.product.cashPrice!)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFFF4D24),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
-                        ),
                         const Spacer(),
                         const SizedBox(height: 8),
                         SizedBox(
@@ -1288,10 +1416,10 @@ class _ProductCardState extends State<_ProductCard> {
                               color: const Color(0xFFFF4D24),
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: const Center(
+                            child: Center(
                               child: Text(
-                                '订购',
-                                style: TextStyle(
+                                widget.product.silverOnly ? '兑换' : '订购',
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 14,
                                   fontWeight: FontWeight.w800,
@@ -1361,6 +1489,8 @@ class _ShopProduct {
     this.imageFit = BoxFit.cover,
     this.cashPrice,
     this.silverPrice = _ShopPageState._defaultSilverPrice,
+    this.silverOnly = false,
+    this.comingSoon = false,
   });
 
   final String key;
@@ -1370,4 +1500,6 @@ class _ShopProduct {
   final BoxFit imageFit;
   final int? cashPrice;
   final int silverPrice;
+  final bool silverOnly;
+  final bool comingSoon;
 }

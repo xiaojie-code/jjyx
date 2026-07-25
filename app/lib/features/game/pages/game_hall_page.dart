@@ -1205,18 +1205,31 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       final token = TokenStorage.getToken() ?? '';
       final isHorse2 =
           _isHorse2Game(game) || _bundledH5GameKey(safeRawUrl) == 'saima2';
+      final isFishing =
+          _isFishingGame(game) || _bundledH5GameKey(safeRawUrl) == 'fishing';
+      final entryFeeCharged = startResult?['entryFeeCharged'] == true;
+      final entryFeeAmount = _asDouble(startResult?['entryFeeAmount']);
+      final entryFeePaidToday = startResult?['entryFeePaidToday'] == true;
+      final extraParams = <String, String>{};
+      if (isHorse2) {
+        extraParams.addAll({
+          'token': token,
+          'appUserId': user.id.toString(),
+          'account': user.account,
+          'nickname': user.nickname.isNotEmpty ? user.nickname : user.account,
+        });
+      }
+      if (isFishing) {
+        extraParams.addAll({
+          'entryFeeCharged': entryFeeCharged ? '1' : '0',
+          'entryFeeAmount': entryFeeAmount.toString(),
+          'entryFeePaidToday': entryFeePaidToday ? '1' : '0',
+        });
+      }
       final gameUrl = _resolveGameUrl(
         safeRawUrl,
         gameId,
-        extraParams: isHorse2
-            ? {
-                'token': token,
-                'appUserId': user.id.toString(),
-                'account': user.account,
-                'nickname':
-                    user.nickname.isNotEmpty ? user.nickname : user.account,
-              }
-            : const {},
+        extraParams: extraParams,
       );
       final orientation =
           (startResult?['orientation'] ?? game['orientation'] ?? 'landscape')
@@ -1260,6 +1273,9 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
                 avatar: user.avatar,
                 points: points,
                 gameId: gameId,
+                entryFeeCharged: isFishing ? entryFeeCharged : null,
+                entryFeeAmount: isFishing ? entryFeeAmount : null,
+                entryFeePaidToday: isFishing ? entryFeePaidToday : null,
               ),
               jsBridge: jsBridge,
               onExit: closeGameRoute,

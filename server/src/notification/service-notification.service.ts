@@ -27,6 +27,7 @@ export class ServiceNotificationService implements OnModuleInit {
   async onModuleInit() {
     await this.ensureTable();
     await this.backfillPendingAdminNotifications();
+    await this.backfillPendingUserProgressNotifications();
   }
 
   private async ensureTable() {
@@ -92,6 +93,144 @@ export class ServiceNotificationService implements OnModuleInit {
       await this.backfillPendingWithdrawals(recipientId);
       await this.backfillPendingGroups(recipientId);
       await this.backfillPendingRecharges(recipientId);
+    }
+  }
+
+  /** 为升级前已经提交、仍在审核中的业务补齐用户侧进度通知。 */
+  private async backfillPendingUserProgressNotifications() {
+    const tasks: Array<() => Promise<void>> = [
+      async () => {
+        const rows = await this.dataSource.query(
+          `SELECT id, creator_id, name, created_at
+           FROM conversations
+           WHERE type = 2 AND status = 0 AND creator_id > 0
+           ORDER BY id DESC LIMIT 500`,
+        );
+        for (const row of rows) {
+          await this.insertIfMissing({
+            recipientId: Number(row.creator_id),
+            type: 'group_progress',
+            title: '建群申请处理中',
+            content: `你创建群聊「${row.name || '群聊'}」的申请已发送，管理员处理中，请等待。`,
+            payload: {
+              conversationId: Number(row.id),
+              status: 'pending',
+            },
+            createdAt: row.created_at,
+          });
+        }
+      },
+      async () => {
+        const rows = await this.dataSource.query(
+          `SELECT id, user_id, amount, created_at
+           FROM withdrawals
+           WHERE status = 0
+           ORDER BY id DESC LIMIT 500`,
+        );
+        for (const row of rows) {
+          await this.insertIfMissing({
+            recipientId: Number(row.user_id),
+            type: 'withdrawal_progress',
+            title: '提现申请处理中',
+            content: `你的 ${Number(row.amount || 0)} 元提现申请已提交，管理员处理中，请等待。`,
+            payload: {
+              withdrawalId: Number(row.id),
+              status: 'pending',
+            },
+            createdAt: row.created_at,
+          });
+        }
+      },
+      async () => {
+        const rows = await this.dataSource.query(
+          `SELECT id, user_id, amount, created_at
+           FROM asset_withdrawals
+           WHERE status = 0
+           ORDER BY id DESC LIMIT 500`,
+        );
+        for (const row of rows) {
+          await this.insertIfMissing({
+            recipientId: Number(row.user_id),
+            type: 'asset_withdrawal_progress',
+            title: '资产包提现处理中',
+            content: `你的资产包提现 ${Number(row.amount || 0)} 元申请已提交，管理员处理中，请等待。`,
+            payload: {
+              assetWithdrawalId: Number(row.id),
+              status: 'pending',
+            },
+            createdAt: row.created_at,
+          });
+        }
+      },
+      async () => {
+        const rows = await this.dataSource.query(
+          `SELECT id, user_id, amount, created_at
+           FROM recharge_orders
+           WHERE status = 0
+           ORDER BY id DESC LIMIT 500`,
+        );
+        for (const row of rows) {
+          await this.insertIfMissing({
+            recipientId: Number(row.user_id),
+            type: 'recharge_progress',
+            title: '充值申请处理中',
+            content: `你的 ${Number(row.amount || 0)} 元充值申请已提交，管理员处理中，请等待。`,
+            payload: { orderId: Number(row.id), status: 'pending' },
+            createdAt: row.created_at,
+          });
+        }
+      },
+      async () => {
+        const rows = await this.dataSource.query(
+          `SELECT id, user_id, amount, created_at
+           FROM asset_recharge_orders
+           WHERE status = 0
+           ORDER BY id DESC LIMIT 500`,
+        );
+        for (const row of rows) {
+          await this.insertIfMissing({
+            recipientId: Number(row.user_id),
+            type: 'asset_recharge_progress',
+            title: '资产包充值处理中',
+            content: `你的资产包充值 ${Number(row.amount || 0)} 元申请已提交，管理员处理中，请等待。`,
+            payload: {
+              assetRechargeId: Number(row.id),
+              status: 'pending',
+            },
+            createdAt: row.created_at,
+          });
+        }
+      },
+      async () => {
+        const rows = await this.dataSource.query(
+          `SELECT id, user_id, product_title, quantity, created_at
+           FROM shop_orders
+           WHERE status = 0
+           ORDER BY id DESC LIMIT 500`,
+        );
+        for (const row of rows) {
+          await this.insertIfMissing({
+            recipientId: Number(row.user_id),
+            type: 'shop_order_progress',
+            title: '商城订单处理中',
+            content: `你的商城订单「${row.product_title || '商品'} x${Number(row.quantity || 1)}」已提交，管理员处理中，请等待。`,
+            payload: {
+              shopOrderId: Number(row.id),
+              status: 'pending',
+            },
+            createdAt: row.created_at,
+          });
+        }
+      },
+    ];
+
+    for (const task of tasks) {
+      try {
+        await task();
+      } catch (e) {
+        // 某个业务表尚未部署时不影响其他通知和主服务启动。
+        this.logger.warn(`回填用户业务进度通知失败：${String(e)}`);
+      }
     }
   }
 
