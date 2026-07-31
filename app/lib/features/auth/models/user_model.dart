@@ -76,12 +76,14 @@ class CurrencyModel {
 class ProfileModel {
   final UserModel user;
   final int shares;
+  final int totalUserCount;
   final String inviteCode;
   final CurrencyModel? currency;
 
   ProfileModel({
     required this.user,
     required this.shares,
+    required this.totalUserCount,
     required this.inviteCode,
     this.currency,
   });
@@ -98,6 +100,8 @@ class ProfileModel {
         activationAmount: (json['activationAmount'] as num?)?.toDouble(),
       ),
       shares: json['shares'] as int? ?? 0,
+      totalUserCount:
+          int.tryParse(json['totalUserCount']?.toString() ?? '') ?? 0,
       inviteCode: json['inviteCode'] as String? ?? '',
       currency: json['currency'] != null
           ? CurrencyModel.fromJson(json['currency'])

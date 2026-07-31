@@ -11,6 +11,16 @@ import { ServiceNotificationService } from '../notification/service-notification
 type PaymentMethod = 'silver' | 'cash';
 type ReviewAction = 'approve' | 'reject';
 
+type CagExchangeConfig = {
+  enabled: boolean;
+  silverPrice: number;
+  startAt: string;
+  endAt: string;
+  userLimit: number;
+  isActive: boolean;
+  unavailableReason: string;
+};
+
 type ShopProduct = {
   key: string;
   title: string;
@@ -22,6 +32,13 @@ type ShopProduct = {
 };
 
 const DEFAULT_SILVER_PRICE = 1000;
+const CAG_CONFIG = {
+  enabled: 'shop_cag_exchange_enabled',
+  silverPrice: 'shop_cag_silver_price',
+  startAt: 'shop_cag_exchange_start_at',
+  endAt: 'shop_cag_exchange_end_at',
+  userLimit: 'shop_cag_user_limit',
+} as const;
 const SHOP_PRODUCTS: ShopProduct[] = [
   {
     key: 'cag',
@@ -151,6 +168,7 @@ export class ShopService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureTables();
+    await this.ensureCagConfigs();
   }
 
   private async ensureTables() {
@@ -265,15 +283,202 @@ export class ShopService implements OnModuleInit {
     return rows?.[0]?.value ?? defaultValue;
   }
 
+  private async ensureCagConfigs() {
+    const defaults = [
+      {
+        key: CAG_CONFIG.enabled,
+        name: 'CAG兑换开关',
+        value: 'false',
+        description: '开启后，用户可在商城使用银币兑换CAG',
+      },
+      {
+        key: CAG_CONFIG.silverPrice,
+        name: 'CAG银币兑换比例',
+        value: '1000',
+        description: '兑换1个CAG需要消耗的银币数量',
+      },
+      {
+        key: CAG_CONFIG.startAt,
+        name: 'CAG兑换开始时间',
+        value: '',
+        description: '留空表示不限制开始时间',
+      },
+      {
+        key: CAG_CONFIG.endAt,
+        name: 'CAG兑换结束时间',
+        value: '',
+        description: '留空表示不限制结束时间',
+      },
+      {
+        key: CAG_CONFIG.userLimit,
+        name: 'CAG单用户兑换上限',
+        value: '1',
+        description: '单个用户在活动期间最多可兑换的数量，0表示不限制',
+      },
+    ];
+    for (const item of defaults) {
+      await this.dataSource.query(
+        `INSERT INTO system_configs
+          (config_key, config_name, config_value, description, updated_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE config_key = VALUES(config_key)`,
+        [item.key, item.name, item.value, item.description],
+      );
+    }
+  }
+
+  private parseConfigDate(value: string) {
+    if (!value) return null;
+    const date = new Date(value.includes('T') ? value : value.replace(' ', 'T'));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private async readCagConfig(): Promise<CagExchangeConfig> {
+    const rows = await this.dataSource.query(
+      `SELECT config_key AS configKey, config_value AS configValue
+       FROM system_configs
+       WHERE config_key IN (?, ?, ?, ?, ?)`,
+      [
+        CAG_CONFIG.enabled,
+        CAG_CONFIG.silverPrice,
+        CAG_CONFIG.startAt,
+        CAG_CONFIG.endAt,
+        CAG_CONFIG.userLimit,
+      ],
+    );
+    const values = new Map<string, string>(
+      rows.map((row: any) => [String(row.configKey), String(row.configValue ?? '')]),
+    );
+    const enabled = values.get(CAG_CONFIG.enabled) === 'true';
+    const silverPrice = Math.max(
+      0,
+      Math.floor(Number(values.get(CAG_CONFIG.silverPrice) || 0)),
+    );
+    const startAt = values.get(CAG_CONFIG.startAt) || '';
+    const endAt = values.get(CAG_CONFIG.endAt) || '';
+    const userLimit = Math.max(
+      0,
+      Math.floor(Number(values.get(CAG_CONFIG.userLimit) || 0)),
+    );
+    const now = Date.now();
+    const startTime = this.parseConfigDate(startAt)?.getTime() ?? null;
+    const endTime = this.parseConfigDate(endAt)?.getTime() ?? null;
+    let unavailableReason = '';
+    if (!enabled) unavailableReason = 'CAG兑换当前未开启';
+    else if (silverPrice <= 0) unavailableReason = 'CAG银币兑换比例尚未配置';
+    else if (startTime != null && now < startTime)
+      unavailableReason = 'CAG兑换活动尚未开始';
+    else if (endTime != null && now > endTime)
+      unavailableReason = 'CAG兑换活动已结束';
+    return {
+      enabled,
+      silverPrice,
+      startAt,
+      endAt,
+      userLimit,
+      isActive: unavailableReason === '',
+      unavailableReason,
+    };
+  }
+
+  private getCagPeriodFilter(config: CagExchangeConfig, column = 'created_at') {
+    const conditions: string[] = [];
+    const params: string[] = [];
+    if (config.startAt) {
+      conditions.push(`${column} >= ?`);
+      params.push(config.startAt);
+    }
+    if (config.endAt) {
+      conditions.push(`${column} <= ?`);
+      params.push(config.endAt);
+    }
+    return {
+      sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '',
+      params,
+    };
+  }
+
+  private async getUserCagExchangedQuantity(
+    userId: number,
+    config: CagExchangeConfig,
+  ) {
+    if (!userId) return 0;
+    const period = this.getCagPeriodFilter(config);
+    const rows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(quantity), 0) AS quantity
+       FROM shop_orders
+       WHERE user_id = ? AND product_key = 'cag' AND status IN (0, 1)
+       ${period.sql}`,
+      [userId, ...period.params],
+    );
+    return Number(rows?.[0]?.quantity || 0);
+  }
+
+  async getCagConfig() {
+    const config = await this.readCagConfig();
+    const rows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(quantity), 0) AS exchangedQuantity,
+              COUNT(DISTINCT user_id) AS exchangedUsers
+       FROM shop_orders
+       WHERE product_key = 'cag' AND status IN (0, 1)`,
+    );
+    return {
+      ...config,
+      exchangedQuantity: Number(rows?.[0]?.exchangedQuantity || 0),
+      exchangedUsers: Number(rows?.[0]?.exchangedUsers || 0),
+    };
+  }
+
+  async updateCagConfig(data: any) {
+    const enabled = data?.enabled === true || data?.enabled === 'true';
+    const silverPrice = Math.floor(Number(data?.silverPrice));
+    const userLimit = Math.floor(Number(data?.userLimit));
+    const startAt = String(data?.startAt || '').trim();
+    const endAt = String(data?.endAt || '').trim();
+    if (!Number.isInteger(silverPrice) || silverPrice <= 0) {
+      throw new BadRequestException('CAG银币兑换比例必须是大于0的整数');
+    }
+    if (!Number.isInteger(userLimit) || userLimit < 0) {
+      throw new BadRequestException('单用户兑换上限必须是大于等于0的整数');
+    }
+    const startDate = this.parseConfigDate(startAt);
+    const endDate = this.parseConfigDate(endAt);
+    if (startAt && !startDate)
+      throw new BadRequestException('CAG兑换开始时间格式不正确');
+    if (endAt && !endDate)
+      throw new BadRequestException('CAG兑换结束时间格式不正确');
+    if (startDate && endDate && endDate.getTime() <= startDate.getTime()) {
+      throw new BadRequestException('CAG兑换结束时间必须晚于开始时间');
+    }
+    const updates = [
+      [CAG_CONFIG.enabled, String(enabled)],
+      [CAG_CONFIG.silverPrice, String(silverPrice)],
+      [CAG_CONFIG.startAt, startAt],
+      [CAG_CONFIG.endAt, endAt],
+      [CAG_CONFIG.userLimit, String(userLimit)],
+    ];
+    await this.dataSource.transaction(async (mgr) => {
+      for (const [key, value] of updates) {
+        await mgr.query(
+          `UPDATE system_configs SET config_value = ?, updated_at = NOW()
+           WHERE config_key = ?`,
+          [value, key],
+        );
+      }
+    });
+    return this.getCagConfig();
+  }
+
   private mapOrder(row: any) {
     const status = Number(row.status || 0);
+    const productKey = row.productKey ?? row.product_key;
     return {
       id: Number(row.id),
       orderSn: row.orderSn || row.order_sn,
       userId: Number(row.userId ?? row.user_id),
       userAccount: row.userAccount ?? row.user_account ?? null,
       userNickname: row.userNickname ?? row.user_nickname ?? null,
-      productKey: row.productKey ?? row.product_key,
+      productKey,
       productTitle: row.productTitle ?? row.product_title,
       productImage: row.productImage ?? row.product_image,
       paymentMethod: row.paymentMethod ?? row.payment_method,
@@ -297,7 +502,13 @@ export class ShopService implements OnModuleInit {
       receiverAddress: row.receiverAddress ?? row.receiver_address,
       status,
       statusText:
-        status === 0 ? '待审核' : status === 1 ? '已确认发货' : '已驳回',
+        status === 0
+          ? '待审核'
+          : status === 1
+            ? productKey === 'cag'
+              ? '兑换已确认'
+              : '已确认发货'
+            : '已驳回',
       adminRemark: row.adminRemark ?? row.admin_remark,
       logisticsCompany: row.logisticsCompany ?? row.logistics_company,
       logisticsNo: row.logisticsNo ?? row.logistics_no,
@@ -309,8 +520,33 @@ export class ShopService implements OnModuleInit {
     };
   }
 
-  async getCatalog() {
-    return SHOP_PRODUCTS;
+  async getCatalog(userId?: number) {
+    const cagConfig = await this.readCagConfig();
+    const exchangedQuantity = userId
+      ? await this.getUserCagExchangedQuantity(userId, cagConfig)
+      : 0;
+    const remainingLimit =
+      cagConfig.userLimit > 0
+        ? Math.max(0, cagConfig.userLimit - exchangedQuantity)
+        : null;
+    return SHOP_PRODUCTS.map((product) => {
+      if (product.key !== 'cag') return product;
+      const limitReached = remainingLimit != null && remainingLimit <= 0;
+      return {
+        ...product,
+        silverPrice: cagConfig.silverPrice,
+        available: cagConfig.isActive && !limitReached,
+        exchangeEnabled: cagConfig.enabled,
+        exchangeStartAt: cagConfig.startAt,
+        exchangeEndAt: cagConfig.endAt,
+        userLimit: cagConfig.userLimit,
+        exchangedQuantity,
+        remainingLimit,
+        unavailableReason: limitReached
+          ? '你已达到本次CAG兑换上限'
+          : cagConfig.unavailableReason,
+      };
+    });
   }
 
   async getPaymentInfo() {
@@ -335,7 +571,17 @@ export class ShopService implements OnModuleInit {
   }
 
   async createOrder(userId: number, data: any) {
-    const product = this.getProduct(data.productKey);
+    const baseProduct = this.getProduct(data.productKey);
+    const product = { ...baseProduct };
+    let cagConfig: CagExchangeConfig | null = null;
+    if (product.key === 'cag') {
+      cagConfig = await this.readCagConfig();
+      if (!cagConfig.isActive) {
+        throw new BadRequestException(cagConfig.unavailableReason);
+      }
+      product.available = true;
+      product.silverPrice = cagConfig.silverPrice;
+    }
     if (product.available === false) {
       throw new BadRequestException('该商品暂未开放');
     }
@@ -352,29 +598,55 @@ export class ShopService implements OnModuleInit {
     if (paymentMethod === 'cash' && product.cashPrice == null) {
       throw new BadRequestException('该商品暂不支持现金购买');
     }
-    const address = this.normalizeAddress(data);
+    const address =
+      product.key === 'cag'
+        ? { receiverName: '', receiverPhone: '', receiverAddress: '' }
+        : this.normalizeAddress(data);
     const totalSilver = product.silverPrice * quantity;
     const totalCash =
       product.cashPrice == null ? null : product.cashPrice * quantity;
     const orderSn = this.createOrderSn();
 
     const result = await this.dataSource.transaction(async (mgr) => {
-      await mgr.query(
-        `INSERT INTO shop_addresses
-          (user_id, receiver_name, receiver_phone, receiver_address, created_at, updated_at)
-         VALUES (?, ?, ?, ?, NOW(), NOW())
-         ON DUPLICATE KEY UPDATE
-          receiver_name = VALUES(receiver_name),
-          receiver_phone = VALUES(receiver_phone),
-          receiver_address = VALUES(receiver_address),
-          updated_at = NOW()`,
-        [
-          userId,
-          address.receiverName,
-          address.receiverPhone,
-          address.receiverAddress,
-        ],
-      );
+      if (product.key === 'cag') {
+        await mgr.query(`SELECT id FROM users WHERE id = ? FOR UPDATE`, [userId]);
+        if (cagConfig && cagConfig.userLimit > 0) {
+          const period = this.getCagPeriodFilter(cagConfig);
+          const rows = await mgr.query(
+            `SELECT COALESCE(SUM(quantity), 0) AS quantity
+             FROM shop_orders
+             WHERE user_id = ? AND product_key = 'cag' AND status IN (0, 1)
+             ${period.sql}`,
+            [userId, ...period.params],
+          );
+          const exchanged = Number(rows?.[0]?.quantity || 0);
+          if (exchanged + quantity > cagConfig.userLimit) {
+            const remaining = Math.max(0, cagConfig.userLimit - exchanged);
+            throw new BadRequestException(
+              remaining > 0
+                ? `本次最多还可兑换${remaining}个CAG`
+                : '你已达到本次CAG兑换上限',
+            );
+          }
+        }
+      } else {
+        await mgr.query(
+          `INSERT INTO shop_addresses
+            (user_id, receiver_name, receiver_phone, receiver_address, created_at, updated_at)
+           VALUES (?, ?, ?, ?, NOW(), NOW())
+           ON DUPLICATE KEY UPDATE
+            receiver_name = VALUES(receiver_name),
+            receiver_phone = VALUES(receiver_phone),
+            receiver_address = VALUES(receiver_address),
+            updated_at = NOW()`,
+          [
+            userId,
+            address.receiverName,
+            address.receiverPhone,
+            address.receiverAddress,
+          ],
+        );
+      }
 
       let currencyLogId: number | null = null;
       if (paymentMethod === 'silver') {
@@ -618,6 +890,7 @@ export class ShopService implements OnModuleInit {
       return {
         userId: Number(order.user_id),
         orderSn: String(order.order_sn || ''),
+        productKey: String(order.product_key || ''),
         productTitle: String(order.product_title || ''),
         quantity: Number(order.quantity || 0),
       };
@@ -625,11 +898,18 @@ export class ShopService implements OnModuleInit {
     await this.serviceNotificationService.notifyUser({
       recipientId: reviewed.userId,
       type: 'shop_order_result',
-      title: action === 'approve' ? '商城订单已发货' : '商城订单已驳回',
+      title:
+        action === 'approve'
+          ? reviewed.productKey === 'cag'
+            ? 'CAG兑换已确认'
+            : '商城订单已发货'
+          : '商城订单已驳回',
       content:
         action === 'approve'
-          ? `您的商城订单${reviewed.orderSn}已确认发货：${reviewed.productTitle} x${reviewed.quantity}${
-              logisticsCompany || logisticsNo
+          ? `您的商城订单${reviewed.orderSn}${
+              reviewed.productKey === 'cag' ? '已确认兑换' : '已确认发货'
+            }：${reviewed.productTitle} x${reviewed.quantity}${
+              reviewed.productKey !== 'cag' && (logisticsCompany || logisticsNo)
                 ? `，物流：${logisticsCompany || ''} ${logisticsNo || ''}`
                 : ''
             }`
@@ -643,6 +923,13 @@ export class ShopService implements OnModuleInit {
         status: action === 'approve' ? 'approved' : 'rejected',
       },
     });
-    return { message: action === 'approve' ? '订单已确认发货' : '订单已驳回' };
+    return {
+      message:
+        action === 'approve'
+          ? reviewed.productKey === 'cag'
+            ? 'CAG兑换已确认'
+            : '订单已确认发货'
+          : '订单已驳回',
+    };
   }
 }

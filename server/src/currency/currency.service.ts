@@ -32,11 +32,12 @@ const WEEKLY_POINT_RETURN_SWITCH_KEY = 'weekly_point_return';
 const WEEKLY_POINT_RETURN_MULTIPLIER_KEY = 'weekly_point_return_multiplier';
 const WEEKLY_POINT_RETURN_DAILY_RATE_KEY = 'weekly_point_return_daily_rate';
 const WEEKLY_POINT_RETURN_STARTED_AT_KEY = 'weekly_point_return_started_at';
-const WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES = [
+export const WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES = [
   'group_create',
   'group_create_cost',
   'meeting_start',
 ];
+export const WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES = ['game_entry'];
 const WEEKLY_POINT_RETURN_BATCH_SIZE = 100;
 const DIRECT_GAME_REWARD_SWITCH_KEY = 'direct_game_reward';
 const DIRECT_GAME_REWARD_RATE_KEY = 'direct_game_reward_rate';
@@ -51,6 +52,8 @@ const SILVER_SYNTHESIS_POINTS_KEY = 'silver_synthesis_points_per_coin';
 const SILVER_SYNTHESIS_POINTS_DEFAULT = 5000;
 const LOW_TIER_SILVER_SYNTHESIS_POINTS = 20000;
 const GOLD_EXCHANGE_RATE_KEY = 'gold_exchange_rate';
+const PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY =
+  'profile_total_user_count_override';
 const GOLD_TRADE_DEPOSIT = 100;
 const GOLD_TRADE_FEE_RATE = 0.05;
 const COPPER_TRADE_DEPOSIT_RATE = 1;
@@ -2772,6 +2775,7 @@ export class CurrencyService {
       'recharge',
       'meeting',
       'ai',
+      'profile',
       'other',
     ];
     const categoryNames: Record<string, string> = {
@@ -2781,6 +2785,7 @@ export class CurrencyService {
       recharge: '充值管理',
       meeting: '会议社交',
       ai: '云AI',
+      profile: '用户展示',
       other: '其他配置',
     };
     const getCategory = (key: string) => {
@@ -2808,9 +2813,12 @@ export class CurrencyService {
       if (key.startsWith('meeting_') || key === 'data_retention_days')
         return 'meeting';
       if (key.startsWith('ai_')) return 'ai';
+      if (key === PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY) return 'profile';
       return 'other';
     };
-    const configs = await this.configRepo.find();
+    const configs = (await this.configRepo.find()).filter(
+      (config) => !config.configKey.startsWith('shop_cag_'),
+    );
     return configs
       .map((config) => {
         const category = getCategory(config.configKey);
@@ -2831,6 +2839,7 @@ export class CurrencyService {
 
   /** 更新配置 */
   async updateConfig(key: string, value: string) {
+    let configValue = value == null ? '' : String(value);
     const positiveIntegerKeys = new Set([
       WITHDRAW_COPPER_GOLD_UNIT_KEY,
       WITHDRAW_COPPER_COST_PER_UNIT_KEY,
@@ -2850,7 +2859,17 @@ export class CurrencyService {
         throw new BadRequestException('金币兑换比例必须是大于0的数字');
       }
     }
-    await this.configRepo.update({ configKey: key }, { configValue: value });
+    if (key === PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY) {
+      configValue = configValue.trim();
+      if (configValue && !/^\d+$/.test(configValue)) {
+        throw new BadRequestException('总用户数只能留空或填写非负整数');
+      }
+      const parsed = Number(configValue);
+      if (configValue && !Number.isSafeInteger(parsed)) {
+        throw new BadRequestException('总用户数超出可支持的整数范围');
+      }
+    }
+    await this.configRepo.update({ configKey: key }, { configValue });
     if (key === SILVER_SYNTHESIS_POINTS_KEY) {
       await this.ensureDefaultSynthesisConfigs();
     }
@@ -2946,6 +2965,13 @@ export class CurrencyService {
         configValue: String(SILVER_SYNTHESIS_POINTS_DEFAULT),
         description:
           '2000档及非500档账户合成1个银币需要消耗的积分数量；500档固定为20000积分',
+      },
+      {
+        configKey: PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY,
+        configName: 'APP总用户数展示值',
+        configValue: '',
+        description:
+          '留空时显示当前真实注册用户数；填写非负整数后，APP“我的”页面显示该手动数值',
       },
       {
         configKey: 'meeting_start_cost',
@@ -3107,15 +3133,19 @@ export class CurrencyService {
     const excludedPlaceholders = WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES.map(
       () => '?',
     ).join(', ');
+    const alwaysEligiblePlaceholders =
+      WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES.map(() => '?').join(', ');
     return this.dataSource.query(
       `SELECT
          user_id AS userId,
          ROUND(SUM(CASE
-           WHEN log_type IN (${excludedPlaceholders}) THEN ABS(amount)
+           WHEN log_type IN (${excludedPlaceholders})
+             AND log_type NOT IN (${alwaysEligiblePlaceholders}) THEN ABS(amount)
            ELSE 0
          END), 6) AS excludedConsumed,
          ROUND(SUM(CASE
-           WHEN log_type NOT IN (${excludedPlaceholders}) THEN ABS(amount)
+           WHEN log_type IN (${alwaysEligiblePlaceholders})
+             OR log_type NOT IN (${excludedPlaceholders}) THEN ABS(amount)
            ELSE 0
          END), 6) AS eligibleConsumed
        FROM currency_logs
@@ -3126,6 +3156,8 @@ export class CurrencyService {
        GROUP BY user_id`,
       [
         ...WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES,
+        ...WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES,
+        ...WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES,
         ...WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES,
         this.formatLocalDateTime(startAt),
         this.formatLocalDateTime(endAt),

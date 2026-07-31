@@ -8,7 +8,9 @@ class Toast {
     bool isError = false,
     Duration duration = const Duration(seconds: 3),
   }) {
-    final overlay = Overlay.of(context);
+    // Dialogs are pushed onto the root navigator. Use the root overlay so
+    // notifications from pages inside a shell navigator stay above them.
+    final overlay = Overlay.of(context, rootOverlay: true);
     final entry = OverlayEntry(
       builder: (context) => _ToastWidget(
         message: message,

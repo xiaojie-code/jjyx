@@ -73,6 +73,7 @@ const categoryOptions = [
   { key: 'recharge', name: '充值管理' },
   { key: 'meeting', name: '会议社交' },
   { key: 'ai', name: '云AI' },
+  { key: 'profile', name: '用户展示' },
   { key: 'other', name: '其他配置' },
 ]
 

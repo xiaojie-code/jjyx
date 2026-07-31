@@ -169,7 +169,11 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     ),
                     const SizedBox(height: 16),
                     if (currency != null) ...[
-                      _buildCurrencyGrid(currency, profile!.shares),
+                      _buildCurrencyGrid(
+                        currency,
+                        profile!.shares,
+                        profile.totalUserCount,
+                      ),
                       const SizedBox(height: 16),
                     ],
                     _buildMenuItem(
@@ -238,7 +242,11 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     );
   }
 
-  Widget _buildCurrencyGrid(dynamic currency, int shares) {
+  Widget _buildCurrencyGrid(
+    dynamic currency,
+    int shares,
+    int totalUserCount,
+  ) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -249,8 +257,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         children: [
           Row(
             children: [
-              _currencyItem('持股数', shares.toDouble()),
+              _currencyItem('持股数', shares),
               _currencyItem('积分', currency.points, onTap: _showPointLogs),
+              _currencyItem('总用户数', totalUserCount),
             ],
           ),
           const SizedBox(height: 8),
@@ -266,7 +275,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     );
   }
 
-  Widget _currencyItem(String label, double value, {VoidCallback? onTap}) {
+  Widget _currencyItem(String label, num value, {VoidCallback? onTap}) {
     return Expanded(
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
@@ -275,11 +284,17 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
           padding: const EdgeInsets.symmetric(vertical: 4),
           child: Column(
             children: [
-              Text(
-                value.truncate().toString(),
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+              SizedBox(
+                height: 22,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    value.truncate().toString(),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 2),

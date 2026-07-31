@@ -68,6 +68,7 @@ class ApiEndpoints {
   static const String rechargeOrders = '/api/recharge/orders';
 
   // ==================== 商城 ====================
+  static const String shopCatalog = '/api/shop/catalog';
   static const String shopPaymentInfo = '/api/shop/payment-info';
   static const String shopAddress = '/api/shop/address';
   static const String shopOrders = '/api/shop/orders';

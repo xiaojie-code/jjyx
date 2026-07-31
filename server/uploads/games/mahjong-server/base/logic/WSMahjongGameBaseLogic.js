@@ -320,7 +320,10 @@ const GameBtnCallBackMixin = {
      */
     trusteeship(uid) {
         let index = this.find_user_index(uid);
+        if (index < 0 || !this.room_seats[index]) return;
         this.room_seats[index].is_trusteeship = true;
+        // A room without robot seats may not have an automation scheduler yet.
+        this.startAIScheduler();
         this.on_trusteepship(index);
         this.sendMsg(wsMsgKeyEnum.update_room_info_all);
     },
@@ -331,7 +334,12 @@ const GameBtnCallBackMixin = {
      */
     cancel_trusteepship(uid) {
         let index = this.find_user_index(uid);
+        if (index < 0 || !this.room_seats[index]) return;
         this.room_seats[index].is_trusteeship = false;
+        if (this._ai_pending_timers && this._ai_pending_timers[index]) {
+            clearTimeout(this._ai_pending_timers[index]);
+            this._ai_pending_timers[index] = null;
+        }
         this.sendMsg(wsMsgKeyEnum.update_room_info_all);
     },
     /**
@@ -2073,12 +2081,15 @@ class WSMahjongGameBaseLogic extends WSGameBaseLogic {
      */
     startAIScheduler() {
         if (this._ai_scheduler) return;
-        // 房间内存在 AI 座位才启动
-        var hasAI = false;
+        // AI robots and human seats in trusteeship both need continuous scheduling.
+        var hasAutomatedSeat = false;
         for (var i = 0; i < this.room_seats.length; i++) {
-            if (this.room_seats[i].is_ai) { hasAI = true; break; }
+            if (this.room_seats[i].is_ai || this.room_seats[i].is_trusteeship) {
+                hasAutomatedSeat = true;
+                break;
+            }
         }
-        if (!hasAI) return;
+        if (!hasAutomatedSeat) return;
 
         this._ai_pending = {};   // seats_index -> true 表示已安排，避免重复触发
         this._ai_scheduler = setInterval(this.aiTick.bind(this), 400);
@@ -2120,7 +2131,7 @@ class WSMahjongGameBaseLogic extends WSGameBaseLogic {
 
             for (var i = 0; i < this.room_seats.length; i++) {
                 var seat = this.room_seats[i];
-                if (!seat.is_ai) continue;
+                if (!seat || (!seat.is_ai && !seat.is_trusteeship)) continue;
                 if (this._ai_pending_timers[i]) continue; // 已安排
 
                 var as = seat.action_state;
@@ -2147,7 +2158,7 @@ class WSMahjongGameBaseLogic extends WSGameBaseLogic {
                         self._ai_pending_timers[seatIndex] = null;
                         try {
                             var s = self.room_seats[seatIndex];
-                            if (!s || !s.is_ai) return;
+                            if (!s || (!s.is_ai && !s.is_trusteeship)) return;
                             // 二次确认仍需操作（状态可能已变）
                             self.on_trusteepship(seatIndex);
                         } catch (e) {

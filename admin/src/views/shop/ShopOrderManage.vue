@@ -1,5 +1,51 @@
 <template>
   <div class="page-container">
+    <el-card shadow="hover" class="cag-config-card" v-loading="cagLoading">
+      <template #header>
+        <div class="cag-header">
+          <div>
+            <div class="cag-title">CAG 兑换配置</div>
+            <div class="text-muted">商城银币兑换活动</div>
+          </div>
+          <div class="cag-header-actions">
+            <el-tag :type="cagConfig.isActive ? 'success' : 'info'">
+              {{ cagConfig.isActive ? '兑换进行中' : (cagConfig.unavailableReason || '兑换未开启') }}
+            </el-tag>
+            <el-button type="primary" :loading="cagSaving" @click="saveCagConfig">保存配置</el-button>
+          </div>
+        </div>
+      </template>
+      <el-form class="cag-form" label-position="top">
+        <el-form-item label="开启CAG兑换">
+          <el-switch v-model="cagForm.enabled" inline-prompt active-text="开" inactive-text="关" />
+        </el-form-item>
+        <el-form-item label="每个CAG所需银币">
+          <el-input-number v-model="cagForm.silverPrice" :min="1" :step="1" :precision="0" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="单用户累计兑换上限">
+          <div class="limit-field">
+            <el-input-number v-model="cagForm.userLimit" :min="0" :step="1" :precision="0" controls-position="right" />
+            <span class="field-hint">0 表示不限制</span>
+          </div>
+        </el-form-item>
+        <el-form-item label="兑换有效期" class="date-range-item">
+          <el-date-picker
+            v-model="cagDateRange"
+            type="datetimerange"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
+            range-separator="至"
+            clearable
+          />
+        </el-form-item>
+      </el-form>
+      <div class="cag-stats">
+        <span>累计兑换 <strong>{{ cagConfig.exchangedQuantity }}</strong> 个</span>
+        <span>兑换用户 <strong>{{ cagConfig.exchangedUsers }}</strong> 人</span>
+      </div>
+    </el-card>
+
     <el-card shadow="hover" class="search-card">
       <el-form :inline="true" @submit.prevent="loadOrders">
         <el-form-item label="状态">
@@ -87,7 +133,9 @@
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status === 0">
-              <el-button link type="success" @click="openApproveDialog(row)">确认发货</el-button>
+              <el-button link type="success" @click="openApproveDialog(row)">
+                {{ row.productKey === 'cag' ? '确认兑换' : '确认发货' }}
+              </el-button>
               <el-button link type="danger" @click="rejectOrder(row)">驳回</el-button>
             </template>
             <span v-else class="text-muted">已处理</span>
@@ -105,7 +153,11 @@
       />
     </el-card>
 
-    <el-dialog v-model="approveVisible" title="确认发货" width="520px">
+    <el-dialog
+      v-model="approveVisible"
+      :title="currentOrder?.productKey === 'cag' ? '确认CAG兑换' : '确认发货'"
+      width="520px"
+    >
       <el-form label-width="90px">
         <el-form-item label="订单">
           <el-input :model-value="currentOrder?.orderSn || ''" disabled />
@@ -113,10 +165,10 @@
         <el-form-item label="商品">
           <el-input :model-value="currentOrder?.productTitle || ''" disabled />
         </el-form-item>
-        <el-form-item label="物流公司">
+        <el-form-item v-if="currentOrder?.productKey !== 'cag'" label="物流公司">
           <el-input v-model="approveForm.logisticsCompany" placeholder="例如：顺丰/京东/德邦" />
         </el-form-item>
-        <el-form-item label="物流单号">
+        <el-form-item v-if="currentOrder?.productKey !== 'cag'" label="物流单号">
           <el-input v-model="approveForm.logisticsNo" placeholder="可选填写物流单号" />
         </el-form-item>
         <el-form-item label="备注">
@@ -125,7 +177,9 @@
       </el-form>
       <template #footer>
         <el-button @click="approveVisible = false">取消</el-button>
-        <el-button type="primary" :loading="reviewing" @click="approveOrder">确认发货</el-button>
+        <el-button type="primary" :loading="reviewing" @click="approveOrder">
+          {{ currentOrder?.productKey === 'cag' ? '确认兑换' : '确认发货' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -147,6 +201,16 @@ const status = ref<number | ''>('')
 const paymentMethod = ref('')
 const keyword = ref('')
 const stats = reactive({ pending: 0, approved: 0, rejected: 0 })
+const cagLoading = ref(false)
+const cagSaving = ref(false)
+const cagDateRange = ref<string[]>([])
+const cagForm = reactive({ enabled: false, silverPrice: 1000, userLimit: 1 })
+const cagConfig = reactive({
+  isActive: false,
+  unavailableReason: '',
+  exchangedQuantity: 0,
+  exchangedUsers: 0,
+})
 
 const approveVisible = ref(false)
 const currentOrder = ref<any | null>(null)
@@ -158,6 +222,41 @@ const approveForm = reactive({
 
 function money(value: any) {
   return Number(value || 0).toFixed(2)
+}
+
+async function loadCagConfig() {
+  cagLoading.value = true
+  try {
+    const res: any = await request.get('/shop/cag-config')
+    cagForm.enabled = Boolean(res.enabled)
+    cagForm.silverPrice = Number(res.silverPrice || 1000)
+    cagForm.userLimit = Number(res.userLimit || 0)
+    cagDateRange.value = res.startAt && res.endAt ? [res.startAt, res.endAt] : []
+    cagConfig.isActive = Boolean(res.isActive)
+    cagConfig.unavailableReason = res.unavailableReason || ''
+    cagConfig.exchangedQuantity = Number(res.exchangedQuantity || 0)
+    cagConfig.exchangedUsers = Number(res.exchangedUsers || 0)
+  } finally {
+    cagLoading.value = false
+  }
+}
+
+async function saveCagConfig() {
+  cagSaving.value = true
+  try {
+    const range = cagDateRange.value || []
+    await request.put('/shop/cag-config', {
+      enabled: cagForm.enabled,
+      silverPrice: cagForm.silverPrice,
+      userLimit: cagForm.userLimit,
+      startAt: range[0] || '',
+      endAt: range[1] || '',
+    })
+    ElMessage.success('CAG兑换配置已保存')
+    await loadCagConfig()
+  } finally {
+    cagSaving.value = false
+  }
 }
 
 async function loadOrders() {
@@ -209,7 +308,7 @@ async function approveOrder() {
       logisticsNo: approveForm.logisticsNo,
       remark: approveForm.remark,
     })
-    ElMessage.success('订单已确认发货')
+    ElMessage.success(order.productKey === 'cag' ? 'CAG兑换已确认' : '订单已确认发货')
     approveVisible.value = false
     loadOrders()
   } finally {
@@ -236,16 +335,36 @@ async function rejectOrder(row: any) {
   loadOrders()
 }
 
-onMounted(loadOrders)
+onMounted(() => {
+  loadOrders()
+  loadCagConfig()
+})
 </script>
 
 <style scoped>
 .page-container { display: flex; flex-direction: column; gap: 16px; }
+.cag-config-card,
 .search-card,
-.content-card { border-radius: 12px; border: none; }
+.content-card { border-radius: 8px; border: none; }
+.cag-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.cag-title { color: #303133; font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.cag-header-actions { display: flex; align-items: center; gap: 12px; }
+.cag-form { display: grid; grid-template-columns: 150px 220px 250px minmax(360px, 1fr); gap: 16px 24px; align-items: start; }
+.cag-form :deep(.el-form-item) { margin-bottom: 4px; }
+.cag-form :deep(.el-input-number) { width: 100%; }
+.limit-field { display: flex; align-items: center; width: 100%; }
+.date-range-item :deep(.el-date-editor) { width: 100%; }
+.field-hint { margin-left: 8px; color: #909399; font-size: 12px; white-space: nowrap; }
+.cag-stats { display: flex; gap: 28px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #ebeef5; color: #606266; }
+.cag-stats strong { color: #303133; font-size: 17px; }
 .stats { display: flex; gap: 10px; margin-top: 6px; }
 .text-muted { color: #909399; font-size: 13px; }
 .pager { margin-top: 16px; justify-content: flex-end; }
 :deep(.el-table) { --el-table-border-color: transparent; --el-table-row-hover-bg-color: #f0f5ff; }
 :deep(.el-table th.el-table__cell) { background-color: #fafafa; color: #606266; font-weight: 600; }
+
+@media (max-width: 1100px) {
+  .cag-form { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+  .date-range-item { grid-column: 1 / -1; }
+}
 </style>

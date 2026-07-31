@@ -7,8 +7,8 @@ export class ShopController {
   constructor(private readonly shopService: ShopService) {}
 
   @Get('catalog')
-  catalog() {
-    return this.shopService.getCatalog();
+  catalog(@CurrentUser('id') userId: number) {
+    return this.shopService.getCatalog(userId);
   }
 
   @Get('payment-info')

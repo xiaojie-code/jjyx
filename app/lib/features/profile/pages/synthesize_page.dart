@@ -799,12 +799,21 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  '余额 ${_formatNumber(currentGold)}，比例 1金币=${_formatNumber(safeRate)}元',
-                  style: const TextStyle(
-                    color: Color(0xFF667085),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                SizedBox(
+                  width: double.infinity,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '余额 ${_formatNumber(currentGold)}，比例 1金币=${_formatNumber(safeRate)}元',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: const TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 4),

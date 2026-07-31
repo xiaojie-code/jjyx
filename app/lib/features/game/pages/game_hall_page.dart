@@ -21,7 +21,7 @@ class GameHallPage extends ConsumerStatefulWidget {
 
 class _GameHallPageState extends ConsumerState<GameHallPage> {
   static const String _gameShellVersion =
-      '20260711-mahjong-settle-server-only-v2';
+      '20260727-killer-unity-room-protocol-v6';
   static const String _h5AssetBaseUrl =
       'http://appassets.androidplatform.net/assets/h5-games';
 

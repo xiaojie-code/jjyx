@@ -1431,6 +1431,7 @@ class Common
                 $position = rand(1, 8);
                 Redis::set(self::robotPositionKey(self::getnowexpect(), $roomid, $mode, $v['id']), $position);
             }
+            $position = (string)$position;
             $v['client_id'] = 'robot_' . $v['id'];
             $v['uid'] = (string)$v['id'];
             $v['userinfo'] = self::getuserinfo($v['id']);

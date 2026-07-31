@@ -4503,13 +4503,18 @@ window.__require = function e(t, n, r) {
         this.btn_next_game_node.active = false;
         this.btn_prepare_node.active = false;
         this.btn_exit_game_node.active = false;
+        var currentInning = Number(this._home_data && this._home_data.cruent_inning || 0);
+        var maxInning = Number(this._home_data && this._home_data.max_inning || 0);
+        var isWaitingAfterRound = this._home_state == this._game_conf.game_scene.single_over || this._home_state == this._game_conf.game_scene.wait_over;
+        var hasMoreRounds = isWaitingAfterRound && currentInning < maxInning;
+        var isFinalRound = this._home_state == this._game_conf.game_scene.game_over || this._home_state == this._game_conf.game_scene.wait_over && currentInning >= maxInning;
         switch (cc.myBaseMgr.DAO.GameDao.present_roomType) {
          case DBConstantMgr.ROOM_TYPE_MATCHING:
-          this._home_data.max_inning >= 2 ? this._home_state == this._game_conf.game_scene.single_over ? this.btn_prepare_node.active = true : this._home_state == this._game_conf.game_scene.game_over && (this.btn_exit_game_node.active = true) : this.btn_next_game_node.active = true;
+          hasMoreRounds ? this.btn_prepare_node.active = true : isFinalRound && (this.btn_exit_game_node.active = true);
           break;
 
          case DBConstantMgr.ROOM_TYPE_ORDINARY:
-          this._home_state == this._game_conf.game_scene.game_over ? this.btn_exit_game_node.active = true : (this._home_state == this._game_conf.game_scene.single_over || this._home_state == this._game_conf.game_scene.wait_over && this._home_data.cruent_inning < this._home_data.max_inning) && (this.btn_prepare_node.active = true);
+          hasMoreRounds ? this.btn_prepare_node.active = true : isFinalRound && (this.btn_exit_game_node.active = true);
         }
       },
       gameOverCall: function gameOverCall(data) {
@@ -4601,6 +4606,8 @@ window.__require = function e(t, n, r) {
         this.card_total_num_label.string = card_total_num || 0;
       },
       exitGame: function exitGame() {
+        if (this._isReturningToGameHome) return;
+        this._isReturningToGameHome = true;
         this.loadScene("GameMain");
       },
       updateRoomSeatsData: function updateRoomSeatsData(seats_data, last_index, home_state, isReload) {
@@ -4753,7 +4760,13 @@ window.__require = function e(t, n, r) {
 
          case "btn_prepare":
           console.log("\u51c6\u5907 / \u53d6\u6d88\u51c6\u5907");
-          e.target.getComponent("cc.Toggle").isChecked ? this.click_cancelPrepare_event() : this.click_prepare_event();
+          if (e && e.target === this.room_btn_prepare_node) {
+            var prepareToggle = e.target.getComponent("cc.Toggle");
+            prepareToggle && prepareToggle.isChecked ? this.click_cancelPrepare_event() : this.click_prepare_event();
+          } else {
+            console.log("\u7ed3\u7b97\u9875\u51c6\u5907\u4e0b\u4e00\u5c40");
+            this.click_prepare_event();
+          }
           break;
 
          case "btn_guiZe":
@@ -4806,8 +4819,7 @@ window.__require = function e(t, n, r) {
         cc.myBaseMgr.DAO.GameDao.present_gameWSDao.send(this._game_type_send_event["cancel_trusteepship"]);
       },
       click_next_game_event: function click_next_game_event() {
-        cc.myBaseMgr.DAO.GameDao.present_gameWSDao.send(this._room_service_event["exit_game"]);
-        this.loadScene("MaJiang");
+        cc.myBaseMgr.DAO.GameDao.present_gameWSDao.send(this._room_send_event["prepare"]);
       },
       click_exit_game_event: function click_exit_game_event() {
         var self = this;
@@ -4924,7 +4936,11 @@ window.__require = function e(t, n, r) {
       },
       onDirectly_exit_game: function onDirectly_exit_game() {
         console.log(this._room_service_event["directly_exit_game"]);
-        cc.myBaseMgr.DAO.GameDao.present_gameWSDao.disconnect();
+        try {
+          cc.myBaseMgr.DAO.GameDao.present_gameWSDao.disconnect();
+        } finally {
+          this.exitGame();
+        }
       },
       onUpdate_hand_holds: function onUpdate_hand_holds(code, msg, data) {
         console.log(this._game_type_service_event["update_hand_holds"]);
@@ -5386,7 +5402,8 @@ window.__require = function e(t, n, r) {
       setScoreLabel: function setScoreLabel(score_label) {
         var self = this;
         if (!cc.myBaseMgr.DataMgr.isData_UnNull(this.score_label) || !cc.myBaseMgr.DataMgr.isData_UnNull(score_label)) return;
-        this.score_label.string = (score_label < 0, score_label);
+        var score = Number(score_label) || 0;
+        this.score_label.string = score > 0 ? "+" + score : String(score);
       },
       setItemToList: function setItemToList(maizui_data, seats_datas) {
         var self = this;
@@ -7488,7 +7505,7 @@ window.__require = function e(t, n, r) {
           var homeownersNodeisActive = false;
           seats_data.user_id == cc.myBaseMgr.DAO.UserDao.uid && (homeownersNodeisActive = true);
           var is_boss = 1 == seats_data.identity;
-          var displayScore = cc.myBaseMgr.DataMgr.isData_UnNull(seats_data.total_score) ? seats_data.total_score : seats_data.score;
+          var displayScore = cc.myBaseMgr.DataMgr.isData_UnNull(seats_data.score) ? seats_data.score : 0;
           mahjong_game_shangHaiQiaoMa_over_item.setAllInfo(seats_data.user_icon, seats_data.user_name, is_boss, homeownersNodeisActive, displayScore, seats_data.hand_holds);
           self.content.addChild(item);
         }

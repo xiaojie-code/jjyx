@@ -98,6 +98,12 @@
     var fishingDailyCastCount = 0;
     var fishingDailyCastRemaining = FISHING_DAILY_CAST_LIMIT;
     var fishingCastPatchInstalled = false;
+    var fishingCastCounter = null;
+    var goldSyncQueue = [];
+    var goldSyncInFlight = null;
+    var goldSyncFlushTimer = null;
+    var goldSyncSequence = 0;
+    var goldRenderTimer = null;
 
     function fitCocosCanvasToViewport() {
       var width = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth || 0;
@@ -149,18 +155,107 @@
             "gameMessage",
             JSON.stringify({ action: action, data: data || {} })
           );
+          return true;
         }
       } catch (error) {
         console.warn("[fishing] app bridge failed:", error);
       }
+      return false;
+    }
+
+    function clearGoldSyncTimer(operation) {
+      if (!operation || !operation.timeoutTimer) return;
+      clearTimeout(operation.timeoutTimer);
+      operation.timeoutTimer = null;
+    }
+
+    function scheduleGoldSyncFlush(delay) {
+      if (goldSyncFlushTimer) clearTimeout(goldSyncFlushTimer);
+      goldSyncFlushTimer = setTimeout(function () {
+        goldSyncFlushTimer = null;
+        flushGoldSyncQueue();
+      }, typeof delay === "number" ? delay : 120);
+    }
+
+    function sendGoldSyncOperation(operation) {
+      if (!operation) return;
+      goldSyncInFlight = operation;
+      operation.attempts += 1;
+      clearGoldSyncTimer(operation);
+      operation.timeoutTimer = setTimeout(function () {
+        if (goldSyncInFlight !== operation) return;
+        console.warn("[fishing] points request timed out", operation.requestId);
+        goldSyncInFlight = null;
+        if (operation.attempts < 2) {
+          goldSyncQueue.unshift(operation);
+        }
+        scheduleGoldSyncFlush(operation.attempts < 2 ? 800 : 180);
+      }, 8000);
+      if (!postGameMessage("changePoints", {
+        amount: operation.amount,
+        reason: operation.reason,
+        requestId: operation.requestId,
+        module: "fishing"
+      })) {
+        clearGoldSyncTimer(operation);
+        goldSyncInFlight = null;
+        if (operation.attempts < 2) goldSyncQueue.unshift(operation);
+        scheduleGoldSyncFlush(800);
+      }
+    }
+
+    function flushGoldSyncQueue() {
+      if (goldSyncInFlight || goldSyncQueue.length === 0) return;
+      sendGoldSyncOperation(goldSyncQueue.shift());
     }
 
     function syncGoldDelta(delta, reason) {
+      delta = Math.trunc(toNumber(delta));
       if (!delta) return;
-      postGameMessage("changePoints", {
-        amount: delta,
-        reason: reason || (delta > 0 ? "fishing_points_earn" : "fishing_points_spend"),
-      });
+      reason = reason || (delta > 0 ? "fishing_points_earn" : "fishing_points_spend");
+      var tail = goldSyncQueue.length ? goldSyncQueue[goldSyncQueue.length - 1] : null;
+      if (
+        tail &&
+        tail.reason === reason &&
+        ((tail.amount > 0 && delta > 0) || (tail.amount < 0 && delta < 0))
+      ) {
+        tail.amount += delta;
+      } else {
+        goldSyncQueue.push({
+          amount: delta,
+          reason: reason,
+          requestId: "fishing_points_" + Date.now() + "_" + (++goldSyncSequence),
+          attempts: 0,
+          timeoutTimer: null
+        });
+      }
+      scheduleGoldSyncFlush(120);
+    }
+
+    function handleGoldSyncResult(data) {
+      var operation = goldSyncInFlight;
+      if (!operation || !data || String(data.requestId || "") !== operation.requestId) {
+        return false;
+      }
+      clearGoldSyncTimer(operation);
+      goldSyncInFlight = null;
+      if (data.success === false && operation.attempts < 2) {
+        goldSyncQueue.unshift(operation);
+        scheduleGoldSyncFlush(800);
+      } else {
+        scheduleGoldSyncFlush(120);
+      }
+      return true;
+    }
+
+    function resetGoldSyncQueue() {
+      if (goldSyncFlushTimer) clearTimeout(goldSyncFlushTimer);
+      goldSyncFlushTimer = null;
+      if (goldRenderTimer) clearTimeout(goldRenderTimer);
+      goldRenderTimer = null;
+      clearGoldSyncTimer(goldSyncInFlight);
+      goldSyncInFlight = null;
+      goldSyncQueue = [];
     }
 
     function scaleEconomyValue(value) {
@@ -308,6 +403,102 @@
       } else {
         fishingDailyCastRemaining = Math.max(0, FISHING_DAILY_CAST_LIMIT - fishingDailyCastCount);
       }
+      updateFishingCastCounter();
+    }
+
+    function ensureFishingCastCounter() {
+      if (fishingCastCounter && fishingCastCounter.parentNode) return fishingCastCounter;
+      var styleId = "fishing-daily-cast-counter-style";
+      if (!document.getElementById(styleId)) {
+        var style = document.createElement("style");
+        style.id = styleId;
+        style.textContent =
+          "#fishing-daily-cast-counter{position:fixed;left:68.5%;top:4%;transform:translateX(-50%);z-index:2147483000;width:clamp(128px,22vh,164px);padding:6px 9px 7px;box-sizing:border-box;border:1px solid rgba(149,235,225,.5);border-radius:6px;background:rgba(5,38,52,.78);box-shadow:0 3px 10px rgba(0,18,28,.28);color:#fff;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .16s ease;}" +
+          "#fishing-daily-cast-counter.is-visible{opacity:1;visibility:visible;}" +
+          "#fishing-daily-cast-counter .cast-row{display:flex;align-items:center;justify-content:space-between;gap:8px;white-space:nowrap;line-height:18px;}" +
+          "#fishing-daily-cast-counter .cast-label{font-size:12px;font-weight:600;color:#d9f8f3;}" +
+          "#fishing-daily-cast-counter .cast-value{font-size:15px;font-weight:800;color:#58d7c8;font-variant-numeric:tabular-nums;}" +
+          "#fishing-daily-cast-counter .cast-track{height:3px;margin-top:4px;overflow:hidden;border-radius:2px;background:rgba(255,255,255,.2);}" +
+          "#fishing-daily-cast-counter .cast-progress{display:block;width:0;height:100%;border-radius:2px;background:#58d7c8;transition:width .2s ease,background-color .2s ease;}" +
+          "#fishing-daily-cast-counter.is-warning{border-color:rgba(255,184,77,.58);}" +
+          "#fishing-daily-cast-counter.is-warning .cast-value{color:#ffb84d;background:transparent;}" +
+          "#fishing-daily-cast-counter.is-warning .cast-progress{background:#ffb84d;}" +
+          "#fishing-daily-cast-counter.is-full{border-color:rgba(255,107,94,.68);}" +
+          "#fishing-daily-cast-counter.is-full .cast-value{color:#ff6b5e;background:transparent;}" +
+          "#fishing-daily-cast-counter.is-full .cast-progress{background:#ff6b5e;}";
+        document.head.appendChild(style);
+      }
+      var counter = document.createElement("div");
+      counter.id = "fishing-daily-cast-counter";
+      counter.setAttribute("aria-label", "今日抛竿次数");
+      counter.innerHTML =
+        '<div class="cast-row"><span class="cast-label">今日抛竿</span><strong class="cast-value">0/50</strong></div>' +
+        '<div class="cast-track"><i class="cast-progress"></i></div>';
+      document.body.appendChild(counter);
+      fishingCastCounter = counter;
+      return counter;
+    }
+
+    function hasActiveFishingDialog() {
+      var canvas = getFishingCanvas();
+      if (!canvas) return true;
+      var blockedComponents = [
+        "FishMarketPanel",
+        "FishShopPanle",
+        "UserPackagePanle",
+        "SceneChanePanel",
+        "RankingPanel",
+        "TipsView",
+        "UpdateSkillDlg",
+        "GarbageView",
+        "SystemNoticeView"
+      ];
+      var blocked = false;
+      walkNode(canvas, function (node) {
+        if (blocked || !node || node.active === false || node.activeInHierarchy === false) return;
+        if (node.name === "__PopWait__") {
+          blocked = true;
+          return;
+        }
+        if (typeof node.getComponent !== "function") return;
+        for (var i = 0; i < blockedComponents.length; i++) {
+          try {
+            if (node.getComponent(blockedComponents[i])) {
+              blocked = true;
+              return;
+            }
+          } catch (_) {}
+        }
+      });
+      return blocked;
+    }
+
+    function isFishingCastCounterVisible() {
+      if (!hasRealAccountData()) return false;
+      if (fishingEntryOverlay && fishingEntryOverlay.style.display !== "none") return false;
+      var splash = document.getElementById("splash");
+      if (splash) {
+        var style = window.getComputedStyle ? window.getComputedStyle(splash) : splash.style;
+        if (style && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") {
+          return false;
+        }
+      }
+      if (pendingGold === null && lastKnownGold === null) return false;
+      return !hasActiveFishingDialog();
+    }
+
+    function updateFishingCastCounter() {
+      var counter = ensureFishingCastCounter();
+      var limit = Math.max(1, Math.floor(toNumber(FISHING_DAILY_CAST_LIMIT)) || 50);
+      var count = Math.max(0, Math.floor(toNumber(fishingDailyCastCount)));
+      var ratio = Math.min(1, count / limit);
+      var value = counter.querySelector(".cast-value");
+      var progress = counter.querySelector(".cast-progress");
+      if (value) value.textContent = count + "/" + limit;
+      if (progress) progress.style.width = (ratio * 100) + "%";
+      counter.classList.toggle("is-warning", ratio >= 0.8 && ratio < 1);
+      counter.classList.toggle("is-full", ratio >= 1);
+      counter.classList.toggle("is-visible", isFishingCastCounterVisible());
     }
 
     function getLocalCastStateKey() {
@@ -353,6 +544,7 @@
         fishingDailyCastDate = getTodayString();
         fishingDailyCastCount = 0;
         fishingDailyCastRemaining = FISHING_DAILY_CAST_LIMIT;
+        updateFishingCastCounter();
       }
       if (fishingDailyCastCount >= FISHING_DAILY_CAST_LIMIT) {
         return false;
@@ -360,6 +552,7 @@
       fishingDailyCastCount += 1;
       fishingDailyCastRemaining = Math.max(0, FISHING_DAILY_CAST_LIMIT - fishingDailyCastCount);
       saveLocalCastState();
+      updateFishingCastCounter();
       return true;
     }
 
@@ -910,6 +1103,681 @@
       }
     }
 
+    function getFishingCanvas() {
+      try {
+        var scene = window.cc && cc.director && cc.director.getScene
+          ? cc.director.getScene()
+          : null;
+        return scene && scene.getChildByName ? scene.getChildByName("Canvas") : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function getFishingWaitNodes(canvas) {
+      if (!canvas) return [];
+      return (canvas.children || []).filter(function (node) {
+        return node && node.name === "__PopWait__";
+      });
+    }
+
+    function removeFishingWaitNodes(canvas) {
+      getFishingWaitNodes(canvas).forEach(function (node) {
+        try {
+          node.stopAllActions();
+          node.removeFromParent(false);
+          node.destroy();
+        } catch (_) {}
+      });
+    }
+
+    function installFishingPopWaitPatch() {
+      var manager = window.CommonResManager;
+      if (!manager || !window.cc || !cc.loader) return false;
+      if (manager.__jjyxPopWaitPatched) {
+        if (typeof manager.__jjyxNormalizePopWait === "function") {
+          manager.__jjyxNormalizePopWait();
+        }
+        return true;
+      }
+
+      var initialNodes = getFishingWaitNodes(getFishingCanvas());
+      var waitDepth = initialNodes.length;
+      var loadingPrefab = false;
+      var loadToken = 0;
+      var safetyTimer = null;
+
+      function makeWaitNodeRecoverable(node) {
+        if (!node || node.__jjyxWaitRecoverable) return;
+        node.__jjyxWaitRecoverable = true;
+        node.__jjyxCanDismiss = false;
+        try {
+          node.on("touchend", function () {
+            if (!node.__jjyxCanDismiss) return;
+            manager.__jjyxForceHidePopWait("manual");
+          });
+        } catch (_) {}
+        setTimeout(function () {
+          if (!node.parent || waitDepth <= 0) return;
+          node.__jjyxCanDismiss = true;
+          try {
+            var waitView = node.getComponent("PopWaitCrl");
+            if (waitView && waitView.game_tip) {
+              waitView.enabled = false;
+              waitView.game_tip.string = "加载时间较长，点击屏幕返回游戏";
+            }
+          } catch (_) {}
+        }, 3000);
+      }
+
+      function collapseDuplicateWaitNodes() {
+        var canvas = getFishingCanvas();
+        var nodes = getFishingWaitNodes(canvas);
+        if (waitDepth <= 0) {
+          removeFishingWaitNodes(canvas);
+          return;
+        }
+        for (var i = 1; i < nodes.length; i++) {
+          try {
+            nodes[i].removeFromParent(false);
+            nodes[i].destroy();
+          } catch (_) {}
+        }
+        if (nodes[0]) makeWaitNodeRecoverable(nodes[0]);
+      }
+
+      function armSafetyTimer() {
+        if (safetyTimer) clearTimeout(safetyTimer);
+        safetyTimer = setTimeout(function () {
+          if (waitDepth <= 0) return;
+          console.warn("[fishing] loading overlay timed out and was cleared");
+          manager.__jjyxForceHidePopWait("timeout");
+        }, 8000);
+      }
+
+      manager.ShowPopWait = function patchedShowPopWait() {
+        waitDepth += 1;
+        armSafetyTimer();
+        var canvas = getFishingCanvas();
+        var nodes = getFishingWaitNodes(canvas);
+        if (nodes.length > 0) {
+          nodes[0].active = true;
+          collapseDuplicateWaitNodes();
+          return;
+        }
+        if (!canvas || loadingPrefab) return;
+        loadingPrefab = true;
+        var token = ++loadToken;
+        cc.loader.loadRes("prefab/Pop_wait", cc.Prefab, function (error, prefab) {
+          loadingPrefab = false;
+          if (error || !prefab || token !== loadToken || waitDepth <= 0) return;
+          var currentCanvas = getFishingCanvas();
+          if (!currentCanvas) return;
+          var currentNodes = getFishingWaitNodes(currentCanvas);
+          if (currentNodes.length === 0) {
+            var waitNode = cc.instantiate(prefab);
+            waitNode.name = "__PopWait__";
+            waitNode.setParent(currentCanvas);
+          }
+          collapseDuplicateWaitNodes();
+        });
+      };
+
+      manager.HidePopWait = function patchedHidePopWait() {
+        waitDepth = Math.max(0, waitDepth - 1);
+        if (waitDepth > 0) return;
+        loadToken += 1;
+        loadingPrefab = false;
+        if (safetyTimer) {
+          clearTimeout(safetyTimer);
+          safetyTimer = null;
+        }
+        removeFishingWaitNodes(getFishingCanvas());
+      };
+
+      manager.__jjyxNormalizePopWait = collapseDuplicateWaitNodes;
+      manager.__jjyxForceHidePopWait = function () {
+        var reason = arguments[0];
+        waitDepth = 0;
+        loadToken += 1;
+        loadingPrefab = false;
+        if (safetyTimer) {
+          clearTimeout(safetyTimer);
+          safetyTimer = null;
+        }
+        removeFishingWaitNodes(getFishingCanvas());
+        if (reason) {
+          setTimeout(function () {
+            try {
+              manager.ShowToast(
+                reason === "timeout"
+                  ? "加载超时，已返回游戏，请重新操作"
+                  : "已返回游戏"
+              );
+            } catch (_) {}
+          }, 0);
+        }
+      };
+      manager.__jjyxPopWaitPatched = true;
+      if (waitDepth > 0) armSafetyTimer();
+      collapseDuplicateWaitNodes();
+      return true;
+    }
+
+    function resetFishMarketState(view, removeItems) {
+      if (!view) return;
+      view.__jjyxMarketResetting = true;
+      try {
+        if (typeof view.unschedule === "function" && view.updateItems) {
+          view.unschedule(view.updateItems);
+        }
+      } catch (_) {}
+      view.OpenAllChecked = false;
+      view.isAllChecked = false;
+      view._isSellFish = false;
+      view._content_count = 0;
+      view._sell_select_count = 0;
+      view._sell_price = 0;
+      view._selcet_items = [];
+      view._fish_components = [];
+      try {
+        if (view._alls_select_toggle) view._alls_select_toggle.uncheck();
+      } catch (_) {}
+      if (removeItems && view.content_list) {
+        try {
+          view.content_list.removeAllChildren();
+        } catch (_) {}
+      }
+      view._sell_select_count = 0;
+      view._sell_price = 0;
+      view._selcet_items = [];
+      view.__jjyxMarketResetting = false;
+    }
+
+    function patchFishMarketView(view) {
+      if (!view || view.__jjyxMarketPatched) return;
+      view.__jjyxMarketPatched = true;
+
+      if (view.content_list && !view.content_list.__jjyxMarketEmitPatched) {
+        var originalEmit = view.content_list.emit;
+        view.content_list.emit = function patchedMarketEmit(type, payload) {
+          if (type === "checkFishItem") {
+            if (view.__jjyxMarketResetting) return false;
+            var index = payload ? Number(payload.selectIndex) : -1;
+            if (
+              !payload ||
+              !Array.isArray(view._items) ||
+              index < 0 ||
+              index >= view._items.length ||
+              !view._items[index]
+            ) {
+              console.warn("[fishing] ignored stale fish market selection", index);
+              return false;
+            }
+          }
+          return originalEmit.apply(this, arguments);
+        };
+        view.content_list.__jjyxMarketEmitPatched = true;
+      }
+
+      var originalShowDlg = typeof view.showDlg === "function"
+        ? view.showDlg.bind(view)
+        : null;
+      var originalUpdateItems = typeof view.updateItems === "function"
+        ? view.updateItems
+        : null;
+
+      if (originalUpdateItems) {
+        try { view.unschedule(originalUpdateItems); } catch (_) {}
+        view.updateItems = function patchedMarketUpdateItems() {
+          if (!Array.isArray(view._items)) {
+            resetFishMarketState(view, false);
+            return;
+          }
+          try {
+            return originalUpdateItems.apply(view, arguments);
+          } catch (error) {
+            console.error("[fishing] fish market list update failed", error);
+            resetFishMarketState(view, false);
+          }
+        };
+      }
+
+      if (originalShowDlg) {
+        view.showDlg = function patchedMarketShowDlg(index, parent) {
+          if (view.__jjyxMarketOpen && view.node.parent && view.node.active) return;
+          view.__jjyxMarketClosing = false;
+          view.__jjyxMarketOpen = true;
+          resetFishMarketState(view, true);
+          try {
+            view.node.stopAllActions();
+          } catch (_) {}
+          return originalShowDlg(index, parent);
+        };
+      }
+
+      view.closeDlg = function patchedMarketCloseDlg() {
+        if (view.__jjyxMarketClosing) return;
+        view.__jjyxMarketClosing = true;
+        view.__jjyxMarketOpen = false;
+        resetFishMarketState(view, true);
+        var node = view.node;
+        var finished = false;
+        function finishClose() {
+          if (finished) return;
+          finished = true;
+          try {
+            node.stopAllActions();
+            node.active = false;
+            node.removeFromParent(false);
+          } catch (_) {}
+          view.__jjyxMarketClosing = false;
+          try {
+            PlatformTools.showFollowButtonTouTiao();
+          } catch (_) {}
+        }
+        try {
+          node.stopAllActions();
+          if (window.Action && typeof Action.DlgCloseAction === "function") {
+            Action.DlgCloseAction(node, finishClose);
+            setTimeout(finishClose, 650);
+          } else {
+            finishClose();
+          }
+        } catch (_) {
+          finishClose();
+        }
+      };
+
+      if (view.node && view.node.parent && view.node.active && typeof view.updateContentList === "function") {
+        try { view.updateContentList(view._index || 0); } catch (_) {}
+      }
+    }
+
+    function patchFishingMarketDialogs() {
+      if (!window.cc || !cc.director) return;
+      var scene = cc.director.getScene && cc.director.getScene();
+      if (!scene) return;
+      walkNode(scene, function (node) {
+        if (!node || typeof node.getComponent !== "function") return;
+        var marketView = null;
+        var gameView = null;
+        try { marketView = node.getComponent("FishMarketPanel"); } catch (_) {}
+        if (marketView) patchFishMarketView(marketView);
+        try { gameView = node.getComponent("Game"); } catch (_) {}
+        if (!gameView) return;
+        patchFishingSceneLoading(gameView);
+        if (gameView.__jjyxMarketOpenPatched || typeof gameView.openFishMarket !== "function") return;
+        var originalOpenFishMarket = gameView.openFishMarket.bind(gameView);
+        gameView.openFishMarket = function patchedOpenFishMarket() {
+          var marketNode = gameView._fishMarketNode;
+          if (marketNode && marketNode.parent && marketNode.active) return;
+          var result = originalOpenFishMarket.apply(gameView, arguments);
+          marketNode = gameView._fishMarketNode;
+          if (marketNode && typeof marketNode.getComponent === "function") {
+            try { patchFishMarketView(marketNode.getComponent("FishMarketPanel")); } catch (_) {}
+          }
+          return result;
+        };
+        gameView.__jjyxMarketOpenPatched = true;
+      });
+    }
+
+    function patchFishingPackageView(view) {
+      if (!view || view.__jjyxPackagePatched) return;
+      view.__jjyxPackagePatched = true;
+
+      var originalShowDlg = typeof view.showDlg === "function"
+        ? view.showDlg.bind(view)
+        : null;
+      var originalUpdateContentList = typeof view.updateContentList === "function"
+        ? view.updateContentList.bind(view)
+        : null;
+
+      if (originalUpdateContentList) {
+        view.updateContentList = function patchedPackageUpdateContentList(index) {
+          if (view.__jjyxPackageClosing) return;
+          try {
+            return originalUpdateContentList(index);
+          } catch (error) {
+            console.error("[fishing] package list update failed", error);
+            try {
+              if (view.content_list) view.content_list.removeAllChildren();
+            } catch (_) {}
+          }
+        };
+      }
+
+      if (originalShowDlg) {
+        view.showDlg = function patchedPackageShowDlg(index, parent) {
+          if (view.__jjyxPackageOpen && view.node.parent && view.node.active) return;
+          view.__jjyxPackageClosing = false;
+          view.__jjyxPackageOpen = true;
+          if (index !== null && typeof index !== "undefined" && index !== "") {
+            view._index = Math.max(0, Math.floor(Number(index)) || 0);
+          }
+          try {
+            var toggles = view.menu_table && view.menu_table.node
+              ? view.menu_table.node.getComponentsInChildren(cc.Toggle)
+              : [];
+            if (toggles && toggles.length) {
+              view._toggles = toggles;
+              view._index = Math.min(view._index, toggles.length - 1);
+            }
+          } catch (_) {}
+          try {
+            view.node.stopAllActions();
+            view.node.opacity = 255;
+          } catch (_) {}
+          var result;
+          try {
+            result = originalShowDlg(index, parent);
+          } catch (error) {
+            console.error("[fishing] package open failed", error);
+            try {
+              if (parent) view.node.parent = parent;
+              view.node.active = true;
+              if (typeof view.updateContentList === "function") {
+                view.updateContentList(view._index || 0);
+              }
+            } catch (_) {}
+          }
+          setTimeout(function () {
+            if (!view.__jjyxPackageOpen || !view.node.parent || !view.node.active) return;
+            try {
+              view.node.stopAllActions();
+              view.node.opacity = 255;
+              view.node.scaleX = typeof window.SCREEN_WIDTH_SCALE_X === "number"
+                ? window.SCREEN_WIDTH_SCALE_X
+                : 1;
+              view.node.scaleY = 1;
+            } catch (_) {}
+          }, 650);
+          return result;
+        };
+      }
+
+      view.closeDlg = function patchedPackageCloseDlg() {
+        if (view.__jjyxPackageClosing) return;
+        view.__jjyxPackageClosing = true;
+        view.__jjyxPackageOpen = false;
+        var node = view.node;
+        var finished = false;
+        function finishClose() {
+          if (finished) return;
+          finished = true;
+          try {
+            node.stopAllActions();
+            node.active = false;
+            node.removeFromParent(false);
+          } catch (_) {}
+          view.__jjyxPackageClosing = false;
+          try {
+            PlatformTools.showFollowButtonTouTiao();
+          } catch (_) {}
+        }
+        try {
+          node.stopAllActions();
+          if (window.Action && typeof Action.DlgCloseAction === "function") {
+            Action.DlgCloseAction(node, finishClose);
+            setTimeout(finishClose, 650);
+          } else {
+            finishClose();
+          }
+        } catch (_) {
+          finishClose();
+        }
+      };
+    }
+
+    function finishFishingDialogClose(view, stateKey, showFollowButton) {
+      var node = view && view.node;
+      if (!node) return;
+      var finished = false;
+      function finishClose() {
+        if (finished) return;
+        finished = true;
+        try {
+          node.stopAllActions();
+          node.active = false;
+          node.removeFromParent(false);
+        } catch (_) {}
+        view[stateKey + "Closing"] = false;
+        if (showFollowButton) {
+          try { PlatformTools.showFollowButtonTouTiao(); } catch (_) {}
+        }
+      }
+      try {
+        node.stopAllActions();
+        if (window.Action && typeof Action.DlgCloseAction === "function") {
+          Action.DlgCloseAction(node, finishClose);
+          setTimeout(finishClose, 650);
+        } else {
+          finishClose();
+        }
+      } catch (_) {
+        finishClose();
+      }
+    }
+
+    function patchFishingShopView(view) {
+      if (!view || view.__jjyxShopPatched) return;
+      view.__jjyxShopPatched = true;
+      var originalShowDlg = typeof view.showDlg === "function" ? view.showDlg.bind(view) : null;
+      var originalUpdateContentList = typeof view.updateContentList === "function"
+        ? view.updateContentList.bind(view)
+        : null;
+
+      if (originalUpdateContentList) {
+        view.updateContentList = function patchedShopUpdateContentList(index) {
+          if (view.__jjyxShopClosing) return;
+          try {
+            return originalUpdateContentList(index);
+          } catch (error) {
+            console.error("[fishing] shop list update failed", error);
+            try { if (view.content_list) view.content_list.removeAllChildren(); } catch (_) {}
+          }
+        };
+      }
+
+      if (originalShowDlg) {
+        view.showDlg = function patchedShopShowDlg(index, parent) {
+          if (view.__jjyxShopOpen && view.node.parent && view.node.active) return;
+          view.__jjyxShopClosing = false;
+          view.__jjyxShopOpen = true;
+          try {
+            view.node.stopAllActions();
+            view.node.opacity = 255;
+          } catch (_) {}
+          try {
+            return originalShowDlg(index, parent);
+          } catch (error) {
+            console.error("[fishing] shop open failed", error);
+            try {
+              if (parent) view.node.parent = parent;
+              view.node.active = true;
+              if (typeof view.updateContentList === "function") {
+                view.updateContentList(Math.max(0, Math.floor(Number(index)) || 0));
+              }
+            } catch (_) {}
+          }
+        };
+      }
+
+      view.closeDlg = function patchedShopCloseDlg() {
+        if (view.__jjyxShopClosing) return;
+        view.__jjyxShopClosing = true;
+        view.__jjyxShopOpen = false;
+        finishFishingDialogClose(view, "__jjyxShop", true);
+      };
+    }
+
+    function patchFishingSceneView(view) {
+      if (!view || view.__jjyxScenePatched) return;
+      view.__jjyxScenePatched = true;
+      var originalShowDlg = typeof view.showDlg === "function" ? view.showDlg.bind(view) : null;
+      var originalUpdateContentList = typeof view.updateContentList === "function"
+        ? view.updateContentList.bind(view)
+        : null;
+
+      if (originalUpdateContentList) {
+        view.updateContentList = function patchedSceneUpdateContentList() {
+          if (view.__jjyxSceneClosing) return;
+          // The original view removes its nodes but keeps every stale component forever.
+          view._item_components = [];
+          try {
+            return originalUpdateContentList.apply(view, arguments);
+          } catch (error) {
+            console.error("[fishing] scene list update failed", error);
+            view._item_components = [];
+            try { if (view.content_list) view.content_list.removeAllChildren(); } catch (_) {}
+          }
+        };
+      }
+
+      if (originalShowDlg) {
+        view.showDlg = function patchedSceneShowDlg(parent) {
+          if (view.__jjyxSceneOpen && view.node.parent && view.node.active) return;
+          view.__jjyxSceneClosing = false;
+          view.__jjyxSceneOpen = true;
+          try {
+            view.node.stopAllActions();
+            view.node.opacity = 255;
+          } catch (_) {}
+          try {
+            return originalShowDlg(parent);
+          } catch (error) {
+            console.error("[fishing] scene dialog open failed", error);
+            try {
+              if (parent) view.node.parent = parent;
+              view.node.active = true;
+              if (typeof view.updateContentList === "function") view.updateContentList();
+              if (typeof view.updateSceneInfo === "function") view.updateSceneInfo();
+            } catch (_) {}
+          }
+        };
+      }
+
+      view.closeDlg = function patchedSceneCloseDlg() {
+        if (view.__jjyxSceneClosing) return;
+        view.__jjyxSceneClosing = true;
+        view.__jjyxSceneOpen = false;
+        finishFishingDialogClose(view, "__jjyxScene", false);
+      };
+    }
+
+    function patchFishingPackageDialogs() {
+      if (!window.cc || !cc.director) return;
+      var scene = cc.director.getScene && cc.director.getScene();
+      if (!scene) return;
+      walkNode(scene, function (node) {
+        if (!node || typeof node.getComponent !== "function") return;
+        var packageView = null;
+        var shopView = null;
+        var sceneView = null;
+        var gameView = null;
+        try { packageView = node.getComponent("UserPackagePanle"); } catch (_) {}
+        if (packageView) patchFishingPackageView(packageView);
+        try { shopView = node.getComponent("FishShopPanle"); } catch (_) {}
+        if (shopView) patchFishingShopView(shopView);
+        try { sceneView = node.getComponent("SceneChanePanel"); } catch (_) {}
+        if (sceneView) patchFishingSceneView(sceneView);
+        try { gameView = node.getComponent("Game"); } catch (_) {}
+        if (!gameView) return;
+        if (!gameView.__jjyxPackageOpenPatched && typeof gameView.openUserPackage === "function") {
+          var originalOpenUserPackage = gameView.openUserPackage.bind(gameView);
+          gameView.openUserPackage = function patchedOpenUserPackage() {
+            var packageNode = gameView._userPackageNode;
+            if (packageNode && packageNode.parent && packageNode.active) return;
+            var result = originalOpenUserPackage.apply(gameView, arguments);
+            packageNode = gameView._userPackageNode;
+            if (packageNode && typeof packageNode.getComponent === "function") {
+              try { patchFishingPackageView(packageNode.getComponent("UserPackagePanle")); } catch (_) {}
+            }
+            return result;
+          };
+          gameView.__jjyxPackageOpenPatched = true;
+        }
+        if (!gameView.__jjyxShopOpenPatched && typeof gameView.openFishShop === "function") {
+          var originalOpenFishShop = gameView.openFishShop.bind(gameView);
+          gameView.openFishShop = function patchedOpenFishShop() {
+            var shopNode = gameView._fishShopNode;
+            if (shopNode && shopNode.parent && shopNode.active) return;
+            var result = originalOpenFishShop.apply(gameView, arguments);
+            shopNode = gameView._fishShopNode;
+            if (shopNode && typeof shopNode.getComponent === "function") {
+              try { patchFishingShopView(shopNode.getComponent("FishShopPanle")); } catch (_) {}
+            }
+            return result;
+          };
+          gameView.__jjyxShopOpenPatched = true;
+        }
+        if (!gameView.__jjyxSceneOpenPatched && typeof gameView.openSceneChangeDlg === "function") {
+          var originalOpenSceneChangeDlg = gameView.openSceneChangeDlg.bind(gameView);
+          gameView.openSceneChangeDlg = function patchedOpenSceneChangeDlg() {
+            var sceneNode = gameView._sceneChangeNode;
+            if (sceneNode && sceneNode.parent && sceneNode.active) return;
+            var result = originalOpenSceneChangeDlg.apply(gameView, arguments);
+            sceneNode = gameView._sceneChangeNode;
+            if (sceneNode && typeof sceneNode.getComponent === "function") {
+              try { patchFishingSceneView(sceneNode.getComponent("SceneChanePanel")); } catch (_) {}
+            }
+            return result;
+          };
+          gameView.__jjyxSceneOpenPatched = true;
+        }
+      });
+    }
+
+    function patchFishingSceneLoading(gameView) {
+      if (
+        !gameView ||
+        gameView.__jjyxSceneLoadingPatched ||
+        typeof gameView.enterScene !== "function"
+      ) {
+        return;
+      }
+      gameView.enterScene = function patchedEnterScene(sceneId, cost) {
+        var finished = false;
+        CommonResManager.ShowPopWait();
+
+        function complete(success) {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timeoutTimer);
+          CommonResManager.HidePopWait();
+          if (!success) {
+            CommonResManager.ShowToast("钓场资源加载失败，请稍后重试");
+            return;
+          }
+          if (cost) {
+            UserBaseInfo.setUserGold(UserBaseInfo.getUserGold() - cost);
+            gameView.updateUserGoldShow();
+            CommonResManager.ShowToast("积分 -" + cost, 1);
+            CommonResManager.PlayGlodSFX();
+          }
+          setTimeout(function () {
+            gameView.changeScene(sceneId);
+          }, 50);
+        }
+
+        var timeoutTimer = setTimeout(function () {
+          complete(false);
+        }, 8000);
+
+        if (CommonResManager.IsSceneLoaded(sceneId)) {
+          setTimeout(function () { complete(true); }, 100);
+          return;
+        }
+        CommonResManager.PreloadSceneRes(
+          sceneId,
+          function () { complete(true); },
+          function () { complete(false); }
+        );
+      };
+      gameView.__jjyxSceneLoadingPatched = true;
+    }
+
     function hideNode(node) {
       if (node) node.active = false;
     }
@@ -1102,10 +1970,30 @@
       normalizeSceneTextAndAdButtons();
     }
 
+    function scheduleFishingGoldRender() {
+      if (goldRenderTimer) return;
+      goldRenderTimer = setTimeout(function () {
+        goldRenderTimer = null;
+        try {
+          if (window.UserBaseInfo && typeof window.UserBaseInfo.saveUserInfoData === "function") {
+            window.UserBaseInfo.saveUserInfoData(true);
+          }
+          var canvas = window.cc && cc.director && cc.director.getScene()
+            ? cc.director.getScene().getChildByName("Canvas")
+            : null;
+          if (canvas) canvas.emit("updateGameView");
+        } catch (error) {
+          console.warn("[fishing] balance render failed:", error);
+        }
+      }, 80);
+    }
+
     function refreshFishingGold(balance) {
       var gold = Math.max(0, Math.floor(toNumber(balance)));
+      var current = readCurrentGold();
       pendingGold = gold;
       lastKnownGold = gold;
+      if (current === gold) return;
       updateLocalSaveGold(gold);
 
       if (!window.UserBaseInfo || typeof window.UserBaseInfo.setUserGold !== "function") {
@@ -1115,18 +2003,10 @@
       suppressGoldSync = true;
       try {
         window.UserBaseInfo.setUserGold(gold);
-        if (typeof window.UserBaseInfo.saveUserInfoData === "function") {
-          window.UserBaseInfo.saveUserInfoData(true);
-        }
-        var canvas = window.cc && cc.director && cc.director.getScene()
-          ? cc.director.getScene().getChildByName("Canvas")
-          : null;
-        if (canvas) {
-          canvas.emit("updateGameView");
-        }
       } finally {
         suppressGoldSync = false;
       }
+      scheduleFishingGoldRender();
     }
 
     function readCurrentGold() {
@@ -1366,10 +2246,17 @@
 
       window.UserBaseInfo.setUserGold = function patchedSetUserGold(value) {
         var before = toNumber(originalGetUserGold());
-        var result = originalSetUserGold(value);
+        var wasSuppressed = suppressGoldSync;
+        var result;
+        suppressGoldSync = true;
+        try {
+          result = originalSetUserGold(value);
+        } finally {
+          suppressGoldSync = wasSuppressed;
+        }
         var after = toNumber(originalGetUserGold());
         updateLocalSaveGold(after);
-        if (!suppressGoldSync) {
+        if (!wasSuppressed) {
           syncGoldDelta(after - before, nextGoldChangeReason || "");
         }
         lastKnownGold = Math.max(0, Math.floor(after));
@@ -1424,6 +2311,7 @@
       var action = message.action;
       var data = message.data || {};
       if (action === "init") {
+        resetGoldSyncQueue();
         appInitData = data;
         lastAccountIdentity = "";
         remoteSaveLoaded = false;
@@ -1440,6 +2328,10 @@
         if (action === "pointsChangeResult" && handleFishingEntryFeeResult(data)) {
           return;
         }
+        var handledGoldSync = action === "pointsChangeResult" && handleGoldSyncResult(data);
+        if ((handledGoldSync || action === "balanceUpdate") && (goldSyncInFlight || goldSyncQueue.length)) {
+          return;
+        }
         if (data.success === false || typeof data.points !== "undefined" || typeof data.balance !== "undefined") {
           refreshFishingGold(balanceFromData(data, pendingGold || 0));
           setTimeout(maybeShowFishingEntryFee, 120);
@@ -1451,10 +2343,14 @@
     activateAccountSave();
     loadLocalCastState();
     loadRemoteSaveSync(false);
+    updateFishingCastCounter();
     fitCocosCanvasToViewport();
     var fishingCastPatchTimer = setInterval(function () {
       installFishingCastLimitPatch();
       if (fishingCastPatchInstalled) clearInterval(fishingCastPatchTimer);
+    }, 20);
+    var fishingUiSafetyPatchTimer = setInterval(function () {
+      if (installFishingPopWaitPatch()) clearInterval(fishingUiSafetyPatchTimer);
     }, 20);
     window.addEventListener("resize", fitCocosCanvasToViewport);
     window.addEventListener("orientationchange", function () {
@@ -1470,9 +2366,13 @@
       if (!economyPatchInstalled) installEconomyPatch();
       installFishingCastLimitPatch();
       installUserGoldBridge();
+      installFishingPopWaitPatch();
+      patchFishingMarketDialogs();
+      patchFishingPackageDialogs();
       normalizeSceneTextAndAdButtons();
       patchFishingGarbageDialog();
       maybeShowFishingEntryFee();
+      updateFishingCastCounter();
       if (!suppressGoldSync) syncCurrentGold();
     }, 300);
   })();

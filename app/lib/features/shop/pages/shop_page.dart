@@ -35,6 +35,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
   bool _showControls = true;
   String _paymentQrcode = '';
   String _paymentPayeeName = '';
+  _CagOffer _cagOffer = const _CagOffer();
   static const int _defaultSilverPrice = 1000;
 
   static const List<_ShopProduct> _products = [
@@ -45,7 +46,6 @@ class _ShopPageState extends ConsumerState<ShopPage> {
       imageName: '28c6042b-83b9-423f-89a3-8b5042532853.png',
       cashPrice: null,
       silverOnly: true,
-      comingSoon: true,
     ),
     _ShopProduct(
       key: 'health-ring',
@@ -188,16 +188,28 @@ class _ShopPageState extends ConsumerState<ShopPage> {
   Future<void> _loadShopSupportInfo() async {
     final api = ref.read(apiClientProvider);
     try {
-      final results = await Future.wait([
+      final results = await Future.wait<Object?>([
         api.get<Map<String, dynamic>>(ApiEndpoints.shopPaymentInfo),
         api.get<Map<String, dynamic>>(ApiEndpoints.shopAddress),
+        api.get<List<dynamic>>(ApiEndpoints.shopCatalog),
       ]);
       if (!mounted) return;
-      final payment = results[0] ?? <String, dynamic>{};
-      final address = results[1] ?? <String, dynamic>{};
+      final payment =
+          results[0] as Map<String, dynamic>? ?? <String, dynamic>{};
+      final address =
+          results[1] as Map<String, dynamic>? ?? <String, dynamic>{};
+      final catalog = results[2] as List<dynamic>? ?? const [];
+      Map<String, dynamic>? cagData;
+      for (final item in catalog) {
+        if (item is Map && item['key']?.toString() == 'cag') {
+          cagData = Map<String, dynamic>.from(item);
+          break;
+        }
+      }
       setState(() {
         _paymentQrcode = payment['qrcode']?.toString() ?? '';
         _paymentPayeeName = payment['payeeName']?.toString() ?? '';
+        _cagOffer = _CagOffer.fromJson(cagData);
         if (_receiverNameCtrl.text.trim().isEmpty) {
           _receiverNameCtrl.text = address['receiverName']?.toString() ?? '';
         }
@@ -381,20 +393,25 @@ class _ShopPageState extends ConsumerState<ShopPage> {
     required int silverTotal,
     required String totalText,
   }) async {
-    final addressError = _validateAddress();
-    if (addressError != null) {
-      Toast.warning(context, addressError);
-      return false;
+    if (product.key != 'cag') {
+      final addressError = _validateAddress();
+      if (addressError != null) {
+        Toast.warning(context, addressError);
+        return false;
+      }
     }
     if (paymentMethod == _ShopPaymentMethod.silver) {
       try {
         final silver = await _loadCurrentSilver();
+        if (!mounted) return false;
         if (silver < silverTotal) {
           Toast.warning(context, '银币不足，当前银币 ${silver.toStringAsFixed(0)}');
           return false;
         }
       } catch (e) {
-        Toast.error(context, apiErrorMessage(e, fallback: '银币余额校验失败'));
+        if (mounted) {
+          Toast.error(context, apiErrorMessage(e, fallback: '银币余额校验失败'));
+        }
         return false;
       }
     } else {
@@ -433,8 +450,8 @@ class _ShopPageState extends ConsumerState<ShopPage> {
   }
 
   Future<void> _showOrderDialog(_ShopProduct product) async {
-    if (product.silverOnly && product.comingSoon) {
-      await _showComingSoonSilverDialog(product);
+    if (product.key == 'cag') {
+      await _showCagExchangeDialog(product);
       return;
     }
     final imageAsset = product.imageName == null
@@ -448,7 +465,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (innerContext, setDialogState) {
-          final silverTotal = product.silverPrice * quantity;
+          final silverTotal = _defaultSilverPrice * quantity;
           final cashTotal =
               product.cashPrice == null ? null : product.cashPrice! * quantity;
           final isCashSelected = paymentMethod == _ShopPaymentMethod.cash;
@@ -683,120 +700,251 @@ class _ShopPageState extends ConsumerState<ShopPage> {
     );
   }
 
-  Future<void> _showComingSoonSilverDialog(_ShopProduct product) async {
+  Future<void> _showCagExchangeDialog(_ShopProduct product) async {
+    final offer = _cagOffer;
+    if (!offer.available) {
+      Toast.warning(
+        context,
+        offer.unavailableReason.isEmpty
+            ? 'CAG兑换当前不可用'
+            : offer.unavailableReason,
+      );
+      return;
+    }
     final imageAsset = product.imageName == null
         ? null
         : _productImageAsset(product.imageName!);
+    final maxQuantity = offer.remainingLimit == null
+        ? 99
+        : (offer.remainingLimit! < 99 ? offer.remainingLimit! : 99);
     var quantity = 1;
+    var submitting = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => Dialog(
-          insetPadding:
-              const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        product.title,
-                        style: const TextStyle(
-                          color: Color(0xFF101828),
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                      tooltip: '关闭',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: SizedBox(
-                    height: 210,
-                    child: _buildOrderImage(imageAsset, fit: product.imageFit),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4F7FB),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFD7DFEA)),
-                  ),
-                  child: const Row(
+        builder: (innerContext, setDialogState) {
+          final silverTotal = offer.silverPrice * quantity;
+          return Dialog(
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
                     children: [
-                      Icon(Icons.toll_rounded, color: Color(0xFF667085)),
-                      SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          '银币兑换',
+                          product.title,
+                          style: const TextStyle(
+                            color: Color(0xFF101828),
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: submitting
+                            ? null
+                            : () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                        tooltip: '关闭',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      height: 210,
+                      child:
+                          _buildOrderImage(imageAsset, fit: product.imageFit),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF4F7FB),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFD7DFEA)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.toll_rounded,
+                              color: Color(0xFF667085),
+                            ),
+                            const SizedBox(width: 10),
+                            const Expanded(
+                              child: Text(
+                                '银币兑换',
+                                style: TextStyle(
+                                  color: Color(0xFF344054),
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '1 CAG = ${_formatShopAmount(offer.silverPrice)} 银币',
+                              style: const TextStyle(
+                                color: Color(0xFFFF4D24),
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (offer.periodText.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              offer.periodText,
+                              style: const TextStyle(
+                                color: Color(0xFF667085),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '兑换数量',
+                              style: TextStyle(
+                                color: Color(0xFF344054),
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            if (offer.remainingLimit != null)
+                              Text(
+                                '当前还可兑换 ${offer.remainingLimit} 个',
+                                style: const TextStyle(
+                                  color: Color(0xFF98A2B3),
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: !submitting && quantity > 1
+                            ? () => setDialogState(() => quantity--)
+                            : null,
+                        icon: const Icon(Icons.remove_rounded),
+                        tooltip: '减少数量',
+                      ),
+                      SizedBox(
+                        width: 44,
+                        child: Text(
+                          '$quantity',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: !submitting && quantity < maxQuantity
+                            ? () => setDialogState(() => quantity++)
+                            : null,
+                        icon: const Icon(Icons.add_rounded),
+                        tooltip: '增加数量',
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '银币合计',
                           style: TextStyle(
                             color: Color(0xFF344054),
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        '购买数量',
-                        style: TextStyle(
-                          color: Color(0xFF344054),
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: quantity > 1
-                          ? () => setDialogState(() => quantity--)
-                          : null,
-                      icon: const Icon(Icons.remove_rounded),
-                      tooltip: '减少数量',
-                    ),
-                    SizedBox(
-                      width: 44,
-                      child: Text(
-                        '$quantity',
-                        textAlign: TextAlign.center,
+                      Text(
+                        '${_formatShopAmount(silverTotal)} 银币',
                         style: const TextStyle(
-                          fontSize: 16,
+                          color: Color(0xFFFF4D24),
+                          fontSize: 18,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton(
+                    onPressed: submitting
+                        ? null
+                        : () async {
+                            setDialogState(() => submitting = true);
+                            final success = await _submitShopOrder(
+                              product: product,
+                              quantity: quantity,
+                              paymentMethod: _ShopPaymentMethod.silver,
+                              silverTotal: silverTotal,
+                              totalText: '${_formatShopAmount(silverTotal)} 银币',
+                            );
+                            if (success) {
+                              if (dialogContext.mounted) {
+                                Navigator.of(dialogContext).pop();
+                              }
+                              await _loadShopSupportInfo();
+                              return;
+                            }
+                            if (innerContext.mounted) {
+                              setDialogState(() => submitting = false);
+                            }
+                          },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF4D24),
+                      foregroundColor: Colors.white,
+                      fixedSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
-                    IconButton(
-                      onPressed: quantity < 99
-                          ? () => setDialogState(() => quantity++)
-                          : null,
-                      icon: const Icon(Icons.add_rounded),
-                      tooltip: '增加数量',
-                    ),
-                  ],
-                ),
-              ],
+                    child: submitting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text(
+                            '确认兑换',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -1488,9 +1636,7 @@ class _ShopProduct {
     this.imageName,
     this.imageFit = BoxFit.cover,
     this.cashPrice,
-    this.silverPrice = _ShopPageState._defaultSilverPrice,
     this.silverOnly = false,
-    this.comingSoon = false,
   });
 
   final String key;
@@ -1499,7 +1645,52 @@ class _ShopProduct {
   final String? imageName;
   final BoxFit imageFit;
   final int? cashPrice;
-  final int silverPrice;
   final bool silverOnly;
-  final bool comingSoon;
+}
+
+class _CagOffer {
+  const _CagOffer({
+    this.silverPrice = 0,
+    this.available = false,
+    this.unavailableReason = 'CAG兑换当前未开启',
+    this.startAt = '',
+    this.endAt = '',
+    this.userLimit = 0,
+    this.exchangedQuantity = 0,
+    this.remainingLimit,
+  });
+
+  factory _CagOffer.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const _CagOffer();
+    return _CagOffer(
+      silverPrice: (json['silverPrice'] as num?)?.toInt() ?? 0,
+      available: json['available'] == true,
+      unavailableReason: json['unavailableReason']?.toString() ?? '',
+      startAt: json['exchangeStartAt']?.toString() ?? '',
+      endAt: json['exchangeEndAt']?.toString() ?? '',
+      userLimit: (json['userLimit'] as num?)?.toInt() ?? 0,
+      exchangedQuantity: (json['exchangedQuantity'] as num?)?.toInt() ?? 0,
+      remainingLimit: json['remainingLimit'] == null
+          ? null
+          : (json['remainingLimit'] as num).toInt(),
+    );
+  }
+
+  final int silverPrice;
+  final bool available;
+  final String unavailableReason;
+  final String startAt;
+  final String endAt;
+  final int userLimit;
+  final int exchangedQuantity;
+  final int? remainingLimit;
+
+  String get periodText {
+    if (startAt.isNotEmpty && endAt.isNotEmpty) {
+      return '兑换时间：$startAt 至 $endAt';
+    }
+    if (startAt.isNotEmpty) return '兑换开始时间：$startAt';
+    if (endAt.isNotEmpty) return '兑换截止时间：$endAt';
+    return '';
+  }
 }

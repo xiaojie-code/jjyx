@@ -25,7 +25,11 @@ import { Message } from '../entities/message.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { MatrixService } from '../matrix/matrix.service';
-import { CurrencyService } from '../currency/currency.service';
+import {
+  CurrencyService,
+  WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES,
+  WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES,
+} from '../currency/currency.service';
 
 const LOW_ACTIVATION_AMOUNT = 500;
 const HIGH_ACTIVATION_AMOUNT = 2000;
@@ -33,6 +37,8 @@ const LOW_ACTIVATION_POINTS = 2500;
 const HIGH_ACTIVATION_POINTS = 10000;
 const LOW_ACTIVATION_SHARES = 50;
 const HIGH_ACTIVATION_SHARES = 200;
+const PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY =
+  'profile_total_user_count_override';
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -513,7 +519,21 @@ export class UserService implements OnModuleInit {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('用户不存在');
 
-    const currency = await this.currencyRepo.findOne({ where: { userId } });
+    const [currency, totalUserCountOverride] = await Promise.all([
+      this.currencyRepo.findOne({ where: { userId } }),
+      this.currencyService.getConfigValue(
+        PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY,
+        '',
+      ),
+    ]);
+    const overrideText = String(totalUserCountOverride || '').trim();
+    const overrideValue = Number(overrideText);
+    const totalUserCount =
+      overrideText &&
+      /^\d+$/.test(overrideText) &&
+      Number.isSafeInteger(overrideValue)
+        ? overrideValue
+        : await this.userRepo.count();
 
     return {
       id: user.id,
@@ -525,6 +545,7 @@ export class UserService implements OnModuleInit {
       activationAmount: user.activationAmount == null ? null : Number(user.activationAmount),
       shares: user.shares,
       inviteCode: user.inviteCode,
+      totalUserCount,
       currency: currency
         ? {
             points: Number(currency.points),
@@ -857,17 +878,10 @@ export class UserService implements OnModuleInit {
        FROM weekly_point_return_accounts a
        LEFT JOIN weekly_point_return_periods p ON p.id = a.period_id
        WHERE a.user_id = ?
-       ORDER BY p.week_start_date DESC, a.id DESC
-       LIMIT 8`,
+       ORDER BY p.week_start_date DESC, a.id DESC`,
       [userId],
     );
 
-    const historicalSummaryRows = await this.dataSource.query(
-      `SELECT COALESCE(SUM(return_amount), 0) AS totalReturnedPoints
-       FROM weekly_point_return_daily_records
-       WHERE user_id = ? AND status = 1`,
-      [userId],
-    );
     const returnHistoryRows = await this.dataSource.query(
       `SELECT
          r.id,
@@ -885,24 +899,117 @@ export class UserService implements OnModuleInit {
       [userId],
     );
 
+    const excludedPlaceholders = WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES.map(
+      () => '?',
+    ).join(', ');
+    const alwaysEligiblePlaceholders =
+      WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES.map(() => '?').join(', ');
+    const consumptionRows = await this.dataSource.query(
+      `SELECT
+         l.id,
+         l.sn,
+         l.log_type AS logType,
+         l.description,
+         l.amount,
+         ABS(l.amount) AS consumedPoints,
+         l.before_balance AS beforeBalance,
+         l.after_balance AS afterBalance,
+         DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+         a.id AS accountId,
+         CASE
+           WHEN l.log_type IN (${alwaysEligiblePlaceholders}) THEN 1
+           WHEN l.log_type IN (${excludedPlaceholders}) THEN 0
+           ELSE 1
+         END AS isEligible
+       FROM weekly_point_return_accounts a
+       INNER JOIN weekly_point_return_periods p ON p.id = a.period_id
+       INNER JOIN currency_logs l
+         ON l.user_id = a.user_id
+        AND l.currency_type = 'points'
+        AND l.amount < 0
+        AND l.created_at >= p.week_start_at
+        AND l.created_at <= p.week_end_at
+       WHERE a.user_id = ?
+       ORDER BY l.created_at DESC, l.id DESC`,
+      [
+        ...WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES,
+        ...WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES,
+        userId,
+      ],
+    );
+
+    const history = historyRows
+      .map((row: any) => this.mapWeeklyPointReturnAccount(row))
+      .filter(Boolean);
+    const returnHistory = returnHistoryRows.map((row: any) => ({
+      ...row,
+      id: Number(row.id),
+      accountId: Number(row.accountId),
+      dayIndex: Number(row.dayIndex),
+      returnAmount: this.roundPoints(Number(row.returnAmount || 0)),
+      currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
+    }));
+    const consumptionHistory = consumptionRows.map((row: any) => ({
+      ...row,
+      id: Number(row.id),
+      accountId: Number(row.accountId),
+      amount: this.roundPoints(Number(row.amount || 0)),
+      consumedPoints: this.roundPoints(Number(row.consumedPoints || 0)),
+      beforeBalance: this.roundPoints(Number(row.beforeBalance || 0)),
+      afterBalance: this.roundPoints(Number(row.afterBalance || 0)),
+      isEligible: Number(row.isEligible) === 1,
+    }));
+
+    const cumulativePeriods = history.map((account: any) => ({
+      ...account,
+      consumptionRecords: consumptionHistory.filter(
+        (record: any) => record.accountId === account.id,
+      ),
+      returnRecords: returnHistory.filter(
+        (record: any) => record.accountId === account.id,
+      ),
+    }));
+    const cumulativeSummary = cumulativePeriods.reduce(
+      (summary: any, account: any) => ({
+        consumedPoints: this.roundPoints(
+          summary.consumedPoints + Number(account.totalConsumedPoints || 0),
+        ),
+        eligibleConsumedPoints: this.roundPoints(
+          summary.eligibleConsumedPoints +
+            Number(account.eligibleConsumedPoints || 0),
+        ),
+        expectedReturnPoints: this.roundPoints(
+          summary.expectedReturnPoints +
+            Number(account.expectedReturnPoints || 0),
+        ),
+        returnedPoints: this.roundPoints(
+          summary.returnedPoints + Number(account.returnedPoints || 0),
+        ),
+        pendingReturnPoints: this.roundPoints(
+          summary.pendingReturnPoints +
+            Number(account.pendingReturnPoints || 0),
+        ),
+        periodCount: summary.periodCount + 1,
+      }),
+      {
+        consumedPoints: 0,
+        eligibleConsumedPoints: 0,
+        expectedReturnPoints: 0,
+        returnedPoints: 0,
+        pendingReturnPoints: 0,
+        periodCount: 0,
+      },
+    );
+
     return {
       current,
       records,
-      historicalReturnedPoints: this.roundPoints(
-        Number(historicalSummaryRows?.[0]?.totalReturnedPoints || 0),
-      ),
-      returnHistory: returnHistoryRows.map((row: any) => ({
-        ...row,
-        id: Number(row.id),
-        accountId: Number(row.accountId),
-        dayIndex: Number(row.dayIndex),
-        returnAmount: this.roundPoints(Number(row.returnAmount || 0)),
-        currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
-      })),
+      cumulativeSummary,
+      cumulativePeriods,
+      historicalReturnedPoints: cumulativeSummary.returnedPoints,
+      returnHistory,
       schedule: this.buildWeeklyReturnSchedule(current, records),
-      history: historyRows
-        .map((row: any) => this.mapWeeklyPointReturnAccount(row))
-        .filter(Boolean),
+      history,
     };
   }
 }

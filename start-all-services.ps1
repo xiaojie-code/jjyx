@@ -15,6 +15,7 @@ $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $NetworkProfileScript = Join-Path $RepoRoot 'network-profile.ps1'
 $EnvFile = Join-Path $RepoRoot 'server\.env'
 $RedisExe = 'D:\myApp\redis\redis-server.exe'
+$RedisCli = 'D:\myApp\redis\redis-cli.exe'
 $RedisConf = 'D:\myApp\redis\redis.windows.conf'
 $PhpDir = 'D:\myApp\php'
 $PhpExe = Join-Path $PhpDir 'php.exe'
@@ -90,6 +91,33 @@ function Start-RedisIfNeeded {
         Start-Process -FilePath $RedisExe -ArgumentList $RedisConf -WindowStyle Hidden | Out-Null
     } else {
         Write-Host "SKIP Redis not found: $RedisExe"
+    }
+}
+
+function Repair-RedisWriteProtection {
+    if (-not (Test-Path $RedisCli)) {
+        return
+    }
+
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        if (Test-LocalPort 6379) {
+            break
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not (Test-LocalPort 6379)) {
+        return
+    }
+
+    # This Redis instance is only the local cache/session service. On the
+    # Windows Redis port an RDB background-save failure can otherwise turn it
+    # read-only after startup and make the game sockets return 503.
+    & $RedisCli CONFIG SET stop-writes-on-bgsave-error no | Out-Null
+
+    $probeKey = 'jjyx:startup:write-probe'
+    $probe = (& $RedisCli SET $probeKey 1 EX 10 2>&1 | Out-String).Trim()
+    if ($probe -ne 'OK') {
+        Write-Host "WARN Redis write probe failed: $probe"
     }
 }
 
@@ -226,6 +254,7 @@ Write-Host 'Checking and starting services...'
 
 Start-MySqlIfNeeded
 Start-RedisIfNeeded
+Repair-RedisWriteProtection
 Start-BackendIfNeeded
 Start-AdminIfNeeded
 Start-KillerIfNeeded

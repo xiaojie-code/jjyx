@@ -69,6 +69,7 @@ class JSBridge {
   InAppWebViewController? _controller;
   GameUserInfo? _userInfo;
   double? _latestPoints;
+  int _balanceRefreshGeneration = 0;
 
   JSBridge({
     required ApiClient apiClient,
@@ -110,22 +111,24 @@ class JSBridge {
   }
 
   void _scheduleBalanceRefreshes() {
+    final generation = ++_balanceRefreshGeneration;
     Future<void>(() async {
-      for (final delay in const [
-        Duration(milliseconds: 250),
-        Duration(milliseconds: 900),
-        Duration(milliseconds: 1800),
-        Duration(milliseconds: 3200),
+      for (final delay in const <Duration>[
+        Duration(milliseconds: 350),
+        Duration(milliseconds: 1200),
       ]) {
         await Future.delayed(delay);
-        if (_controller == null) return;
-        await _handleGetBalance();
+        if (_controller == null || generation != _balanceRefreshGeneration) {
+          return;
+        }
+        await _handleGetBalance(refreshGeneration: generation);
       }
     });
   }
 
   /// Bind a WebView controller and register all JS handlers.
   void attach(InAppWebViewController controller) {
+    _balanceRefreshGeneration++;
     _controller = controller;
     if (!kIsWeb) {
       _registerHandlers(controller);
@@ -134,6 +137,7 @@ class JSBridge {
 
   /// Detach from the current controller.
   void detach() {
+    _balanceRefreshGeneration++;
     _controller = null;
   }
 
@@ -461,11 +465,20 @@ class JSBridge {
   }
 
   /// Handle `getBalance` --H5 requests the latest point balance.
-  Future<void> _handleGetBalance() async {
+  Future<void> _handleGetBalance({int? refreshGeneration}) async {
+    if (refreshGeneration != null &&
+        refreshGeneration != _balanceRefreshGeneration) {
+      return;
+    }
     try {
       final result = await _apiClient.get<Map<String, dynamic>>(
         ApiEndpoints.currencyBalance,
       );
+
+      if (refreshGeneration != null &&
+          refreshGeneration != _balanceRefreshGeneration) {
+        return;
+      }
 
       final points = _readBalance(result);
       _latestPoints = points;
