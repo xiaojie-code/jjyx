@@ -51,7 +51,7 @@
         <el-form-item label="状态">
           <el-select v-model="status" clearable placeholder="全部" style="width: 130px" @change="loadOrders">
             <el-option label="待审核" :value="0" />
-            <el-option label="已确认发货" :value="1" />
+            <el-option label="已确认/已发货" :value="1" />
             <el-option label="已驳回" :value="2" />
           </el-select>
         </el-form-item>
@@ -65,7 +65,7 @@
           <el-input
             v-model="keyword"
             clearable
-            placeholder="订单/用户/商品/收货人/手机号"
+            placeholder="订单/用户/商品/收货人/手机号/钱包地址"
             style="width: 260px"
             @keyup.enter="loadOrders"
           />
@@ -77,7 +77,7 @@
       </el-form>
       <div class="stats">
         <el-tag type="warning">待审核 {{ stats.pending }}</el-tag>
-        <el-tag type="success">已确认发货 {{ stats.approved }}</el-tag>
+        <el-tag type="success">已确认/已发货 {{ stats.approved }}</el-tag>
         <el-tag type="info">已驳回 {{ stats.rejected }}</el-tag>
       </div>
     </el-card>
@@ -107,10 +107,19 @@
             <div v-else>¥{{ money(row.totalCashAmount) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="收货信息" min-width="260" show-overflow-tooltip>
+        <el-table-column label="收货/钱包信息" min-width="300">
           <template #default="{ row }">
-            <div>{{ row.receiverName }} {{ row.receiverPhone }}</div>
-            <div class="text-muted">{{ row.receiverAddress }}</div>
+            <template v-if="row.productKey === 'cag'">
+              <div class="wallet-label">CAG 钱包地址</div>
+              <div class="wallet-row">
+                <span class="wallet-address" :title="row.walletAddress || ''">{{ row.walletAddress || '-' }}</span>
+                <el-button v-if="row.walletAddress" link type="primary" size="small" @click="copyWallet(row.walletAddress)">复制</el-button>
+              </div>
+            </template>
+            <template v-else>
+              <div>{{ row.receiverName }} {{ row.receiverPhone }}</div>
+              <div class="text-muted">{{ row.receiverAddress }}</div>
+            </template>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="110">
@@ -164,6 +173,12 @@
         </el-form-item>
         <el-form-item label="商品">
           <el-input :model-value="currentOrder?.productTitle || ''" disabled />
+        </el-form-item>
+        <el-form-item v-if="currentOrder?.productKey === 'cag'" label="钱包地址">
+          <div class="approve-wallet">
+            <el-input :model-value="currentOrder?.walletAddress || ''" type="textarea" :rows="2" readonly />
+            <el-button type="primary" plain @click="copyWallet(currentOrder?.walletAddress)">复制地址</el-button>
+          </div>
         </el-form-item>
         <el-form-item v-if="currentOrder?.productKey !== 'cag'" label="物流公司">
           <el-input v-model="approveForm.logisticsCompany" placeholder="例如：顺丰/京东/德邦" />
@@ -222,6 +237,20 @@ const approveForm = reactive({
 
 function money(value: any) {
   return Number(value || 0).toFixed(2)
+}
+
+async function copyWallet(address: any) {
+  const value = String(address || '').trim()
+  if (!value) {
+    ElMessage.warning('钱包地址为空')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(value)
+    ElMessage.success('钱包地址已复制')
+  } catch {
+    ElMessage.warning('复制失败，请手动复制')
+  }
 }
 
 async function loadCagConfig() {
@@ -359,6 +388,11 @@ onMounted(() => {
 .cag-stats strong { color: #303133; font-size: 17px; }
 .stats { display: flex; gap: 10px; margin-top: 6px; }
 .text-muted { color: #909399; font-size: 13px; }
+.wallet-label { color: #606266; font-size: 12px; margin-bottom: 2px; }
+.wallet-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.wallet-address { flex: 1; min-width: 0; overflow: hidden; color: #303133; font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.approve-wallet { display: flex; align-items: flex-start; gap: 10px; width: 100%; }
+.approve-wallet :deep(.el-textarea) { flex: 1; }
 .pager { margin-top: 16px; justify-content: flex-end; }
 :deep(.el-table) { --el-table-border-color: transparent; --el-table-row-hover-bg-color: #f0f5ff; }
 :deep(.el-table th.el-table__cell) { background-color: #fafafa; color: #606266; font-weight: 600; }

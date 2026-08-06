@@ -1,7 +1,7 @@
 name: competitive_game_platform
 description: 竞技游戏平台 - 社交+游戏+虚拟经济一体化移动应用
 publish_to: 'none'
-version: 1.0.11+11
+version: 1.0.12+12
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

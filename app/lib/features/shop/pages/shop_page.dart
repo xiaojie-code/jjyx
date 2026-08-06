@@ -392,6 +392,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
     required _ShopPaymentMethod paymentMethod,
     required int silverTotal,
     required String totalText,
+    String? walletAddress,
   }) async {
     if (product.key != 'cag') {
       final addressError = _validateAddress();
@@ -430,6 +431,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
           'receiverName': _receiverNameCtrl.text.trim(),
           'receiverPhone': _receiverPhoneCtrl.text.trim(),
           'receiverAddress': _receiverAddressCtrl.text.trim(),
+          if (walletAddress != null) 'walletAddress': walletAddress.trim(),
         },
       );
       await ref.read(authProvider.notifier).loadProfile();
@@ -717,6 +719,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
     final maxQuantity = offer.remainingLimit == null
         ? 99
         : (offer.remainingLimit! < 99 ? offer.remainingLimit! : 99);
+    final walletAddressController = TextEditingController();
     var quantity = 1;
     var submitting = false;
     await showDialog<void>(
@@ -872,6 +875,27 @@ class _ShopPageState extends ConsumerState<ShopPage> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: walletAddressController,
+                    enabled: !submitting,
+                    maxLength: 255,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
+                      labelText: '钱包地址（必填）',
+                      hintText: '请输入接收 CAG 的钱包地址',
+                      prefixIcon:
+                          const Icon(Icons.account_balance_wallet_outlined),
+                      counterText: '',
+                      filled: true,
+                      fillColor: const Color(0xFFF8FAFC),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
                   const Divider(height: 24),
                   Row(
                     children: [
@@ -899,6 +923,12 @@ class _ShopPageState extends ConsumerState<ShopPage> {
                     onPressed: submitting
                         ? null
                         : () async {
+                            final walletAddress =
+                                walletAddressController.text.trim();
+                            if (walletAddress.isEmpty) {
+                              Toast.warning(innerContext, '请填写钱包地址');
+                              return;
+                            }
                             setDialogState(() => submitting = true);
                             final success = await _submitShopOrder(
                               product: product,
@@ -906,6 +936,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
                               paymentMethod: _ShopPaymentMethod.silver,
                               silverTotal: silverTotal,
                               totalText: '${_formatShopAmount(silverTotal)} 银币',
+                              walletAddress: walletAddress,
                             );
                             if (success) {
                               if (dialogContext.mounted) {
@@ -947,6 +978,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
         },
       ),
     );
+    walletAddressController.dispose();
   }
 
   Widget _buildOrderImage(String? asset, {BoxFit fit = BoxFit.cover}) {

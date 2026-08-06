@@ -202,6 +202,7 @@ export class ShopService implements OnModuleInit {
         receiver_name VARCHAR(50) NOT NULL,
         receiver_phone VARCHAR(30) NOT NULL,
         receiver_address VARCHAR(255) NOT NULL,
+        wallet_address VARCHAR(255) NULL COMMENT 'CAG接收钱包地址',
         status TINYINT NOT NULL DEFAULT 0 COMMENT '0待审核 1已确认发货 2已驳回',
         admin_remark VARCHAR(200) NULL,
         logistics_company VARCHAR(80) NULL,
@@ -227,6 +228,7 @@ export class ShopService implements OnModuleInit {
       `ALTER TABLE shop_orders ADD COLUMN logistics_no VARCHAR(100) NULL`,
       `ALTER TABLE shop_orders ADD COLUMN operator_id INT NULL`,
       `ALTER TABLE shop_orders ADD COLUMN handled_at DATETIME NULL`,
+      `ALTER TABLE shop_orders ADD COLUMN wallet_address VARCHAR(255) NULL COMMENT 'CAG接收钱包地址' AFTER receiver_address`,
     ];
     for (const sql of alters) {
       try {
@@ -264,6 +266,17 @@ export class ShopService implements OnModuleInit {
     if (receiverAddress.length > 200)
       throw new BadRequestException('收货地址过长');
     return { receiverName, receiverPhone, receiverAddress };
+  }
+
+  private normalizeWalletAddress(data: any) {
+    const walletAddress = String(data?.walletAddress || '').trim();
+    if (!walletAddress) {
+      throw new BadRequestException('请填写钱包地址');
+    }
+    if (walletAddress.length > 255) {
+      throw new BadRequestException('钱包地址不能超过255个字符');
+    }
+    return walletAddress;
   }
 
   private createOrderSn() {
@@ -329,7 +342,9 @@ export class ShopService implements OnModuleInit {
 
   private parseConfigDate(value: string) {
     if (!value) return null;
-    const date = new Date(value.includes('T') ? value : value.replace(' ', 'T'));
+    const date = new Date(
+      value.includes('T') ? value : value.replace(' ', 'T'),
+    );
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
@@ -347,7 +362,10 @@ export class ShopService implements OnModuleInit {
       ],
     );
     const values = new Map<string, string>(
-      rows.map((row: any) => [String(row.configKey), String(row.configValue ?? '')]),
+      rows.map((row: any) => [
+        String(row.configKey),
+        String(row.configValue ?? ''),
+      ]),
     );
     const enabled = values.get(CAG_CONFIG.enabled) === 'true';
     const silverPrice = Math.max(
@@ -500,6 +518,7 @@ export class ShopService implements OnModuleInit {
       receiverName: row.receiverName ?? row.receiver_name,
       receiverPhone: row.receiverPhone ?? row.receiver_phone,
       receiverAddress: row.receiverAddress ?? row.receiver_address,
+      walletAddress: row.walletAddress ?? row.wallet_address ?? '',
       status,
       statusText:
         status === 0
@@ -602,6 +621,8 @@ export class ShopService implements OnModuleInit {
       product.key === 'cag'
         ? { receiverName: '', receiverPhone: '', receiverAddress: '' }
         : this.normalizeAddress(data);
+    const walletAddress =
+      product.key === 'cag' ? this.normalizeWalletAddress(data) : null;
     const totalSilver = product.silverPrice * quantity;
     const totalCash =
       product.cashPrice == null ? null : product.cashPrice * quantity;
@@ -609,7 +630,9 @@ export class ShopService implements OnModuleInit {
 
     const result = await this.dataSource.transaction(async (mgr) => {
       if (product.key === 'cag') {
-        await mgr.query(`SELECT id FROM users WHERE id = ? FOR UPDATE`, [userId]);
+        await mgr.query(`SELECT id FROM users WHERE id = ? FOR UPDATE`, [
+          userId,
+        ]);
         if (cagConfig && cagConfig.userLimit > 0) {
           const period = this.getCagPeriodFilter(cagConfig);
           const rows = await mgr.query(
@@ -666,8 +689,8 @@ export class ShopService implements OnModuleInit {
           (order_sn, user_id, product_key, product_title, product_image,
            payment_method, quantity, unit_silver_price, total_silver_amount,
            unit_cash_price, total_cash_amount, receiver_name, receiver_phone,
-           receiver_address, status, currency_log_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(), NOW())`,
+           receiver_address, wallet_address, status, currency_log_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(), NOW())`,
         [
           orderSn,
           userId,
@@ -683,6 +706,7 @@ export class ShopService implements OnModuleInit {
           address.receiverName,
           address.receiverPhone,
           address.receiverAddress,
+          walletAddress,
           currencyLogId,
         ],
       );
@@ -746,7 +770,7 @@ export class ShopService implements OnModuleInit {
       const keywordNumber = Number(keyword);
       if (Number.isFinite(keywordNumber) && keywordNumber > 0) {
         where.push(
-          '(o.id = ? OR o.user_id = ? OR o.order_sn LIKE ? OR u.account LIKE ? OR u.nickname LIKE ? OR o.product_title LIKE ? OR o.receiver_name LIKE ? OR o.receiver_phone LIKE ?)',
+          '(o.id = ? OR o.user_id = ? OR o.order_sn LIKE ? OR u.account LIKE ? OR u.nickname LIKE ? OR o.product_title LIKE ? OR o.receiver_name LIKE ? OR o.receiver_phone LIKE ? OR o.wallet_address LIKE ?)',
         );
         params.push(
           keywordNumber,
@@ -757,12 +781,13 @@ export class ShopService implements OnModuleInit {
           like,
           like,
           like,
+          like,
         );
       } else {
         where.push(
-          '(o.order_sn LIKE ? OR u.account LIKE ? OR u.nickname LIKE ? OR o.product_title LIKE ? OR o.receiver_name LIKE ? OR o.receiver_phone LIKE ?)',
+          '(o.order_sn LIKE ? OR u.account LIKE ? OR u.nickname LIKE ? OR o.product_title LIKE ? OR o.receiver_name LIKE ? OR o.receiver_phone LIKE ? OR o.wallet_address LIKE ?)',
         );
-        params.push(like, like, like, like, like, like);
+        params.push(like, like, like, like, like, like, like);
       }
     }
     const page = Math.max(1, Number(query.page || 1));
@@ -783,6 +808,7 @@ export class ShopService implements OnModuleInit {
               o.receiver_name AS receiverName,
               o.receiver_phone AS receiverPhone,
               o.receiver_address AS receiverAddress,
+              o.wallet_address AS walletAddress,
               o.admin_remark AS adminRemark,
               o.logistics_company AS logisticsCompany,
               o.logistics_no AS logisticsNo,
