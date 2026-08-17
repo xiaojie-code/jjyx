@@ -114,10 +114,11 @@ const GameBtnCallBackMixin = {
      */
     send_card(uid, cardInfoBO,ting_state) {
         let index = this.find_user_index(uid);
+        if (index < 0 || !this.room_seats[index]) return false;
         log.warn('index ........',index)
         log.warn(this.upIndex)
         if(ting_state != true){
-            if (this.turn != index) {
+            if (this.turn != index || this.room_seats[index].action_state != globalMgr.present_game_config.action_state.send_card) {
                 return;
             }
         }
@@ -129,22 +130,32 @@ const GameBtnCallBackMixin = {
         } 
 
         cardInfoBO = this.fresh_card_info_bo(cardInfoBO);
-        this.previous_card = cardInfoBO;
-        this.previous_index = index;
-        log.warn(this.previous_card.value % 16);
-
+        var removedCard = null;
         for (var i = 0; i < this.room_seats[index].hand_holds.length; i++) {
             if (this.check_card_equal(this.room_seats[index].hand_holds[i], cardInfoBO)) {
-                this.room_seats[index].hand_holds.splice(i, 1);
+                removedCard = this.room_seats[index].hand_holds.splice(i, 1)[0];
                 break;
             }
         }
+        if (!removedCard) removedCard = this._mahjongRemoveVisibleCard(index, cardInfoBO.value);
+        if (!removedCard) {
+            log.error('[mahjong action] rejected discard without matching hand tile uid=' + uid + ' value=' + cardInfoBO.value);
+            return false;
+        }
+        cardInfoBO = removedCard;
+        for (var pendingIndex = 0; pendingIndex < this.room_seats.length; pendingIndex++) {
+            this._mahjongClearPendingAction(pendingIndex);
+        }
+        this.previous_card = cardInfoBO;
+        this.previous_index = index;
+        log.warn(this.previous_card.value % 16);
 
         if (this.room_seats[index].skip_hu_state == true) {
             this.room_seats[index].skip_hu_state = false;
         }
 
         this.room_seats[index].out_holds.push(cardInfoBO);
+        this._mahjongValidateTileMultiplicity('discard-shqm');
         
         this.removeHuaCard(index);
 
@@ -386,6 +397,8 @@ class WSLogic extends WSMahjongGameBaseLogic {
             element.hide_card_num = 0;
             element.hu_prompt = [];
             element.collision_prompt = [];
+            element.pending_collision_card = null;
+            element.pending_collision_source = null;
             element.ting_state = globalMgr.present_game_config.ting_state.not_ting;
             element.anim_state = globalMgr.present_game_config.anim_state.empty;
             element.is_shot = false;
@@ -582,28 +595,34 @@ class WSLogic extends WSMahjongGameBaseLogic {
 
 
 
-        //检测自摸
-        if (this.check_can_hu(index, card_info_bo) && !this.room_seats[index].skip_hu_state && this.room_seats[index].ting_state == globalMgr.present_game_config.ting_state.ting) {
+        var canSelfHu = this.check_can_hu(index, card_info_bo) &&
+            !this.room_seats[index].skip_hu_state &&
+            this.room_seats[index].ting_state == globalMgr.present_game_config.ting_state.ting;
+        this.room_seats[index].hand_holds.push(card_info_bo);
+        this.cards_sort(index);
+        this.turn = seats_index;
 
-            globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.send_card);
-            
-            this.sendMsg(wsMsgKeyEnum.update_hand_holds);
-            this.sendMsg(wsMsgKeyEnum.update_room_info_all);
-
-
-            this.check_collision_card(seats_index, card_info_bo) && !this.check_knock_state(seats_index, card_info_bo)
-                ? globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.collision_and_hu)
-                : globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.self_hu);
-
-            this.previous_card = card_info_bo;
-            this.cards_sort(index);
-            this.room_seats[index].hand_holds.push(card_info_bo);
+        if (card_info_bo.value >= 0x70) {
             this.removeHuaCard(index);
+            return;
+        }
+
+        var selfCollisionCard = this._mahjongFindSelfCollisionCard(index, card_info_bo);
+
+        //检测自摸
+        if (canSelfHu) {
+            this.previous_card = card_info_bo;
+            this.previous_index = index;
+            if (selfCollisionCard) {
+                this._mahjongSetPendingCollision(index, selfCollisionCard, 'self');
+                globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.collision_and_hu);
+            } else {
+                globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.self_hu);
+            }
             this.startOutCardCountDown();
-
-
             this.sendMsg(wsMsgKeyEnum.update_hand_holds);
             this.sendMsg(wsMsgKeyEnum.update_room_info_all);
+            this._mahjongValidateTileMultiplicity('self-draw-hu');
             return;
         }
 
@@ -621,62 +640,26 @@ class WSLogic extends WSMahjongGameBaseLogic {
         //     return;
         // }
 
-        var hand_holds = this.room_seats[index].hand_holds;
-        let card_copy = this.check_dark_collsion(hand_holds, hand_holds.length) != false ? this.check_dark_collsion(hand_holds, hand_holds.length) : JSON.parse(JSON.stringify(card_info_bo));
-
-        //检测弯杠
-        if (this.check_wan_collsion(index, card_copy)) {
-            this.cards_sort(index);
-            this.room_seats[index].hand_holds.push(card_info_bo);
-            this.removeHuaCard(index);
+        if (selfCollisionCard) {
+            this._mahjongSetPendingCollision(index, selfCollisionCard, 'self');
+            globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.collision_card);
             this.startOutCardCountDown();
             this.sendMsg(wsMsgKeyEnum.update_hand_holds);
-            globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.collision_card);
             this.sendMsg(wsMsgKeyEnum.update_room_info_all);
+            this._mahjongValidateTileMultiplicity('self-draw-kong-prompt');
             return;
         }
 
-        //检测暗杠
-        if (this.check_collision_card(index, card_info_bo) != false) {
-            this.cards_sort(index);
-            this.room_seats[index].hand_holds.push(card_info_bo);
-            this.removeHuaCard(index);
-            this.startOutCardCountDown();
-            this.sendMsg(wsMsgKeyEnum.update_hand_holds);
-            globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.collision_card);
-            this.sendMsg(wsMsgKeyEnum.update_room_info_all);
-            return;
-        }
-
-        this.cards_sort(index);
-        this.room_seats[index].hand_holds.push(card_info_bo);
-        
-        this.removeHuaCard(index);
-
-        var cache_hand_holds = this.room_seats[index].hand_holds.slice(0);
-
-        //通知该出牌了
-        this.turn = seats_index;
-
-        if (this.room_seats[index].ting_state == globalMgr.present_game_config.ting_state.ting) { //听牌         
-            this.startOutCardCountDown();
-            this.sendMsg(wsMsgKeyEnum.update_hand_holds);
-            this.sendMsg(wsMsgKeyEnum.update_room_info_all);
+        this._mahjongClearPendingAction(index);
+        globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.send_card);
+        if (this.room_seats[index].ting_state == globalMgr.present_game_config.ting_state.ting) {
             this.upIndex = index;
-                    
-            this.room_seats[this.upIndex].card_info_bo = this.room_seats[this.upIndex].hand_holds.pop();
-            this.room_seats[this.upIndex].hand_holds = cache_hand_holds;
-            // this.send_card(this.room_seats[index].user_id, card_info_bo);
-
-            console.warn("后 card_info_bo = ",card_info_bo.value)
+            this.room_seats[index].card_info_bo = card_info_bo;
         }
-        else {
-            globalMgr.present_room_mgr.setRoomsSeatsActionState(seats_index, this.roomid, globalMgr.present_game_config.action_state.send_card);
-            this.startOutCardCountDown();
-            this.sendMsg(wsMsgKeyEnum.update_room_info_all);
-            this.room_seats[index].hand_holds = cache_hand_holds;
-            this.sendMsg(wsMsgKeyEnum.update_hand_holds);
-        }
+        this.startOutCardCountDown();
+        this.sendMsg(wsMsgKeyEnum.update_room_info_all);
+        this.sendMsg(wsMsgKeyEnum.update_hand_holds);
+        this._mahjongValidateTileMultiplicity('draw');
     }
 
     getSeatsHuaCards(index){

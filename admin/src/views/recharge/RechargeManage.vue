@@ -8,7 +8,7 @@
             <el-form-item label="状态">
               <el-select v-model="statusFilter" placeholder="全部" clearable style="width: 130px" @change="loadOrders">
                 <el-option label="待核实" :value="0" />
-                <el-option label="已发码" :value="1" />
+                <el-option label="已处理" :value="1" />
                 <el-option label="已驳回" :value="2" />
               </el-select>
             </el-form-item>
@@ -21,7 +21,7 @@
           </el-form>
           <div class="stats">
             <el-tag type="warning">待核实 {{ stats.pending }}</el-tag>
-            <el-tag type="success">已发码 {{ stats.approved }}</el-tag>
+            <el-tag type="success">已处理 {{ stats.approved }}</el-tag>
             <el-tag type="info">已驳回 {{ stats.rejected }}</el-tag>
           </div>
         </el-card>
@@ -48,7 +48,14 @@
             <el-table-column label="操作" width="180" fixed="right">
               <template #default="{ row }">
                 <template v-if="row.status === 0">
-                  <el-button size="small" type="success" link @click="openSendCodeDialog(row)">发送激活码</el-button>
+                  <el-button
+                    v-if="Number(row.amount) === 50"
+                    size="small"
+                    type="success"
+                    link
+                    @click="approvePointsRecharge(row)"
+                  >审核并发积分</el-button>
+                  <el-button v-else size="small" type="success" link @click="openSendCodeDialog(row)">发送激活码</el-button>
                   <el-button size="small" type="danger" link @click="handleReview(row, 'reject')">驳回</el-button>
                 </template>
                 <span v-else class="text-muted">已处理</span>
@@ -122,7 +129,7 @@
               <el-input v-model="cfg.recharge_payee_name" placeholder="例如 张三" />
             </el-form-item>
             <el-form-item label="充值套餐">
-              <el-input model-value="500,2000" disabled />
+              <el-input model-value="50（赠1500积分）, 500, 2000" disabled />
             </el-form-item>
             <el-form-item label="充值说明">
               <el-input v-model="cfg.recharge_notice" type="textarea" :rows="4" placeholder="给用户的充值步骤说明" />
@@ -236,6 +243,21 @@ async function confirmSendCode() {
   }
 }
 
+async function approvePointsRecharge(row: any) {
+  await ElMessageBox.confirm(
+    `确认已收到 ${row.realName}（${row.phone}）支付的50元，并向该用户发放1500积分？`,
+    '审核50元充值',
+    {
+      type: 'success',
+      confirmButtonText: '确认并发放',
+      cancelButtonText: '取消',
+    },
+  )
+  const res: any = await reviewRecharge(row.id, { action: 'approve' })
+  ElMessage.success(res?.message || '审核通过，已发放1500积分')
+  loadOrders()
+}
+
 async function handleReview(row: any, action: 'approve' | 'reject') {
   let remark = ''
   if (action === 'approve') {
@@ -252,7 +274,7 @@ async function handleReview(row: any, action: 'approve' | 'reject') {
     remark = value || ''
   }
   await reviewRecharge(row.id, { action, remark })
-  ElMessage.success(action === 'approve' ? '已标记为已发码' : '已驳回')
+  ElMessage.success(action === 'approve' ? '已处理' : '已驳回')
   loadOrders()
 }
 

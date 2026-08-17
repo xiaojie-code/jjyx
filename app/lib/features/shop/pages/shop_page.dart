@@ -33,6 +33,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
   bool _hasError = false;
   bool _isMuted = true;
   bool _showControls = true;
+  bool _isDisposing = false;
   String _paymentQrcode = '';
   String _paymentPayeeName = '';
   _CagOffer _cagOffer = const _CagOffer();
@@ -171,13 +172,18 @@ class _ShopPageState extends ConsumerState<ShopPage> {
       }).catchError((_) {
         if (mounted) setState(() => _hasError = true);
       });
-    _controller.addListener(() {
-      if (mounted && _controller.value.isInitialized) setState(() {});
-    });
+    _controller.addListener(_onVideoValueChanged);
+  }
+
+  void _onVideoValueChanged() {
+    if (_isDisposing || !mounted || !_controller.value.isInitialized) return;
+    setState(() {});
   }
 
   @override
   void dispose() {
+    _isDisposing = true;
+    _controller.removeListener(_onVideoValueChanged);
     _receiverNameCtrl.dispose();
     _receiverPhoneCtrl.dispose();
     _receiverAddressCtrl.dispose();
@@ -462,12 +468,17 @@ class _ShopPageState extends ConsumerState<ShopPage> {
     var quantity = 1;
     var paymentMethod = _ShopPaymentMethod.cash;
     var submitting = false;
+    final auth = ref.read(authProvider);
+    final activationAmount =
+        auth.user?.activationAmount ?? auth.profile?.user.activationAmount;
+    final silverMultiplier = activationAmount == 500 ? 4 : 1;
+    final silverUnitPrice = _defaultSilverPrice * silverMultiplier;
 
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (innerContext, setDialogState) {
-          final silverTotal = _defaultSilverPrice * quantity;
+          final silverTotal = silverUnitPrice * quantity;
           final cashTotal =
               product.cashPrice == null ? null : product.cashPrice! * quantity;
           final isCashSelected = paymentMethod == _ShopPaymentMethod.cash;

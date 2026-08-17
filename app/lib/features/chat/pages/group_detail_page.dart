@@ -27,6 +27,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
   List<Map<String, dynamic>> _members = [];
   List<Map<String, dynamic>> _filteredMembers = [];
   bool _loading = true;
+  bool _groupInfoLoading = true;
   late String _groupName;
   String _announcement = '';
   String _myGroupNickname = '';
@@ -78,16 +79,23 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           await ref.read(apiClientProvider).get<Map<String, dynamic>>(
                 '/api/social/groups/${widget.conversationId}/info',
               );
-      if (mounted && result != null) {
+      if (mounted) {
         setState(() {
-          _announcement = result['announcement']?.toString() ?? '';
-          _myGroupNickname = result['myGroupNickname']?.toString() ?? '';
-          _groupAvatar = result['avatar']?.toString() ?? '';
-          _allMuted = result['allMuted'] == true;
-          _isSystem = result['isSystem'] == true;
+          if (result != null) {
+            _announcement = result['announcement']?.toString() ?? '';
+            _myGroupNickname = result['myGroupNickname']?.toString() ?? '';
+            _groupAvatar = result['avatar']?.toString() ?? '';
+            _allMuted = result['allMuted'] == true;
+            _isSystem = result['isSystem'] == true;
+          }
+          _groupInfoLoading = false;
         });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) {
+        setState(() => _groupInfoLoading = false);
+      }
+    }
   }
 
   Future<void> _toggleAllMuted(bool value) async {
@@ -493,6 +501,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
     final myRole = int.tryParse(myMember?['role']?.toString() ?? '') ?? 1;
     final iAmOwner = myMember?['isOwner'] == true;
     final canManage = iAmOwner || myRole >= 2;
+    final canViewMemberTools = !_isSystem || canManage;
 
     return Scaffold(
       appBar: AppBar(
@@ -504,7 +513,7 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
           IconButton(icon: const Icon(Icons.person_add), onPressed: _addMember),
         ],
       ),
-      body: _loading
+      body: _loading || _groupInfoLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
@@ -559,9 +568,10 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                             Text(_groupName,
                                 style: const TextStyle(
                                     fontSize: 16, fontWeight: FontWeight.w600)),
-                            Text('${_members.length} 位成员',
-                                style: const TextStyle(
-                                    fontSize: 13, color: Colors.grey)),
+                            if (canViewMemberTools)
+                              Text('${_members.length} 位成员',
+                                  style: const TextStyle(
+                                      fontSize: 13, color: Colors.grey)),
                           ],
                         ),
                       ),
@@ -609,22 +619,23 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
                 ),
                 const SizedBox(height: 8),
                 // 鎴愬憳鎼滅储
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: TextField(
-                    controller: _memberSearchCtrl,
-                    onChanged: (v) => setState(() => _filterMembers(v)),
-                    decoration: InputDecoration(
-                      hintText: '搜索成员',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8)),
+                if (canViewMemberTools)
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: TextField(
+                      controller: _memberSearchCtrl,
+                      onChanged: (v) => setState(() => _filterMembers(v)),
+                      decoration: InputDecoration(
+                        hintText: '搜索成员',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
                     ),
                   ),
-                ),
                 // 鎴愬憳鍒楄〃
                 Expanded(
                   child: ListView.builder(

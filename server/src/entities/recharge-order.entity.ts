@@ -51,7 +51,7 @@ export class RechargeOrder {
   @Column({
     type: 'tinyint',
     default: 0,
-    comment: '0待核实 1已发码 2已驳回',
+    comment: '0待核实 1已处理 2已驳回',
   })
   @Index()
   status: number;

@@ -50,7 +50,6 @@ const GAME_COPPER_DAILY_MAX_KEY = 'game_copper_daily_max';
 const GAME_DURATION_REPORT_MAX_SECONDS = 6 * 60 * 60;
 const SILVER_SYNTHESIS_POINTS_KEY = 'silver_synthesis_points_per_coin';
 const SILVER_SYNTHESIS_POINTS_DEFAULT = 5000;
-const LOW_TIER_SILVER_SYNTHESIS_POINTS = 20000;
 const GOLD_EXCHANGE_RATE_KEY = 'gold_exchange_rate';
 const PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY =
   'profile_total_user_count_override';
@@ -665,14 +664,6 @@ export class CurrencyService {
     userId: number,
     manager?: EntityManager,
   ) {
-    const executor = manager || this.dataSource.manager;
-    const users = await executor.query(
-      `SELECT activation_amount AS activationAmount FROM users WHERE id = ? LIMIT 1`,
-      [userId],
-    );
-    if (Number(users?.[0]?.activationAmount) === 500) {
-      return LOW_TIER_SILVER_SYNTHESIS_POINTS;
-    }
     return this.getPositiveIntegerConfig(
       SILVER_SYNTHESIS_POINTS_KEY,
       SILVER_SYNTHESIS_POINTS_DEFAULT,
@@ -2243,7 +2234,6 @@ export class CurrencyService {
     },
   ) {
     await this.ensureGoldModuleTables();
-    await this.requireActivatedForCurrencyTrade(userId);
     const quantity = this.validateCopperQuantity(
       data?.quantity,
       '出售铜币数量',
@@ -2379,7 +2369,6 @@ export class CurrencyService {
 
   async confirmCopperTradePaid(userId: number, id: number) {
     await this.ensureGoldModuleTables();
-    await this.requireActivatedForCurrencyTrade(userId);
     await this.dataSource.transaction(async (mgr) => {
       const rows = await mgr.query(
         `SELECT * FROM copper_trade_orders WHERE id = ? FOR UPDATE`,
@@ -2963,8 +2952,7 @@ export class CurrencyService {
         configKey: SILVER_SYNTHESIS_POINTS_KEY,
         configName: '银币合成积分比例',
         configValue: String(SILVER_SYNTHESIS_POINTS_DEFAULT),
-        description:
-          '2000档及非500档账户合成1个银币需要消耗的积分数量；500档固定为20000积分',
+        description: '所有账户合成1个银币需要消耗的积分数量，默认5000积分',
       },
       {
         configKey: PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY,

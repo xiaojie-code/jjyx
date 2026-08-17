@@ -432,6 +432,18 @@ export class ShopService implements OnModuleInit {
     return Number(rows?.[0]?.quantity || 0);
   }
 
+  private async getSilverTradeMultiplier(userId: number, productKey: string) {
+    if (productKey === 'cag') return 1;
+    const rows = await this.dataSource.query(
+      `SELECT activation_amount AS activationAmount
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [userId],
+    );
+    return Number(rows?.[0]?.activationAmount) === 500 ? 4 : 1;
+  }
+
   async getCagConfig() {
     const config = await this.readCagConfig();
     const rows = await this.dataSource.query(
@@ -541,6 +553,9 @@ export class ShopService implements OnModuleInit {
 
   async getCatalog(userId?: number) {
     const cagConfig = await this.readCagConfig();
+    const silverMultiplier = userId
+      ? await this.getSilverTradeMultiplier(userId, 'standard')
+      : 1;
     const exchangedQuantity = userId
       ? await this.getUserCagExchangedQuantity(userId, cagConfig)
       : 0;
@@ -549,11 +564,19 @@ export class ShopService implements OnModuleInit {
         ? Math.max(0, cagConfig.userLimit - exchangedQuantity)
         : null;
     return SHOP_PRODUCTS.map((product) => {
-      if (product.key !== 'cag') return product;
+      if (product.key !== 'cag') {
+        return {
+          ...product,
+          silverMultiplier,
+          effectiveSilverPrice: product.silverPrice * silverMultiplier,
+        };
+      }
       const limitReached = remainingLimit != null && remainingLimit <= 0;
       return {
         ...product,
         silverPrice: cagConfig.silverPrice,
+        silverMultiplier: 1,
+        effectiveSilverPrice: cagConfig.silverPrice,
         available: cagConfig.isActive && !limitReached,
         exchangeEnabled: cagConfig.enabled,
         exchangeStartAt: cagConfig.startAt,
@@ -623,7 +646,12 @@ export class ShopService implements OnModuleInit {
         : this.normalizeAddress(data);
     const walletAddress =
       product.key === 'cag' ? this.normalizeWalletAddress(data) : null;
-    const totalSilver = product.silverPrice * quantity;
+    const silverMultiplier = await this.getSilverTradeMultiplier(
+      userId,
+      product.key,
+    );
+    const unitSilverPrice = product.silverPrice * silverMultiplier;
+    const totalSilver = unitSilverPrice * quantity;
     const totalCash =
       product.cashPrice == null ? null : product.cashPrice * quantity;
     const orderSn = this.createOrderSn();
@@ -699,7 +727,7 @@ export class ShopService implements OnModuleInit {
           product.imageName || null,
           paymentMethod,
           quantity,
-          product.silverPrice,
+          unitSilverPrice,
           totalSilver,
           product.cashPrice ?? null,
           totalCash,

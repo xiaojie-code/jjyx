@@ -6,7 +6,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/utils/toast.dart';
 
-/// 充值页面：展示收款码 + 填写姓名手机号提交，管理员核实后短信发激活码
+/// 充值页面：展示收款码、充值档位和申请记录。
 class RechargePage extends ConsumerStatefulWidget {
   const RechargePage({super.key});
 
@@ -24,7 +24,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
   String _qrcode = '';
   String _payeeName = '';
   String _notice = '';
-  final List<int> _amountOptions = const [500, 2000];
+  List<int> _amountOptions = const [50, 500, 2000];
   int? _selectedAmount;
   List<Map<String, dynamic>> _orders = [];
 
@@ -48,10 +48,18 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           .read(apiClientProvider)
           .get<Map<String, dynamic>>(ApiEndpoints.rechargeInfo);
       if (!mounted) return;
+      final remoteOptions = (result?['amountOptions'] as List<dynamic>?)
+              ?.map((value) => int.tryParse(value.toString()))
+              .whereType<int>()
+              .toList() ??
+          const <int>[];
       setState(() {
         _qrcode = result?['qrcode']?.toString() ?? '';
         _payeeName = result?['payeeName']?.toString() ?? '';
         _notice = result?['notice']?.toString() ?? '';
+        if (remoteOptions.isNotEmpty) {
+          _amountOptions = remoteOptions;
+        }
         _loading = false;
       });
     } catch (_) {
@@ -100,11 +108,16 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           'realName': name,
           'phone': phone,
           'amount': _selectedAmount,
-          'packageName': '${_selectedAmount}元档',
+          'packageName': '$_selectedAmount元档',
         },
       );
       if (!mounted) return;
-      Toast.success(context, '充值申请已提交，管理员核实后会发送激活码');
+      Toast.success(
+        context,
+        _selectedAmount == 50
+            ? '充值申请已提交，管理员核实后将发放1500积分'
+            : '充值申请已提交，管理员核实后会发送激活码',
+      );
       _nameCtrl.clear();
       _phoneCtrl.clear();
       setState(() => _selectedAmount = null);
@@ -189,7 +202,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           const SizedBox(height: 8),
           _buildStep('1', '扫描下方收款码完成付款'),
           _buildStep('2', '填写姓名和手机号，点击提交'),
-          _buildStep('3', '管理员核实后，激活码将通过短信发送到你的手机'),
+          _buildStep('3', '管理员核实后，50元档发放1500积分，其他档位短信发送激活码'),
           if (_notice.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(_notice,
@@ -297,7 +310,9 @@ class _RechargePageState extends ConsumerState<RechargePage> {
             children: _amountOptions.map((amount) {
               final selected = _selectedAmount == amount;
               return ChoiceChip(
-                label: Text('$amount 元'),
+                label: Text(
+                  amount == 50 ? '$amount 元  赠1500积分' : '$amount 元',
+                ),
                 selected: selected,
                 onSelected: (v) =>
                     setState(() => _selectedAmount = v ? amount : null),

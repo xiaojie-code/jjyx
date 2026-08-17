@@ -275,7 +275,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
   }
 
   Future<void> _showSellTradeDialog({required bool isCopper}) async {
-    if (!_ensureCurrencyTradeAllowed()) return;
+    if (!isCopper && !_ensureCurrencyTradeAllowed()) return;
     final currencyName = isCopper ? '铜币' : '金币';
     final currentBalance = isCopper
         ? _numberValue(_copperOverview?['copper'] ??
@@ -553,7 +553,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
     Map<String, dynamic> item, {
     required bool isCopper,
   }) async {
-    if (!_ensureCurrencyTradeAllowed()) return;
+    if (!isCopper && !_ensureCurrencyTradeAllowed()) return;
     final id = _intValue(item['id']);
     if (id <= 0) return;
     final currencyName = isCopper ? '铜币' : '金币';
@@ -952,7 +952,6 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
               onPressed: _goldBusy
                   ? null
                   : () async {
-                      if (!_ensureCurrencyTradeAllowed()) return;
                       setState(() => _goldBusy = true);
                       await _showSellTradeDialog(isCopper: true);
                       if (mounted) setState(() => _goldBusy = false);
