@@ -197,11 +197,26 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="manualCopyVisible" title="手动复制钱包地址" width="620px" append-to-body>
+      <div class="manual-copy-tip">浏览器限制了自动复制，请按 Ctrl+C 复制下面已选中的完整地址。</div>
+      <textarea
+        ref="manualCopyTextarea"
+        class="manual-copy-textarea"
+        :value="manualCopyAddress"
+        readonly
+        @focus="selectManualCopyAddress"
+        @click="selectManualCopyAddress"
+      />
+      <template #footer>
+        <el-button type="primary" @click="manualCopyVisible = false">完成</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 import { dateTimeFormatter } from '@/utils/format'
@@ -229,6 +244,9 @@ const cagConfig = reactive({
 
 const approveVisible = ref(false)
 const currentOrder = ref<any | null>(null)
+const manualCopyVisible = ref(false)
+const manualCopyAddress = ref('')
+const manualCopyTextarea = ref<HTMLTextAreaElement | null>(null)
 const approveForm = reactive({
   logisticsCompany: '',
   logisticsNo: '',
@@ -239,18 +257,71 @@ function money(value: any) {
   return Number(value || 0).toFixed(2)
 }
 
+function legacyCopyText(value: string) {
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.readOnly = true
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.top = '0'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, value.length)
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+  return copied
+}
+
+function selectManualCopyAddress() {
+  manualCopyTextarea.value?.select()
+}
+
+async function openManualCopy(value: string) {
+  manualCopyAddress.value = value
+  manualCopyVisible.value = true
+  await nextTick()
+  manualCopyTextarea.value?.focus()
+  manualCopyTextarea.value?.select()
+}
+
 async function copyWallet(address: any) {
   const value = String(address || '').trim()
   if (!value) {
     ElMessage.warning('钱包地址为空')
     return
   }
+
+  let copied = false
   try {
-    await navigator.clipboard.writeText(value)
-    ElMessage.success('钱包地址已复制')
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+      copied = true
+    }
   } catch {
-    ElMessage.warning('复制失败，请手动复制')
+    copied = false
   }
+
+  if (!copied) {
+    try {
+      copied = legacyCopyText(value)
+    } catch {
+      copied = false
+    }
+  }
+
+  if (copied) {
+    ElMessage.success('钱包地址已复制')
+    return
+  }
+
+  await openManualCopy(value)
+  ElMessage.warning('自动复制失败，请按 Ctrl+C 手动复制')
 }
 
 async function loadCagConfig() {
@@ -389,10 +460,13 @@ onMounted(() => {
 .stats { display: flex; gap: 10px; margin-top: 6px; }
 .text-muted { color: #909399; font-size: 13px; }
 .wallet-label { color: #606266; font-size: 12px; margin-bottom: 2px; }
-.wallet-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.wallet-address { flex: 1; min-width: 0; overflow: hidden; color: #303133; font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.wallet-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.wallet-address { flex: 1; min-width: 0; color: #303133; font-family: monospace; line-height: 1.5; overflow-wrap: anywhere; user-select: text; white-space: normal; word-break: break-all; }
 .approve-wallet { display: flex; align-items: flex-start; gap: 10px; width: 100%; }
 .approve-wallet :deep(.el-textarea) { flex: 1; }
+.manual-copy-tip { margin-bottom: 12px; color: #606266; line-height: 1.6; }
+.manual-copy-textarea { box-sizing: border-box; width: 100%; min-height: 110px; padding: 12px; border: 1px solid #dcdfe6; border-radius: 4px; color: #303133; background: #fff; font-family: monospace; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; resize: vertical; word-break: break-all; }
+.manual-copy-textarea:focus { border-color: #409eff; outline: none; }
 .pager { margin-top: 16px; justify-content: flex-end; }
 :deep(.el-table) { --el-table-border-color: transparent; --el-table-row-hover-bg-color: #f0f5ff; }
 :deep(.el-table th.el-table__cell) { background-color: #fafafa; color: #606266; font-weight: 600; }
