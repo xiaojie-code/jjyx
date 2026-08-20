@@ -174,7 +174,8 @@
       <template v-if="detailData">
         <el-descriptions :column="3" border style="margin-bottom:16px">
           <el-descriptions-item label="矩阵ID">{{ detailData.matrix.id }}</el-descriptions-item>
-          <el-descriptions-item label="顶点用户">{{ detailData.matrix.ownerNickname }} (ID:{{ detailData.matrix.ownerId }})</el-descriptions-item>
+          <el-descriptions-item label="顶点用户ID">{{ detailData.matrix.ownerId }}</el-descriptions-item>
+          <el-descriptions-item label="顶点昵称">{{ detailData.matrix.ownerNickname || detailData.matrix.ownerAccount || '-' }}</el-descriptions-item>
           <el-descriptions-item label="轮次">第{{ detailData.matrix.round }}轮</el-descriptions-item>
           <el-descriptions-item label="状态">{{ detailData.matrix.status === 1 ? '进行中' : '已完成' }}</el-descriptions-item>
           <el-descriptions-item label="可领取收益">{{ Number(detailData.matrix.claimableIncome).toFixed(2) }}</el-descriptions-item>
@@ -201,8 +202,9 @@
         <!-- 坑位表格 -->
         <el-table :data="detailData.slots" stripe style="margin-top:16px" size="small">
           <el-table-column prop="slotNumber" label="坑位" width="60" align="center" />
-          <el-table-column label="用户" width="140">
-            <template #default="{ row }">{{ row.userNickname }} ({{ row.userId }})</template>
+          <el-table-column prop="userId" label="用户ID" width="90" align="center" />
+          <el-table-column label="昵称" width="140">
+            <template #default="{ row }">{{ row.userNickname || row.userAccount || '-' }}</template>
           </el-table-column>
           <el-table-column label="类型" width="80" align="center">
             <template #default="{ row }">

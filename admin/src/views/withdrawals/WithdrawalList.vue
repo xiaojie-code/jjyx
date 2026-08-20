@@ -54,11 +54,9 @@
     <el-card shadow="hover" class="content-card">
       <el-table :data="list" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column label="用户" width="150">
-          <template #default="{ row }">
-            <div>UID {{ row.userId }}</div>
-            <div class="text-muted">{{ row.userNickname || row.userAccount || '-' }}</div>
-          </template>
+        <el-table-column prop="userId" label="用户ID" width="90" />
+        <el-table-column label="昵称" width="140">
+          <template #default="{ row }">{{ row.userNickname || row.userAccount || '-' }}</template>
         </el-table-column>
         <el-table-column label="提现金额" width="110">
           <template #default="{ row }">¥{{ money(row.amount) }}</template>

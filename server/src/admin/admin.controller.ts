@@ -12,14 +12,18 @@ export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   // 用户
-  @Get('users') getUsers(@Query() query: any, @Query() pagination: PaginationDto) { return this.adminService.getUsers(query, pagination); }
+  @Get('users') getUsers(@Query() query: any) {
+    return this.adminService.getUsers(query, this.toPagination(query));
+  }
   @Get('user-stats') getUserStatsSafe() { return this.adminService.getUserStats(); }
   @Get('users/stats') getUserStats() { return this.adminService.getUserStats(); }
   @Get('users/:id') getUserDetail(@Param('id', ParseIntPipe) id: number) { return this.adminService.getUsers({ keyword: String(id) }, { page: 1, pageSize: 1 }); }
   @Put('users/:id') updateUser(@Param('id', ParseIntPipe) id: number, @Body() data: any) { return this.adminService.updateUser(id, data); }
   @Put('users/:id/status') updateUserStatus(@Param('id', ParseIntPipe) id: number, @Body('status') status: number) { return this.adminService.updateUserStatus(id, status); }
   @Post('users/:id/currency') addCurrency(@Param('id', ParseIntPipe) id: number, @Body('type') type: string, @Body('amount') amount: number) { return this.adminService.addCurrency(id, type, amount); }
-  @Get('users/:id/logs') getUserLogs(@Param('id', ParseIntPipe) id: number, @Query() query: any, @Query() pagination: PaginationDto) { return this.adminService.getUserLogs(id, query, pagination); }
+  @Get('users/:id/logs') getUserLogs(@Param('id', ParseIntPipe) id: number, @Query() query: any) {
+    return this.adminService.getUserLogs(id, query, this.toPagination(query));
+  }
   @Get('users/:id/activities') getUserActivities(@Param('id', ParseIntPipe) id: number, @Query() query: any) { return this.adminService.getUserActivities(id, query); }
   @Get('users/:id/backpack') getUserBackpack(@Param('id', ParseIntPipe) id: number) { return this.adminService.getUserBackpack(id); }
   @Get('password-reset/requests') getPasswordResetRequests(@Query() query: any) { return this.adminService.getPasswordResetRequests(query); }
@@ -162,4 +166,13 @@ export class AdminController {
   @Put('social/meetings/:id/end') endAdminMeeting(@Param('id', ParseIntPipe) id: number) { return this.adminService.endAdminMeeting(id); }
   @Put('social/meetings/:id/recording') updateMeetingRecording(@Param('id', ParseIntPipe) id: number, @Body('recordingUrl') recordingUrl: string) { return this.adminService.updateMeetingRecording(id, recordingUrl); }
   @Post('social/clean') cleanSocialData(@Body('days') days?: number) { return this.adminService.cleanSocialData(days); }
+
+  private toPagination(query: any): PaginationDto {
+    const pagination = new PaginationDto();
+    const page = Number.parseInt(String(query?.page ?? ''), 10);
+    const pageSize = Number.parseInt(String(query?.pageSize ?? ''), 10);
+    pagination.page = Number.isFinite(page) && page > 0 ? page : 1;
+    pagination.pageSize = Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 20;
+    return pagination;
+  }
 }

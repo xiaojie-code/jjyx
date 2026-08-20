@@ -127,8 +127,11 @@
     <!-- 发放货币弹窗 -->
     <el-dialog v-model="currencyVisible" title="发放货币" width="450px" destroy-on-close>
       <el-form label-width="80px">
-        <el-form-item label="用户">
-          <el-text>{{ currencyUser?.nickname }} (ID: {{ currencyUser?.id }})</el-text>
+        <el-form-item label="用户ID">
+          <el-text>{{ currencyUser?.id }}</el-text>
+        </el-form-item>
+        <el-form-item label="昵称">
+          <el-text>{{ currencyUser?.nickname || currencyUser?.account || '-' }}</el-text>
         </el-form-item>
         <el-form-item label="货币类型">
           <el-select v-model="currencyType" style="width:100%">

@@ -86,11 +86,9 @@
       <el-table :data="orders" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="orderSn" label="订单号" width="190" show-overflow-tooltip />
-        <el-table-column label="用户" width="150">
-          <template #default="{ row }">
-            <div>UID {{ row.userId }}</div>
-            <div class="text-muted">{{ row.userNickname || row.userAccount || '-' }}</div>
-          </template>
+        <el-table-column prop="userId" label="用户ID" width="90" />
+        <el-table-column label="昵称" width="140">
+          <template #default="{ row }">{{ row.userNickname || row.userAccount || '-' }}</template>
         </el-table-column>
         <el-table-column prop="productTitle" label="商品" min-width="180" show-overflow-tooltip />
         <el-table-column prop="quantity" label="数量" width="70" align="center" />
