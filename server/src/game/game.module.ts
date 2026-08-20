@@ -19,6 +19,7 @@ import { GameService } from './game.service';
 import { HorseRaceGateway } from './horse-race.gateway';
 import { CurrencyModule } from '../currency/currency.module';
 import { AuthModule } from '../auth/auth.module';
+import { GameVersionGuard } from './game-version.guard';
 
 @Module({
   imports: [
@@ -41,7 +42,7 @@ import { AuthModule } from '../auth/auth.module';
     AuthModule,
   ],
   controllers: [GameController, BackpackController],
-  providers: [GameService, HorseRaceGateway],
+  providers: [GameService, HorseRaceGateway, GameVersionGuard],
   exports: [GameService],
 })
 export class GameModule {}

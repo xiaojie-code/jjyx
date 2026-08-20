@@ -60,6 +60,11 @@
             <el-icon :color="row.isActivated ? '#67c23a' : '#ccc'"><CircleCheckFilled /></el-icon>
           </template>
         </el-table-column>
+        <el-table-column label="当前积分" width="110" align="right">
+          <template #default="{ row }">
+            {{ formatPoints(row.currency?.points) }}
+          </template>
+        </el-table-column>
         <el-table-column label="当前金币" width="110" align="right">
           <template #default="{ row }">
             {{ formatAmount(row.currency?.gold) }}
@@ -73,9 +78,10 @@
         <el-table-column prop="registerTime" label="注册时间" width="180" :formatter="dateTimeFormatter" />
         <el-table-column prop="loginTime" label="最近登录" width="180" :formatter="dateTimeFormatter" />
         <el-table-column prop="registerIp" label="注册IP" width="130" />
-        <el-table-column label="操作" width="240" fixed="right" align="center">
+        <el-table-column label="操作" width="320" fixed="right" align="center">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="handleEdit(row)">编辑</el-button>
+            <el-button size="small" type="success" link @click="openPoints(row)">积分明细</el-button>
             <el-button size="small" type="warning" link @click="handleCurrency(row)">发放货币</el-button>
             <el-button
               size="small"
@@ -150,13 +156,60 @@
         <el-button type="primary" @click="handleAddCurrency">确认发放</el-button>
       </template>
     </el-dialog>
+
+    <!-- 积分明细抽屉 -->
+    <el-drawer
+      v-model="pointsVisible"
+      :title="`${pointsUser?.nickname || pointsUser?.account || '用户'} 的积分信息`"
+      size="760px"
+      destroy-on-close
+    >
+      <el-descriptions :column="2" border class="points-summary">
+        <el-descriptions-item label="用户ID">{{ pointsUser?.id || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="账号">{{ pointsUser?.account || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="当前积分">
+          <span class="points-balance">{{ formatPoints(pointsSummary.balance) }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="累计收入">{{ formatPoints(pointsSummary.income) }}</el-descriptions-item>
+        <el-descriptions-item label="累计支出">{{ formatPoints(pointsSummary.expense) }}</el-descriptions-item>
+        <el-descriptions-item label="流水笔数">{{ pointsSummary.logCount }}</el-descriptions-item>
+      </el-descriptions>
+
+      <el-table :data="pointsLogs" v-loading="pointsLoading" stripe class="points-table">
+        <el-table-column prop="sn" label="流水号" min-width="180" />
+        <el-table-column label="变动积分" width="110" align="right">
+          <template #default="{ row }">
+            <span :class="Number(row.amount) >= 0 ? 'income-amount' : 'expense-amount'">
+              {{ Number(row.amount) >= 0 ? '+' : '' }}{{ formatPoints(row.amount) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="前后余额" width="150" align="right">
+          <template #default="{ row }">
+            {{ formatPoints(row.beforeBalance) }} → {{ formatPoints(row.afterBalance) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="logType" label="类型" width="120" />
+        <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="createdAt" label="时间" width="170" :formatter="dateTimeFormatter" />
+      </el-table>
+      <div class="points-pagination">
+        <el-pagination
+          :current-page="pointsPage"
+          :page-size="pointsPageSize"
+          :total="pointsTotal"
+          layout="total, prev, pager, next"
+          @current-change="handlePointsPageChange"
+        />
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getUserList, getUserStats, updateUser, updateUserStatus, addUserCurrency } from '@/api/user'
+import { getUserList, getUserStats, updateUser, updateUserStatus, addUserCurrency, getUserPoints, getUserLogs } from '@/api/user'
 import { dateTimeFormatter } from '@/utils/format'
 import { resolveAvatarUrl } from '@/utils/media'
 
@@ -178,6 +231,15 @@ const currencyVisible = ref(false)
 const currencyUser = ref<any>(null)
 const currencyType = ref('points')
 const currencyAmount = ref(100)
+
+const pointsVisible = ref(false)
+const pointsLoading = ref(false)
+const pointsUser = ref<any>(null)
+const pointsLogs = ref<any[]>([])
+const pointsPage = ref(1)
+const pointsPageSize = ref(20)
+const pointsTotal = ref(0)
+const pointsSummary = ref({ balance: 0, income: 0, expense: 0, logCount: 0 })
 
 async function loadUsers() {
   loading.value = true
@@ -211,6 +273,12 @@ function formatAmount(value: unknown) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2)
 }
 
+function formatPoints(value: unknown) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n)) return '0'
+  return n.toFixed(6).replace(/\.?0+$/, '')
+}
+
 function handleEdit(row: any) {
   editForm.value = { id: row.id, userType: row.userType, remark: row.remark || '' }
   editVisible.value = true
@@ -239,11 +307,49 @@ function handleCurrency(row: any) {
   currencyVisible.value = true
 }
 
+async function loadPointsDetail() {
+  if (!pointsUser.value?.id) return
+  pointsLoading.value = true
+  try {
+    const [summary, logs]: any[] = await Promise.all([
+      getUserPoints(pointsUser.value.id),
+      getUserLogs(pointsUser.value.id, {
+        currencyType: 'points',
+        page: pointsPage.value,
+        pageSize: pointsPageSize.value,
+      }),
+    ])
+    pointsSummary.value = {
+      balance: Number(summary?.balance || 0),
+      income: Number(summary?.income || 0),
+      expense: Number(summary?.expense || 0),
+      logCount: Number(summary?.logCount || 0),
+    }
+    pointsLogs.value = logs?.list || []
+    pointsTotal.value = logs?.total || 0
+  } finally {
+    pointsLoading.value = false
+  }
+}
+
+function openPoints(row: any) {
+  pointsUser.value = row
+  pointsPage.value = 1
+  pointsVisible.value = true
+  loadPointsDetail()
+}
+
+function handlePointsPageChange(pageNumber: number) {
+  pointsPage.value = pageNumber
+  loadPointsDetail()
+}
+
 async function handleAddCurrency() {
   if (currencyAmount.value <= 0) { ElMessage.warning('请输入数量'); return }
   await addUserCurrency(currencyUser.value.id, { type: currencyType.value, amount: currencyAmount.value })
   ElMessage.success('发放成功')
   currencyVisible.value = false
+  loadUsers()
 }
 
 onMounted(() => {
@@ -287,6 +393,27 @@ onMounted(() => {
 .content-card {
   border-radius: 12px;
   border: none;
+}
+.points-summary {
+  margin-bottom: 18px;
+}
+.points-balance {
+  color: #409eff;
+  font-weight: 700;
+}
+.points-table {
+  margin-top: 12px;
+}
+.income-amount {
+  color: #67c23a;
+}
+.expense-amount {
+  color: #f56c6c;
+}
+.points-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 .pagination-wrapper {
   display: flex;

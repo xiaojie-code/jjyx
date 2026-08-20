@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../constants/app_constants.dart';
 import '../storage/token_storage.dart';
 
@@ -53,6 +55,7 @@ String apiErrorMessage(Object error, {String fallback = '操作失败'}) {
 /// Dio 网络请求封装
 class ApiClient {
   late final Dio _dio;
+  Future<Map<String, String>>? _appHeadersFuture;
 
   ApiClient() {
     _dio = Dio(
@@ -79,7 +82,13 @@ class ApiClient {
   /// 认证拦截器：自动附加 Authorization header
   Interceptor _authInterceptor() {
     return InterceptorsWrapper(
-      onRequest: (options, handler) {
+      onRequest: (options, handler) async {
+        try {
+          _appHeadersFuture ??= _loadAppHeaders();
+          options.headers.addAll(await _appHeadersFuture!);
+        } catch (_) {
+          // Version headers are best-effort for non-mobile development builds.
+        }
         final token = TokenStorage.getToken();
         if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
@@ -97,6 +106,20 @@ class ApiClient {
         handler.next(error);
       },
     );
+  }
+
+  Future<Map<String, String>> _loadAppHeaders() async {
+    final info = await PackageInfo.fromPlatform();
+    final platform = kIsWeb
+        ? 'web'
+        : defaultTargetPlatform == TargetPlatform.android
+            ? 'android'
+            : defaultTargetPlatform.name;
+    return {
+      'X-App-Platform': platform,
+      'X-App-Version-Code': info.buildNumber,
+      'X-App-Version-Name': info.version,
+    };
   }
 
   /// 响应拦截器：解包后端统一响应格式 { code: 0, message: 'success', data: ... }

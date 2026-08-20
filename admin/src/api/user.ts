@@ -34,8 +34,12 @@ export function addUserCurrency(id: number, data: { type: string; amount: number
   return request.post(`/users/${id}/currency`, data)
 }
 
+export function getUserPoints(id: number) {
+  return request.get(`/users/${id}/points`)
+}
+
 // 用户流水
-export function getUserLogs(id: number, params: { sn?: string; page?: number; pageSize?: number }) {
+export function getUserLogs(id: number, params: { sn?: string; currencyType?: string; page?: number; pageSize?: number }) {
   return request.get(`/users/${id}/logs`, { params })
 }
 

@@ -1099,10 +1099,14 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
           playStartedAt,
         );
       }
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('游戏启动失败，请稍后重试')),
+        SnackBar(
+          content: Text(
+            apiErrorMessage(error, fallback: '游戏启动失败，请稍后重试'),
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _starting = false);
@@ -1293,10 +1297,14 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
           playStartedAt,
         );
       }
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('游戏启动失败，请稍后重试')),
+        SnackBar(
+          content: Text(
+            apiErrorMessage(error, fallback: '游戏启动失败，请稍后重试'),
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _starting = false);

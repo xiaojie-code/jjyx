@@ -34,7 +34,15 @@
             <span class="card-title">每周返还周期</span>
             <span class="card-subtitle">查看每周消费统计、已返还和待返还总数</span>
           </div>
-          <el-button type="primary" :loading="overviewLoading" @click="loadOverview">刷新</el-button>
+          <div class="header-actions">
+            <el-button
+              type="warning"
+              plain
+              :loading="reconcileLoading"
+              @click="reconcileHistoricalReturns"
+            >修正历史返还</el-button>
+            <el-button type="primary" :loading="overviewLoading" @click="loadOverview">刷新</el-button>
+          </div>
         </div>
       </template>
 
@@ -238,11 +246,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 
 const overviewLoading = ref(false)
 const accountLoading = ref(false)
 const dailyLoading = ref(false)
+const reconcileLoading = ref(false)
 
 const summary = ref<any>({
   periodCount: 0,
@@ -396,6 +406,49 @@ async function openDailyDetail(row: any) {
   }
 }
 
+async function reconcileHistoricalReturns() {
+  reconcileLoading.value = true
+  try {
+    const preview: any = await request.post('/weekly-point-returns/reconcile-exclusions', {
+      dryRun: true,
+    })
+    if (!Number(preview?.candidateAccounts || 0)) {
+      ElMessage.success('没有需要修正的历史返还数据')
+      return
+    }
+    const insufficient = Number(preview?.insufficientAccounts || 0)
+    const warning = insufficient > 0
+      ? `；其中 ${insufficient} 个返还账户当前积分不足，将跳过并保留待处理`
+      : ''
+    await ElMessageBox.confirm(
+      `检测到 ${preview.affectedUsers || 0} 名用户、${preview.candidateAccounts || 0} 个返还周期需要修正。将把 ${formatPoints(preview.movedToExcludedPoints)} 积分调整为排除消费，并扣回多返的 ${formatPoints(preview.recoverPoints)} 积分${warning}。确认执行吗？`,
+      '确认修正历史积分返还',
+      { type: 'warning', confirmButtonText: '确认修正', cancelButtonText: '取消' },
+    )
+    const result: any = await request.post('/weekly-point-returns/reconcile-exclusions', {
+      dryRun: false,
+    })
+    const skipped = Number(result?.insufficientAccounts || 0)
+    if (skipped > 0) {
+      ElMessage.warning(
+        `已修正 ${result.correctedAccounts || 0} 个返还账户，扣回 ${formatPoints(result.recoveredPoints)} 积分；${skipped} 个账户余额不足，暂未处理`,
+      )
+    } else {
+      ElMessage.success(
+        `修正完成，共扣回 ${formatPoints(result.recoveredPoints)} 积分`,
+      )
+    }
+    await loadOverview()
+    await loadAccounts()
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error?.message || '历史返还修正失败')
+    }
+  } finally {
+    reconcileLoading.value = false
+  }
+}
+
 onMounted(loadOverview)
 </script>
 
@@ -409,6 +462,7 @@ onMounted(loadOverview)
 .stat-label { margin-top: 6px; font-size: 13px; color: #909399; }
 .content-card { border: none; border-radius: 12px; }
 .card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
 .card-title { font-size: 16px; font-weight: 600; color: #303133; }
 .card-subtitle { margin-left: 12px; font-size: 13px; color: #909399; }
 .filter-form { margin-bottom: 12px; }

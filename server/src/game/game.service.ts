@@ -755,7 +755,7 @@ export class GameService implements OnModuleInit {
   private scaleFishingRewardValue(value: any) {
     const num = Number(value);
     if (!Number.isFinite(num) || num <= 0) return 0;
-    const maxReward = 500;
+    const maxReward = 100;
     if (num < 1000) return Math.min(maxReward, Math.floor(num));
     if (num >= 10000) return Math.min(maxReward, Math.max(100, Math.floor(num / 100)));
     return Math.min(maxReward, Math.max(10, Math.floor(num / 10)));

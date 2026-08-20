@@ -70,7 +70,17 @@ async function handleLogin() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ account: form.account, password: form.password }),
     })
-    const json = await res.json()
+    const responseText = await res.text()
+    if (!responseText.trim()) {
+      throw new Error('\u540e\u7aef\u670d\u52a1\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5')
+    }
+
+    let json: any
+    try {
+      json = JSON.parse(responseText)
+    } catch {
+      throw new Error('\u767b\u5f55\u670d\u52a1\u54cd\u5e94\u5f02\u5e38\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5')
+    }
     if (json.code !== 0) {
       throw new Error(json.message || '登录失败')
     }

@@ -21,6 +21,7 @@ export class AdminController {
   @Put('users/:id') updateUser(@Param('id', ParseIntPipe) id: number, @Body() data: any) { return this.adminService.updateUser(id, data); }
   @Put('users/:id/status') updateUserStatus(@Param('id', ParseIntPipe) id: number, @Body('status') status: number) { return this.adminService.updateUserStatus(id, status); }
   @Post('users/:id/currency') addCurrency(@Param('id', ParseIntPipe) id: number, @Body('type') type: string, @Body('amount') amount: number) { return this.adminService.addCurrency(id, type, amount); }
+  @Get('users/:id/points') getUserPoints(@Param('id', ParseIntPipe) id: number) { return this.adminService.getUserPoints(id); }
   @Get('users/:id/logs') getUserLogs(@Param('id', ParseIntPipe) id: number, @Query() query: any) {
     return this.adminService.getUserLogs(id, query, this.toPagination(query));
   }
@@ -117,6 +118,11 @@ export class AdminController {
     @Param('accountId', ParseIntPipe) accountId: number,
   ) {
     return this.adminService.getWeeklyPointReturnAccountDaily(accountId);
+  }
+  @Post('weekly-point-returns/reconcile-exclusions') reconcileWeeklyPointReturnExclusions(
+    @Body() data: { dryRun?: boolean } = {},
+  ) {
+    return this.adminService.reconcileWeeklyPointReturnExclusions(data);
   }
 
   // 游戏时长统计

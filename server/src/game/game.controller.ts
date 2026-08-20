@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Param, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { GameService } from './game.service';
+import { GameVersionGuard } from './game-version.guard';
 
 @Controller('game')
 export class GameController {
@@ -55,6 +56,7 @@ export class GameController {
   getGameDetail(@Param('id', ParseIntPipe) id: number) { return this.gameService.getGameDetail(id); }
 
   @Post(':id/start')
+  @UseGuards(GameVersionGuard)
   startGame(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number, @Body('betAmount') betAmount?: number) {
     return this.gameService.startGame(userId, id, betAmount);
   }
@@ -102,5 +104,6 @@ export class GameController {
   getHorseRoom(@Param('id', ParseIntPipe) id: number) { return this.gameService.getHorseRoom(id); }
 
   @Post('lottery/spin')
+  @UseGuards(GameVersionGuard)
   lotteryDraw(@CurrentUser('id') userId: number) { return this.gameService.lotteryDraw(userId); }
 }

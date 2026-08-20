@@ -32,10 +32,19 @@ const WEEKLY_POINT_RETURN_SWITCH_KEY = 'weekly_point_return';
 const WEEKLY_POINT_RETURN_MULTIPLIER_KEY = 'weekly_point_return_multiplier';
 const WEEKLY_POINT_RETURN_DAILY_RATE_KEY = 'weekly_point_return_daily_rate';
 const WEEKLY_POINT_RETURN_STARTED_AT_KEY = 'weekly_point_return_started_at';
+export const WEEKLY_POINT_RETURN_EXCLUSION_CORRECTION_TYPES = [
+  'synthesize',
+  'silver_synthesis',
+  'shop_exchange',
+  'shop_points_exchange',
+  'cag_exchange',
+];
 export const WEEKLY_POINT_RETURN_EXCLUDED_LOG_TYPES = [
   'group_create',
   'group_create_cost',
   'meeting_start',
+  ...WEEKLY_POINT_RETURN_EXCLUSION_CORRECTION_TYPES,
+  'weekly_point_return_correction',
 ];
 export const WEEKLY_POINT_RETURN_ALWAYS_ELIGIBLE_LOG_TYPES = ['game_entry'];
 const WEEKLY_POINT_RETURN_BATCH_SIZE = 100;
@@ -808,7 +817,29 @@ export class CurrencyService {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每周积分返还每日发放明细表';
     `);
 
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS weekly_point_return_exclusion_corrections (
+        id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        period_id BIGINT NOT NULL,
+        account_id BIGINT NOT NULL,
+        user_id INT NOT NULL,
+        moved_to_excluded_points DECIMAL(18,6) NOT NULL DEFAULT 0,
+        eligible_points_before DECIMAL(18,6) NOT NULL DEFAULT 0,
+        eligible_points_after DECIMAL(18,6) NOT NULL DEFAULT 0,
+        returned_points_before DECIMAL(18,6) NOT NULL DEFAULT 0,
+        returned_points_after DECIMAL(18,6) NOT NULL DEFAULT 0,
+        recovered_points DECIMAL(18,6) NOT NULL DEFAULT 0,
+        currency_log_id BIGINT NULL,
+        correction_log_types VARCHAR(255) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_weekly_return_exclusion_correction_account (account_id),
+        INDEX idx_weekly_return_exclusion_correction_user (user_id),
+        INDEX idx_weekly_return_exclusion_correction_period (period_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每周积分返还排除消费历史修正记录';
+    `);
+
     const commentStatements = [
+      `ALTER TABLE weekly_point_return_daily_records ADD COLUMN adjusted_return_amount DECIMAL(18,6) NULL AFTER return_amount`,
       `ALTER TABLE weekly_point_return_periods MODIFY COLUMN week_start_at DATETIME NOT NULL COMMENT '本周实际可返还消费统计开始时间，首个上线周可能为功能上线时间'`,
       `ALTER TABLE weekly_point_return_periods MODIFY COLUMN multiplier DECIMAL(10, 6) NOT NULL COMMENT '返还倍率，来自system_configs.weekly_point_return_multiplier，默认1.5'`,
       `ALTER TABLE weekly_point_return_accounts MODIFY COLUMN multiplier DECIMAL(10, 6) NOT NULL COMMENT '本用户本周期使用的独立积分返还倍率快照'`,
@@ -3486,6 +3517,400 @@ export class CurrencyService {
     }
 
     return { paidRecords, paidPoints };
+  }
+
+  private projectWeeklyPointReturn(
+    basePoints: number,
+    paidDays: number,
+    multiplier: number,
+    dailyRate: number,
+  ) {
+    let base = this.roundPoints(Math.max(0, basePoints));
+    let total = 0;
+    const records: Array<{
+      dayIndex: number;
+      baseBeforeReturn: number;
+      returnAmount: number;
+      baseAfterReturn: number;
+    }> = [];
+    const safeDays = Math.max(0, Math.min(7, Math.floor(paidDays)));
+    for (let dayIndex = 1; dayIndex <= safeDays; dayIndex += 1) {
+      const baseBeforeReturn = base;
+      const returnAmount = this.roundPoints(
+        baseBeforeReturn * multiplier * dailyRate,
+      );
+      const baseAfterReturn = this.roundPoints(
+        Math.max(0, baseBeforeReturn - returnAmount),
+      );
+      records.push({
+        dayIndex,
+        baseBeforeReturn,
+        returnAmount,
+        baseAfterReturn,
+      });
+      total = this.roundPoints(total + returnAmount);
+      base = baseAfterReturn;
+    }
+    return { total, remainingBase: base, records };
+  }
+
+  async reconcileWeeklyPointReturnExclusions(
+    options: { dryRun?: boolean } = {},
+  ) {
+    await this.ensureWeeklyPointReturnTables();
+    const dryRun = options.dryRun !== false;
+    const placeholders = WEEKLY_POINT_RETURN_EXCLUSION_CORRECTION_TYPES.map(
+      () => '?',
+    ).join(', ');
+    const accounts = await this.dataSource.query(
+      `SELECT
+         a.id AS accountId,
+         a.period_id AS periodId,
+         a.user_id AS userId,
+         a.eligible_consumed_points AS eligiblePoints,
+         a.excluded_consumed_points AS excludedPoints,
+         a.total_returned_points AS returnedPoints,
+         a.paid_days AS paidDays,
+         a.multiplier,
+         a.daily_rate AS dailyRate,
+         a.status,
+         p.week_start_at AS weekStartAt,
+         p.week_end_at AS weekEndAt,
+         p.excluded_log_types AS excludedLogTypes,
+         u.account,
+         u.nickname,
+         c.points AS currentPoints
+       FROM weekly_point_return_accounts a
+       INNER JOIN weekly_point_return_periods p ON p.id = a.period_id
+       LEFT JOIN users u ON u.id = a.user_id
+       LEFT JOIN user_currencies c ON c.user_id = a.user_id
+       LEFT JOIN weekly_point_return_exclusion_corrections x ON x.account_id = a.id
+       WHERE x.id IS NULL
+       ORDER BY p.week_start_date ASC, a.id ASC`,
+    );
+    const sourceRows = await this.dataSource.query(
+      `SELECT a.id AS accountId, l.log_type AS logType,
+              ROUND(SUM(ABS(l.amount)), 6) AS consumedPoints
+       FROM weekly_point_return_accounts a
+       INNER JOIN weekly_point_return_periods p ON p.id = a.period_id
+       INNER JOIN currency_logs l
+         ON l.user_id = a.user_id
+        AND l.currency_type = 'points'
+        AND l.amount < 0
+        AND l.created_at >= p.week_start_at
+        AND l.created_at <= p.week_end_at
+       LEFT JOIN weekly_point_return_exclusion_corrections x ON x.account_id = a.id
+       WHERE x.id IS NULL
+         AND l.log_type IN (${placeholders})
+       GROUP BY a.id, l.log_type`,
+      WEEKLY_POINT_RETURN_EXCLUSION_CORRECTION_TYPES,
+    );
+    const sourceMap = new Map<number, Map<string, number>>();
+    for (const row of sourceRows) {
+      const accountId = Number(row.accountId);
+      const values = sourceMap.get(accountId) || new Map<string, number>();
+      values.set(
+        String(row.logType),
+        this.roundPoints(this.toFiniteNumber(row.consumedPoints)),
+      );
+      sourceMap.set(accountId, values);
+    }
+
+    const candidates = accounts
+      .map((row: any) => {
+        const snapshot = new Set(
+          String(row.excludedLogTypes || '')
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean),
+        );
+        const missingTypes = WEEKLY_POINT_RETURN_EXCLUSION_CORRECTION_TYPES.filter(
+          (type) => !snapshot.has(type),
+        );
+        const sourceValues = sourceMap.get(Number(row.accountId));
+        const detectedPoints = this.roundPoints(
+          missingTypes.reduce(
+            (sum, type) => sum + (sourceValues?.get(type) || 0),
+            0,
+          ),
+        );
+        const eligibleBefore = this.roundPoints(
+          Math.max(0, this.toFiniteNumber(row.eligiblePoints)),
+        );
+        const movedToExcluded = this.roundPoints(
+          Math.min(eligibleBefore, detectedPoints),
+        );
+        if (movedToExcluded <= 0) return null;
+        const eligibleAfter = this.roundPoints(
+          Math.max(0, eligibleBefore - movedToExcluded),
+        );
+        const paidDays = Math.max(
+          0,
+          Math.min(7, Number(row.paidDays || 0)),
+        );
+        const projection = this.projectWeeklyPointReturn(
+          eligibleAfter,
+          paidDays,
+          this.toFiniteNumber(row.multiplier),
+          this.toFiniteNumber(row.dailyRate),
+        );
+        const returnedBefore = this.roundPoints(
+          Math.max(0, this.toFiniteNumber(row.returnedPoints)),
+        );
+        const recoverPoints = this.roundPoints(
+          Math.max(0, returnedBefore - projection.total),
+        );
+        const currentPoints = this.roundPoints(
+          this.toFiniteNumber(row.currentPoints),
+        );
+        return {
+          ...row,
+          accountId: Number(row.accountId),
+          periodId: Number(row.periodId),
+          userId: Number(row.userId),
+          missingTypes,
+          movedToExcluded,
+          eligibleBefore,
+          eligibleAfter,
+          returnedBefore,
+          returnedAfter: projection.total,
+          recoverPoints,
+          currentPoints,
+          sufficientBalance: currentPoints >= recoverPoints,
+        };
+      })
+      .filter(Boolean) as any[];
+
+    const remainingBalanceByUser = new Map<number, number>();
+    for (const candidate of candidates) {
+      const available = remainingBalanceByUser.has(candidate.userId)
+        ? Number(remainingBalanceByUser.get(candidate.userId))
+        : candidate.currentPoints;
+      candidate.sufficientBalance = available >= candidate.recoverPoints;
+      if (candidate.sufficientBalance) {
+        remainingBalanceByUser.set(
+          candidate.userId,
+          this.roundPoints(available - candidate.recoverPoints),
+        );
+      }
+    }
+
+    const preview = {
+      dryRun,
+      candidateAccounts: candidates.length,
+      affectedUsers: new Set(candidates.map((item) => item.userId)).size,
+      movedToExcludedPoints: this.roundPoints(
+        candidates.reduce((sum, item) => sum + item.movedToExcluded, 0),
+      ),
+      recoverPoints: this.roundPoints(
+        candidates.reduce((sum, item) => sum + item.recoverPoints, 0),
+      ),
+      insufficientAccounts: candidates.filter(
+        (item) => !item.sufficientBalance,
+      ).length,
+      details: candidates.map((item) => ({
+        accountId: item.accountId,
+        periodId: item.periodId,
+        userId: item.userId,
+        account: item.account || '',
+        nickname: item.nickname || '',
+        movedToExcludedPoints: item.movedToExcluded,
+        eligiblePointsBefore: item.eligibleBefore,
+        eligiblePointsAfter: item.eligibleAfter,
+        returnedPointsBefore: item.returnedBefore,
+        returnedPointsAfter: item.returnedAfter,
+        recoverPoints: item.recoverPoints,
+        currentPoints: item.currentPoints,
+        sufficientBalance: item.sufficientBalance,
+      })),
+    };
+    if (dryRun || candidates.length === 0) return preview;
+
+    let correctedAccounts = 0;
+    let recoveredPoints = 0;
+    const insufficient: any[] = [];
+    const affectedPeriodIds = new Set<number>();
+    for (const candidate of candidates) {
+      if (!candidate.sufficientBalance) {
+        insufficient.push({
+          accountId: candidate.accountId,
+          userId: candidate.userId,
+          account: candidate.account || '',
+          requiredPoints: candidate.recoverPoints,
+          currentPoints: candidate.currentPoints,
+        });
+        continue;
+      }
+      const result = await this.dataSource.transaction(async (mgr) => {
+        const existing = await mgr.query(
+          `SELECT id FROM weekly_point_return_exclusion_corrections
+           WHERE account_id = ? LIMIT 1`,
+          [candidate.accountId],
+        );
+        if (existing.length > 0) return null;
+        const lockedRows = await mgr.query(
+          `SELECT a.id AS accountId, a.period_id AS periodId,
+                  a.user_id AS userId,
+                  a.eligible_consumed_points AS eligiblePoints,
+                  a.excluded_consumed_points AS excludedPoints,
+                  a.total_returned_points AS returnedPoints,
+                  a.paid_days AS paidDays, a.multiplier,
+                  a.daily_rate AS dailyRate, a.status,
+                  c.points AS currentPoints
+           FROM weekly_point_return_accounts a
+           INNER JOIN user_currencies c ON c.user_id = a.user_id
+           WHERE a.id = ? FOR UPDATE`,
+          [candidate.accountId],
+        );
+        const locked = lockedRows[0];
+        if (!locked) return null;
+        const eligibleBefore = this.roundPoints(
+          Math.max(0, this.toFiniteNumber(locked.eligiblePoints)),
+        );
+        const movedToExcluded = this.roundPoints(
+          Math.min(eligibleBefore, candidate.movedToExcluded),
+        );
+        const eligibleAfter = this.roundPoints(
+          Math.max(0, eligibleBefore - movedToExcluded),
+        );
+        const paidDays = Math.max(
+          0,
+          Math.min(7, Number(locked.paidDays || 0)),
+        );
+        const projection = this.projectWeeklyPointReturn(
+          eligibleAfter,
+          paidDays,
+          this.toFiniteNumber(locked.multiplier),
+          this.toFiniteNumber(locked.dailyRate),
+        );
+        const returnedBefore = this.roundPoints(
+          Math.max(0, this.toFiniteNumber(locked.returnedPoints)),
+        );
+        const recoverPoints = this.roundPoints(
+          Math.max(0, returnedBefore - projection.total),
+        );
+        const currentPoints = this.roundPoints(
+          this.toFiniteNumber(locked.currentPoints),
+        );
+        if (currentPoints < recoverPoints) {
+          return {
+            insufficient: true,
+            requiredPoints: recoverPoints,
+            currentPoints,
+          };
+        }
+        let currencyLogId: number | null = null;
+        if (recoverPoints > 0) {
+          const changed = await this.changeCurrency(
+            Number(locked.userId),
+            'points',
+            -recoverPoints,
+            'weekly_point_return_correction',
+            '积分返还排除商城兑换及银币合成消费历史修正',
+            mgr,
+          );
+          currencyLogId = changed.logId;
+        }
+        const excludedAfter = this.roundPoints(
+          Math.max(0, this.toFiniteNumber(locked.excludedPoints)) +
+            movedToExcluded,
+        );
+        const status =
+          eligibleAfter <= 0 ? 2 : paidDays >= 7 ? 1 : 0;
+        await mgr.query(
+          `UPDATE weekly_point_return_accounts
+           SET eligible_consumed_points = ?, excluded_consumed_points = ?,
+               remaining_base_points = ?, total_returned_points = ?,
+               status = ?, updated_at = NOW()
+           WHERE id = ?`,
+          [
+            eligibleAfter,
+            excludedAfter,
+            projection.remainingBase,
+            projection.total,
+            status,
+            candidate.accountId,
+          ],
+        );
+        for (const record of projection.records) {
+          await mgr.query(
+            `UPDATE weekly_point_return_daily_records
+             SET base_before_return = ?, adjusted_return_amount = ?,
+                 base_after_return = ?, updated_at = NOW()
+             WHERE account_id = ? AND day_index = ?`,
+            [
+              record.baseBeforeReturn,
+              record.returnAmount,
+              record.baseAfterReturn,
+              candidate.accountId,
+              record.dayIndex,
+            ],
+          );
+        }
+        await mgr.query(
+          `INSERT INTO weekly_point_return_exclusion_corrections
+            (period_id, account_id, user_id, moved_to_excluded_points,
+             eligible_points_before, eligible_points_after,
+             returned_points_before, returned_points_after, recovered_points,
+             currency_log_id, correction_log_types)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            Number(locked.periodId),
+            candidate.accountId,
+            Number(locked.userId),
+            movedToExcluded,
+            eligibleBefore,
+            eligibleAfter,
+            returnedBefore,
+            projection.total,
+            recoverPoints,
+            currencyLogId,
+            candidate.missingTypes.join(','),
+          ],
+        );
+        return {
+          insufficient: false,
+          periodId: Number(locked.periodId),
+          recoveredPoints: recoverPoints,
+        };
+      });
+      if (!result) continue;
+      if (result.insufficient) {
+        insufficient.push({
+          accountId: candidate.accountId,
+          userId: candidate.userId,
+          account: candidate.account || '',
+          requiredPoints: result.requiredPoints,
+          currentPoints: result.currentPoints,
+        });
+        continue;
+      }
+      correctedAccounts += 1;
+      recoveredPoints = this.roundPoints(
+        recoveredPoints + this.toFiniteNumber(result.recoveredPoints),
+      );
+      affectedPeriodIds.add(Number(result.periodId));
+    }
+    for (const periodId of affectedPeriodIds) {
+      const pendingRows = await this.dataSource.query(
+        `SELECT COUNT(*) AS total FROM weekly_point_return_accounts
+         WHERE period_id = ? AND status = 0`,
+        [periodId],
+      );
+      await this.dataSource.query(
+        `UPDATE weekly_point_return_periods
+         SET status = ?, updated_at = NOW() WHERE id = ?`,
+        [Number(pendingRows[0]?.total || 0) > 0 ? 0 : 1, periodId],
+      );
+    }
+    return {
+      ...preview,
+      dryRun: false,
+      correctedAccounts,
+      recoveredPoints,
+      insufficientAccounts: insufficient.length,
+      insufficient,
+    };
   }
 
   private isLotteryGameForBackfill(gameName: any, gameUrl: any, result: any) {

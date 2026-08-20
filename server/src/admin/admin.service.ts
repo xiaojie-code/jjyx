@@ -149,11 +149,32 @@ export class AdminService {
       '后台发放',
     );
   }
+  async getUserPoints(userId: number) {
+    const [currency, aggregate] = await Promise.all([
+      this.currencyRepo.findOne({ where: { userId } }),
+      this.logRepo
+        .createQueryBuilder('l')
+        .select('COALESCE(SUM(CASE WHEN l.amount > 0 THEN l.amount ELSE 0 END), 0)', 'income')
+        .addSelect('COALESCE(SUM(CASE WHEN l.amount < 0 THEN -l.amount ELSE 0 END), 0)', 'expense')
+        .addSelect('COUNT(l.id)', 'logCount')
+        .where('l.user_id = :userId', { userId })
+        .andWhere('l.currency_type = :currencyType', { currencyType: 'points' })
+        .getRawOne(),
+    ]);
+    return {
+      userId,
+      balance: Number(currency?.points || 0),
+      income: Number(aggregate?.income || 0),
+      expense: Number(aggregate?.expense || 0),
+      logCount: Number(aggregate?.logCount || 0),
+    };
+  }
   async getUserLogs(userId: number, query: any, pagination: PaginationDto) {
     const qb = this.logRepo
       .createQueryBuilder('l')
       .where('l.user_id = :userId', { userId });
     if (query.sn) qb.andWhere('l.sn = :sn', { sn: query.sn });
+    if (query.currencyType) qb.andWhere('l.currency_type = :currencyType', { currencyType: query.currencyType });
     const total = await qb.getCount();
     const list = await qb
       .skip((pagination.page - 1) * pagination.pageSize)
@@ -999,7 +1020,8 @@ export class AdminService {
        FROM weekly_point_return_periods p
        LEFT JOIN weekly_point_return_accounts a ON a.period_id = p.id
        LEFT JOIN (
-         SELECT period_id, COUNT(*) AS dailyRecordCount, SUM(return_amount) AS dailyReturnedPoints
+         SELECT period_id, COUNT(*) AS dailyRecordCount,
+                SUM(COALESCE(adjusted_return_amount, return_amount)) AS dailyReturnedPoints
          FROM weekly_point_return_daily_records
          GROUP BY period_id
        ) d ON d.period_id = p.id
@@ -1290,7 +1312,8 @@ export class AdminService {
          r.base_before_return AS baseBeforeReturn,
          r.multiplier,
          r.daily_rate AS dailyRate,
-         r.return_amount AS returnAmount,
+         COALESCE(r.adjusted_return_amount, r.return_amount) AS returnAmount,
+         r.return_amount AS originalReturnAmount,
          r.base_after_return AS baseAfterReturn,
          r.currency_log_id AS currencyLogId,
          r.status,
@@ -1353,6 +1376,10 @@ export class AdminService {
         currencyLogId: row.currencyLogId ? Number(row.currencyLogId) : null,
       })),
     };
+  }
+
+  async reconcileWeeklyPointReturnExclusions(data: { dryRun?: boolean } = {}) {
+    return this.currencyService.reconcileWeeklyPointReturnExclusions(data);
   }
 
   // ===== 游戏时长统计 =====
