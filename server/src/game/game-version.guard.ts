@@ -1,10 +1,14 @@
 import {
+  BadRequestException,
   CanActivate,
   ExecutionContext,
   HttpException,
   Injectable,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+
+const GAME_UPDATE_MESSAGE =
+  '为了获得更稳定、流畅的游戏体验，请先将 APP 更新至最新版本，更新完成后即可继续游戏。';
 
 @Injectable()
 export class GameVersionGuard implements CanActivate {
@@ -28,12 +32,14 @@ export class GameVersionGuard implements CanActivate {
     if (!requiredVersion) return true;
 
     const minimumCode = Number(requiredVersion.versionCode || 0);
-    const currentCode = Number(request.headers['x-app-version-code'] || 0);
+    const rawVersionCode = request.headers['x-app-version-code'];
+    const currentCode = Number(rawVersionCode || 0);
     if (minimumCode <= 0 || currentCode >= minimumCode) return true;
 
-    throw new HttpException(
-      `当前版本过低，请更新至${requiredVersion.versionName || '最新版本'}后进入游戏`,
-      426,
-    );
+    if (rawVersionCode == null || String(rawVersionCode).trim() === '') {
+      throw new BadRequestException(GAME_UPDATE_MESSAGE);
+    }
+
+    throw new HttpException(GAME_UPDATE_MESSAGE, 426);
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +9,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/storage/token_storage.dart';
+import '../../../core/update/app_update_service.dart';
 import '../../../core/webview/game_webview.dart';
 import '../../../core/webview/js_bridge.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -66,6 +68,31 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         url.contains('wheel') ||
         url.contains('turntable') ||
         url.contains('zhuanpan');
+  }
+
+  bool _isGameUpdateRequired(Object error) {
+    if (error is ApiException) return error.code == 426;
+    if (error is DioException) {
+      if (error.response?.statusCode == 426) return true;
+      final inner = error.error;
+      return inner is ApiException && inner.code == 426;
+    }
+    return false;
+  }
+
+  Future<void> _handleGameStartError(Object error) async {
+    if (!mounted) return;
+    if (_isGameUpdateRequired(error)) {
+      await AppUpdateService.promptGameUpdate(context, ref);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          apiErrorMessage(error, fallback: '游戏启动失败，请稍后重试'),
+        ),
+      ),
+    );
   }
 
   String _gameSearchText(Map<String, dynamic> game) {
@@ -1100,14 +1127,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         );
       }
     } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            apiErrorMessage(error, fallback: '游戏启动失败，请稍后重试'),
-          ),
-        ),
-      );
+      await _handleGameStartError(error);
     } finally {
       if (mounted) setState(() => _starting = false);
     }
@@ -1298,14 +1318,7 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
         );
       }
     } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            apiErrorMessage(error, fallback: '游戏启动失败，请稍后重试'),
-          ),
-        ),
-      );
+      await _handleGameStartError(error);
     } finally {
       if (mounted) setState(() => _starting = false);
     }

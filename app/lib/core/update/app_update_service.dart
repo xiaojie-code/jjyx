@@ -166,22 +166,84 @@ class AppUpdateService {
     }
   }
 
+  static Future<void> promptGameUpdate(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    if (_checking || _dialogShowing) return;
+    if (kIsWeb || !Platform.isAndroid) {
+      if (context.mounted) Toast.info(context, '当前平台暂不支持在线安装更新');
+      return;
+    }
+
+    _checking = true;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentCode = int.tryParse(packageInfo.buildNumber) ?? 0;
+      final result =
+          await ref.read(apiClientProvider).get<Map<String, dynamic>>(
+        '/api/app/version',
+        queryParameters: {'platform': 'android'},
+      );
+      if (!context.mounted) return;
+      if (result == null) {
+        Toast.error(context, '暂时无法获取新版本信息，请稍后再试');
+        return;
+      }
+
+      final latest = AppVersionInfo.fromJson(result);
+      if (latest.versionCode <= currentCode) {
+        Toast.info(context, '当前已是最新版本');
+        return;
+      }
+      if (!latest.hasUsableDownloadUrl) {
+        Toast.error(context, '新版本下载地址配置错误，请联系管理员');
+        return;
+      }
+
+      ref
+          .read(updateStateProvider.notifier)
+          .setAvailable(latest.versionCode, latest.versionName);
+      await _showUpdateDialog(
+        context,
+        latest,
+        title: '发现新版本',
+        message: '为了获得更稳定、流畅的游戏体验，请先将 APP 更新至最新版本，更新完成后即可继续游戏。',
+        allowPostpone: true,
+      );
+    } catch (_) {
+      if (context.mounted) {
+        Toast.error(context, '检查更新失败，请检查网络后重试');
+      }
+    } finally {
+      _checking = false;
+    }
+  }
+
   static Future<void> _showUpdateDialog(
-      BuildContext context, AppVersionInfo version) async {
+    BuildContext context,
+    AppVersionInfo version, {
+    String? title,
+    String? message,
+    bool? allowPostpone,
+  }) async {
+    final canPostpone = allowPostpone ?? !version.forceUpdate;
     _dialogShowing = true;
     try {
       await showDialog<void>(
         context: context,
-        barrierDismissible: !version.forceUpdate,
+        barrierDismissible: canPostpone,
         builder: (dialogContext) => PopScope(
-          canPop: !version.forceUpdate,
+          canPop: canPostpone,
           child: AlertDialog(
-            title: Text('发现新版本 v${version.versionName}'),
+            title: Text(title ?? '发现新版本 v${version.versionName}'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (version.changelog?.trim().isNotEmpty == true) ...[
+                if (message != null)
+                  Text(message)
+                else if (version.changelog?.trim().isNotEmpty == true) ...[
                   const Text('更新内容',
                       style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
@@ -198,7 +260,7 @@ class AppUpdateService {
               ],
             ),
             actions: [
-              if (!version.forceUpdate)
+              if (canPostpone)
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('稍后再说'),
