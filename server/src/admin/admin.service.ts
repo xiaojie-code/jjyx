@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import * as bcrypt from 'bcryptjs';
+import { randomInt } from 'crypto';
 import { User } from '../entities/user.entity';
 import { UserCurrency } from '../entities/user-currency.entity';
 import { CurrencyLog } from '../entities/currency-log.entity';
@@ -27,6 +28,7 @@ import { Message } from '../entities/message.entity';
 import { Meeting } from '../entities/meeting.entity';
 import { CurrencyService } from '../currency/currency.service';
 import { RechargeService } from '../currency/recharge.service';
+import { SmsGatewayException, SmsService } from '../currency/sms.service';
 import { ServiceNotificationService } from '../notification/service-notification.service';
 import { MeetingService } from '../chat/meeting.service';
 import { MeetingGateway } from '../chat/meeting.gateway';
@@ -36,6 +38,8 @@ const CDK_ACTIVATION_AMOUNT_OPTIONS = [500, 2000];
 
 @Injectable()
 export class AdminService {
+  private passwordResetTableReady = false;
+
   constructor(
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(UserCurrency)
@@ -69,6 +73,7 @@ export class AdminService {
     private meetingService: MeetingService,
     private meetingGateway: MeetingGateway,
     private rechargeService: RechargeService,
+    private smsService: SmsService,
     private serviceNotificationService: ServiceNotificationService,
     private dataSource: DataSource,
   ) {}
@@ -207,16 +212,37 @@ export class AdminService {
       query.status === undefined || query.status === ''
         ? null
         : Number(query.status);
+    const keyword = String(query.keyword || '').trim();
     const params: any[] = [];
-    let where = '';
+    const conditions: string[] = [];
     if (status !== null && !Number.isNaN(status)) {
-      where = 'WHERE r.status = ?';
+      conditions.push('r.status = ?');
       params.push(status);
     }
+    if (keyword) {
+      const like = `%${keyword}%`;
+      if (/^\d+$/.test(keyword)) {
+        conditions.push(
+          '(r.id = ? OR r.user_id = ? OR r.account LIKE ? OR r.phone LIKE ? OR u.nickname LIKE ?)',
+        );
+        params.push(Number(keyword), Number(keyword), like, like, like);
+      } else {
+        conditions.push(
+          '(r.account LIKE ? OR r.phone LIKE ? OR u.nickname LIKE ?)',
+        );
+        params.push(like, like, like);
+      }
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     return this.dataSource.query(
-      `SELECT r.*, u.nickname
+      `SELECT r.id, r.user_id, r.account, r.phone, r.status,
+              r.sms_status, r.sms_attempts, r.sms_error, r.sent_at,
+              r.reject_reason, r.operator_id, r.handled_at,
+              r.created_at, r.updated_at, u.nickname,
+              operator.account AS operator_account
        FROM password_reset_requests r
        LEFT JOIN users u ON u.id = r.user_id
+       LEFT JOIN users operator ON operator.id = r.operator_id
        ${where}
        ORDER BY r.id DESC
        LIMIT 200`,
@@ -224,39 +250,131 @@ export class AdminService {
     );
   }
 
-  async resetUserPasswordByRequest(requestId: number) {
+  async getPasswordResetStats() {
     await this.ensurePasswordResetTable();
+    const rows = await this.dataSource.query(
+      `SELECT
+         SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS success,
+         SUM(CASE WHEN status = 0 AND sms_status = 3 THEN 1 ELSE 0 END) AS failed,
+         SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) AS rejected
+       FROM password_reset_requests`,
+    );
+    const row = rows?.[0] || {};
+    return {
+      pending: Number(row.pending || 0),
+      success: Number(row.success || 0),
+      failed: Number(row.failed || 0),
+      rejected: Number(row.rejected || 0),
+    };
+  }
+
+  async resetUserPasswordByRequest(requestId: number, operatorId: number) {
+    await this.ensurePasswordResetTable();
+    const claim = await this.dataSource.query(
+      `UPDATE password_reset_requests
+       SET sms_status = 1, sms_error = NULL, operator_id = ?, updated_at = NOW()
+       WHERE id = ? AND status = 0
+         AND (sms_status <> 1 OR updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))`,
+      [operatorId, requestId],
+    );
+    if (!Number(claim?.affectedRows || 0)) {
+      const rows = await this.dataSource.query(
+        'SELECT status, sms_status FROM password_reset_requests WHERE id = ? LIMIT 1',
+        [requestId],
+      );
+      if (!rows?.[0]) throw new NotFoundException('重置申请不存在');
+      if (Number(rows[0].sms_status) === 1) {
+        throw new BadRequestException('短信正在发送，请勿重复操作');
+      }
+      throw new BadRequestException('该申请已处理，不能重复重置');
+    }
+
     const rows = await this.dataSource.query(
       'SELECT * FROM password_reset_requests WHERE id = ? LIMIT 1',
       [requestId],
     );
     const request = rows?.[0];
-    if (!request) throw new NotFoundException('重置申请不存在');
     const user = await this.userRepo.findOne({
       where: { id: Number(request.user_id) },
     });
-    if (!user) throw new NotFoundException('用户不存在');
+    if (!user || user.status !== 1) {
+      await this.markPasswordResetSmsFailed(requestId, '用户不存在或账号状态异常');
+      throw new BadRequestException('用户不存在或账号状态异常');
+    }
+
     const newPassword = this.generateRandomPassword();
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await this.userRepo.update(user.id, { passwordHash });
-    await this.dataSource.query(
-      `UPDATE password_reset_requests
-       SET status = 1, new_password = ?, handled_at = NOW(), updated_at = NOW()
-       WHERE id = ?`,
-      [newPassword, requestId],
-    );
-    return { account: user.account, phone: request.phone, newPassword };
+    try {
+      await this.smsService.sendPasswordReset({
+        mobile: request.phone,
+        password: newPassword,
+      });
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      await this.dataSource.transaction(async (manager) => {
+        await manager.update(User, user.id, { passwordHash });
+        await manager.query(
+          `UPDATE password_reset_requests
+           SET status = 1, sms_status = 2, sms_attempts = sms_attempts + 1,
+               sms_error = NULL, sent_at = NOW(), handled_at = NOW(),
+               operator_id = ?, new_password = NULL, updated_at = NOW()
+           WHERE id = ? AND status = 0 AND sms_status = 1`,
+          [operatorId, requestId],
+        );
+      });
+    } catch (error) {
+      await this.markPasswordResetSmsFailed(
+        requestId,
+        this.getSmsError(error),
+      );
+      throw error;
+    }
+    return { account: user.account, phone: this.maskPhone(request.phone) };
   }
 
-  async rejectPasswordResetRequest(requestId: number) {
+  async rejectPasswordResetRequest(
+    requestId: number,
+    operatorId: number,
+    reason?: string,
+  ) {
     await this.ensurePasswordResetTable();
+    const result = await this.dataSource.query(
+      `UPDATE password_reset_requests
+       SET status = 2, reject_reason = ?, operator_id = ?,
+           handled_at = NOW(), updated_at = NOW()
+       WHERE id = ? AND status = 0 AND sms_status <> 1`,
+      [String(reason || '').trim() || null, operatorId, requestId],
+    );
+    if (!Number(result?.affectedRows || 0)) {
+      throw new BadRequestException('申请不存在、正在发送或已经处理');
+    }
+    return { message: '已拒绝' };
+  }
+
+  private async markPasswordResetSmsFailed(requestId: number, error: string) {
     await this.dataSource.query(
       `UPDATE password_reset_requests
-       SET status = 2, handled_at = NOW(), updated_at = NOW()
-       WHERE id = ?`,
-      [requestId],
+       SET sms_status = 3, sms_attempts = sms_attempts + 1,
+           sms_error = ?, updated_at = NOW()
+       WHERE id = ? AND status = 0`,
+      [String(error || '短信发送失败').slice(0, 500), requestId],
     );
-    return { message: '已拒绝' };
+  }
+
+  private getSmsError(error: unknown) {
+    if (error instanceof SmsGatewayException && error.receipt) {
+      const receipt = error.receipt;
+      return [
+        error.message,
+        `HTTP ${receipt.httpStatus}`,
+        receipt.code ? `code=${receipt.code}` : '',
+        receipt.requestId ? `requestId=${receipt.requestId}` : '',
+      ].filter(Boolean).join('，');
+    }
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  private maskPhone(phone: string) {
+    return String(phone || '').replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2');
   }
 
   private async ensureAppVersionsTable() {
@@ -438,12 +556,13 @@ export class AdminService {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
     let password = '';
     for (let i = 0; i < 10; i++) {
-      password += chars[Math.floor(Math.random() * chars.length)];
+      password += chars[randomInt(0, chars.length)];
     }
     return password;
   }
 
   private async ensurePasswordResetTable() {
+    if (this.passwordResetTableReady) return;
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS password_reset_requests (
         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -453,6 +572,12 @@ export class AdminService {
         status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 1已重置 2已拒绝',
         new_password VARCHAR(50) NULL,
         operator_id INT NULL,
+        sms_status TINYINT NOT NULL DEFAULT 0 COMMENT '0待发送 1发送中 2成功 3失败',
+        sms_attempts INT NOT NULL DEFAULT 0,
+        sms_error VARCHAR(500) NULL,
+        sent_at DATETIME NULL,
+        reject_reason VARCHAR(500) NULL,
+        created_ip VARCHAR(50) NULL,
         handled_at DATETIME NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -460,6 +585,20 @@ export class AdminService {
         INDEX idx_password_reset_user_id (user_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    const alters = [
+      `ALTER TABLE password_reset_requests ADD COLUMN sms_status TINYINT NOT NULL DEFAULT 0 COMMENT '0待发送 1发送中 2成功 3失败'`,
+      `ALTER TABLE password_reset_requests ADD COLUMN sms_attempts INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE password_reset_requests ADD COLUMN sms_error VARCHAR(500) NULL`,
+      `ALTER TABLE password_reset_requests ADD COLUMN sent_at DATETIME NULL`,
+      `ALTER TABLE password_reset_requests ADD COLUMN reject_reason VARCHAR(500) NULL`,
+      `ALTER TABLE password_reset_requests ADD COLUMN created_ip VARCHAR(50) NULL`,
+    ];
+    for (const sql of alters) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {}
+    }
+    this.passwordResetTableReady = true;
   }
 
   // ===== 功能开关 =====
@@ -616,12 +755,40 @@ export class AdminService {
       const clause = `(${clauses.join(' OR ')})`;
       if (hasWhere) qb.andWhere(clause, params);
       else qb.where(clause, params);
+      hasWhere = true;
+    }
+    const keyword = String(query.keyword || '').trim();
+    if (keyword) {
+      const keywordLike = `%${keyword}%`;
+      const matchedUsers = await this.userRepo
+        .createQueryBuilder('u')
+        .select('u.id', 'id')
+        .where('u.account LIKE :keywordLike OR u.nickname LIKE :keywordLike', {
+          keywordLike,
+        })
+        .getRawMany<{ id: number }>();
+      const matchedUserIds = matchedUsers.map((user) => Number(user.id));
+      const numericKeyword = /^\d+$/.test(keyword) ? Number(keyword) : null;
+      const keywordClauses = ['c.code LIKE :keywordLike'];
+      const keywordParams: Record<string, any> = { keywordLike };
+      if (numericKeyword !== null && Number.isSafeInteger(numericKeyword)) {
+        keywordClauses.push('c.id = :numericKeyword');
+        keywordClauses.push('c.usedBy = :numericKeyword');
+        keywordParams.numericKeyword = numericKeyword;
+      }
+      if (matchedUserIds.length > 0) {
+        keywordClauses.push('c.usedBy IN (:...matchedUserIds)');
+        keywordParams.matchedUserIds = matchedUserIds;
+      }
+      const keywordClause = `(${keywordClauses.join(' OR ')})`;
+      if (hasWhere) qb.andWhere(keywordClause, keywordParams);
+      else qb.where(keywordClause, keywordParams);
     }
     const total = await qb.getCount();
     const list = await qb
       .skip((pagination.page - 1) * pagination.pageSize)
       .take(pagination.pageSize)
-      .orderBy('c.created_at', 'DESC')
+      .orderBy('c.createdAt', 'DESC')
       .getMany();
     const typeIds = [
       ...new Set(list.map((item) => Number(item.cdkTypeId)).filter(Boolean)),
@@ -634,9 +801,17 @@ export class AdminService {
             .getMany()
         : [];
     const typeMap = new Map(types.map((type) => [Number(type.id), type]));
+    const usedByIds = [
+      ...new Set(list.map((item) => Number(item.usedBy)).filter(Boolean)),
+    ];
+    const usedUsers = usedByIds.length
+      ? await this.userRepo.find({ where: { id: In(usedByIds) } })
+      : [];
+    const usedUserMap = new Map(usedUsers.map((user) => [user.id, user]));
     return {
       list: list.map((item) => {
         const type = typeMap.get(Number(item.cdkTypeId));
+        const usedUser = usedUserMap.get(Number(item.usedBy));
         const activationAmount =
           this.normalizeActivationAmount(item.activationAmount) ||
           this.normalizeActivationAmount(type?.activationAmount);
@@ -648,6 +823,13 @@ export class AdminService {
           cdkTypeName:
             this.getActivationAmountLabel(activationAmount) || type?.name || '',
           rawCdkTypeName: type?.name || '',
+          usedUser: usedUser
+            ? {
+                id: usedUser.id,
+                account: usedUser.account,
+                nickname: usedUser.nickname,
+              }
+            : null,
         };
       }),
       total,

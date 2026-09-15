@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>发现新版本</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #f4f7fb;
+      color: #172033;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    main {
+      width: min(100%, 390px);
+      padding: 30px 24px 24px;
+      border: 1px solid #e4e9f1;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 12px 34px rgba(24, 39, 75, .12);
+      text-align: center;
+    }
+    .icon {
+      display: grid;
+      place-items: center;
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 18px;
+      border-radius: 50%;
+      background: #e9f2ff;
+      color: #1769e0;
+      font-size: 30px;
+      font-weight: 700;
+    }
+    h1 { margin: 0 0 12px; font-size: 22px; }
+    p { margin: 0; color: #5b667a; font-size: 15px; line-height: 1.75; }
+    .version { min-height: 20px; margin-top: 8px; color: #8a94a6; font-size: 13px; }
+    .actions { display: grid; gap: 10px; margin-top: 26px; }
+    button, a {
+      min-height: 46px;
+      border: 0;
+      border-radius: 6px;
+      font: inherit;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .primary {
+      display: grid;
+      place-items: center;
+      background: #1769e0;
+      color: #fff;
+      font-weight: 600;
+    }
+    .secondary { background: #eef1f6; color: #4d586b; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="icon">↑</div>
+    <h1>发现新版本</h1>
+    <p>为了获得更稳定、流畅的游戏体验，请先将 APP 更新至最新版本，更新完成后即可继续游戏。</p>
+    <div class="version" id="version"></div>
+    <div class="actions">
+      <a class="primary" id="update" href="#">立即更新</a>
+      <button class="secondary" id="later" type="button">稍后再说</button>
+    </div>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const versionName = params.get('versionName') || '';
+    const downloadUrl = params.get('downloadUrl') || '';
+    if (versionName) {
+      document.getElementById('version').textContent = `最新版本：${versionName}`;
+    }
+
+    document.getElementById('update').addEventListener('click', (event) => {
+      if (!downloadUrl) {
+        event.preventDefault();
+        alert('请前往“我的 - 设置 - 检查更新”完成更新');
+        return;
+      }
+      event.currentTarget.href = downloadUrl;
+    });
+
+    document.getElementById('later').addEventListener('click', async () => {
+      try {
+        if (window.flutter_inappwebview?.callHandler) {
+          await window.flutter_inappwebview.callHandler(
+            'gameMessage',
+            JSON.stringify({ action: 'exitGame', data: {} }),
+          );
+          return;
+        }
+      } catch (_) {}
+      history.back();
+    });
+  </script>
+</body>
+</html>

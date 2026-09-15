@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   CanActivate,
   ExecutionContext,
   HttpException,
@@ -7,8 +6,11 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-const GAME_UPDATE_MESSAGE =
-  '为了获得更稳定、流畅的游戏体验，请先将 APP 更新至最新版本，更新完成后即可继续游戏。';
+export interface GameUpdateRequirement {
+  versionName: string;
+  versionCode: number;
+  downloadUrl: string;
+}
 
 @Injectable()
 export class GameVersionGuard implements CanActivate {
@@ -22,7 +24,8 @@ export class GameVersionGuard implements CanActivate {
     if (platform !== 'android') return true;
 
     const rows = await this.dataSource.query(
-      `SELECT version_name AS versionName, version_code AS versionCode
+      `SELECT version_name AS versionName, version_code AS versionCode,
+              download_url AS downloadUrl
        FROM app_versions
        WHERE platform = 'android' AND status = 1 AND force_update = 1
        ORDER BY version_code DESC, id DESC
@@ -36,10 +39,19 @@ export class GameVersionGuard implements CanActivate {
     const currentCode = Number(rawVersionCode || 0);
     if (minimumCode <= 0 || currentCode >= minimumCode) return true;
 
-    if (rawVersionCode == null || String(rawVersionCode).trim() === '') {
-      throw new BadRequestException(GAME_UPDATE_MESSAGE);
+    // Legacy clients replace every non-2xx response with a fixed game-start
+    // error. The controller turns this marker into a normal update-page URL.
+    request.gameUpdateRequirement = {
+      versionName: String(requiredVersion.versionName || ''),
+      versionCode: minimumCode,
+      downloadUrl: String(requiredVersion.downloadUrl || ''),
+    } satisfies GameUpdateRequirement;
+    if (rawVersionCode != null && String(rawVersionCode).trim() !== '') {
+      throw new HttpException(
+        '为了获得更稳定、流畅的游戏体验，请先将 APP 更新至最新版本，更新完成后即可继续游戏。',
+        426,
+      );
     }
-
-    throw new HttpException(GAME_UPDATE_MESSAGE, 426);
+    return true;
   }
 }

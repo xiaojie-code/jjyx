@@ -1045,13 +1045,18 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       final startResult = await api.post<Map<String, dynamic>>(
         ApiEndpoints.gameStart(gameId),
       );
-      final rawUrl = (overrideRawUrl ??
-              startResult?['gameUrl'] ??
-              game['gameUrl'] ??
-              game['game_url'] ??
-              '')
-          .toString();
-      final safeRawUrl = overrideRawUrl ?? _normalizeKnownGameUrl(game, rawUrl);
+      final updateRequired = startResult?['updateRequired'] == true;
+      final serverGameUrl = startResult?['gameUrl'];
+      final fallbackGameUrl = overrideRawUrl ??
+          serverGameUrl ??
+          game['gameUrl'] ??
+          game['game_url'] ??
+          '';
+      final rawUrl =
+          (updateRequired ? serverGameUrl : fallbackGameUrl)?.toString() ?? '';
+      final safeRawUrl = updateRequired
+          ? rawUrl
+          : overrideRawUrl ?? _normalizeKnownGameUrl(game, rawUrl);
       if (safeRawUrl.isEmpty) {
         throw Exception('game url is empty');
       }
@@ -1064,11 +1069,15 @@ class _GameHallPageState extends ConsumerState<GameHallPage> {
       } catch (_) {}
 
       final gameUrl = _resolveGameUrl(safeRawUrl, gameId);
-      final orientation = (overrideOrientation ??
-              startResult?['orientation'] ??
-              game['orientation'] ??
-              'landscape')
-          .toString();
+      final serverOrientation = startResult?['orientation'];
+      final fallbackOrientation = overrideOrientation ??
+          serverOrientation ??
+          game['orientation'] ??
+          'landscape';
+      final orientation =
+          (updateRequired ? serverOrientation : fallbackOrientation)
+                  ?.toString() ??
+              'landscape';
       final token = TokenStorage.getToken() ?? '';
       if (!mounted) return;
 

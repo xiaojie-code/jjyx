@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseIntPipe, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { GameService } from './game.service';
-import { GameVersionGuard } from './game-version.guard';
+import { GameUpdateRequirement, GameVersionGuard } from './game-version.guard';
 
 @Controller('game')
 export class GameController {
@@ -57,7 +58,26 @@ export class GameController {
 
   @Post(':id/start')
   @UseGuards(GameVersionGuard)
-  startGame(@CurrentUser('id') userId: number, @Param('id', ParseIntPipe) id: number, @Body('betAmount') betAmount?: number) {
+  startGame(
+    @CurrentUser('id') userId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: Request & { gameUpdateRequirement?: GameUpdateRequirement },
+    @Body('betAmount') betAmount?: number,
+  ) {
+    const requirement = request.gameUpdateRequirement;
+    if (requirement) {
+      const query = new URLSearchParams({
+        versionName: requirement.versionName,
+        versionCode: String(requirement.versionCode),
+        downloadUrl: requirement.downloadUrl,
+      });
+      return {
+        gameId: id,
+        gameUrl: `/uploads/games/update-required/index.html?${query.toString()}`,
+        orientation: 'portrait',
+        updateRequired: true,
+      };
+    }
     return this.gameService.startGame(userId, id, betAmount);
   }
 

@@ -40,6 +40,6 @@ import { NotificationModule } from '../notification/notification.module';
   ],
   controllers: [CurrencyController, RechargeController],
   providers: [CurrencyService, CurrencyScheduler, RechargeService, SmsService],
-  exports: [CurrencyService, RechargeService],
+  exports: [CurrencyService, RechargeService, SmsService],
 })
 export class CurrencyModule {}

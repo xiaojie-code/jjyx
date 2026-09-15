@@ -55,9 +55,13 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="激活" width="70" align="center">
+        <el-table-column label="激活" width="110" align="center">
           <template #default="{ row }">
-            <el-icon :color="row.isActivated ? '#67c23a' : '#ccc'"><CircleCheckFilled /></el-icon>
+            <template v-if="row.isActivated">
+              <el-tag v-if="Number(row.activationAmount) === 500" type="warning" size="small">500档</el-tag>
+              <el-tag v-else-if="Number(row.activationAmount) === 2000" type="success" size="small">2000档</el-tag>
+              <el-icon v-else color="#67c23a"><CircleCheckFilled /></el-icon>
+            </template>
           </template>
         </el-table-column>
         <el-table-column label="当前积分" width="110" align="right">

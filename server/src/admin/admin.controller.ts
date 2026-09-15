@@ -28,8 +28,9 @@ export class AdminController {
   @Get('users/:id/activities') getUserActivities(@Param('id', ParseIntPipe) id: number, @Query() query: any) { return this.adminService.getUserActivities(id, query); }
   @Get('users/:id/backpack') getUserBackpack(@Param('id', ParseIntPipe) id: number) { return this.adminService.getUserBackpack(id); }
   @Get('password-reset/requests') getPasswordResetRequests(@Query() query: any) { return this.adminService.getPasswordResetRequests(query); }
-  @Post('password-reset/:id/reset') resetPasswordByRequest(@Param('id', ParseIntPipe) id: number) { return this.adminService.resetUserPasswordByRequest(id); }
-  @Post('password-reset/:id/reject') rejectPasswordResetRequest(@Param('id', ParseIntPipe) id: number) { return this.adminService.rejectPasswordResetRequest(id); }
+  @Get('password-reset/stats') getPasswordResetStats() { return this.adminService.getPasswordResetStats(); }
+  @Post('password-reset/:id/reset') resetPasswordByRequest(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number) { return this.adminService.resetUserPasswordByRequest(id, operatorId); }
+  @Post('password-reset/:id/reject') rejectPasswordResetRequest(@CurrentUser('id') operatorId: number, @Param('id', ParseIntPipe) id: number, @Body('reason') reason?: string) { return this.adminService.rejectPasswordResetRequest(id, operatorId, reason); }
 
   // App版本管理
   @Get('app-versions') getAppVersions() { return this.adminService.getAppVersions(); }

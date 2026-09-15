@@ -82,6 +82,8 @@ class AppConstants {
 
   static const String tokenKey = 'auth_token';
   static const String refreshTokenKey = 'refresh_token';
+  static const String rememberedLoginAccountKey = 'remembered_login_account';
+  static const String rememberedLoginPasswordKey = 'remembered_login_password';
 
   /// 昵称长度限制
   static const int nicknameMinLength = 2;

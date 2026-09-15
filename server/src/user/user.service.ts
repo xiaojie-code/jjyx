@@ -42,6 +42,8 @@ const PROFILE_TOTAL_USER_COUNT_OVERRIDE_KEY =
 
 @Injectable()
 export class UserService implements OnModuleInit {
+  private passwordResetTableReady = false;
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -617,11 +619,15 @@ export class UserService implements OnModuleInit {
     return { message: '密码修改成功' };
   }
 
-  async requestPasswordReset(account?: string, phone?: string) {
+  async requestPasswordReset(account?: string, phone?: string, ip?: string) {
     const trimmedAccount = account?.trim();
     const trimmedPhone = phone?.trim();
+    const requestIp = String(ip || '').trim().slice(0, 50);
     if (!trimmedAccount || !trimmedPhone) {
       throw new BadRequestException('请填写账号和手机号');
+    }
+    if (!/^1[3-9]\d{9}$/.test(trimmedPhone)) {
+      throw new BadRequestException('手机号格式不正确，请填写11位有效手机号');
     }
     const user = await this.userRepo.findOne({
       where: { account: trimmedAccount },
@@ -629,17 +635,38 @@ export class UserService implements OnModuleInit {
     if (!user) {
       throw new BadRequestException('账号不存在');
     }
+    if (user.status !== 1) {
+      throw new BadRequestException('账号状态异常，请联系客服');
+    }
     await this.ensurePasswordResetTable();
+    const pendingRows = await this.dataSource.query(
+      `SELECT id FROM password_reset_requests
+       WHERE user_id = ? AND status = 0 LIMIT 1`,
+      [user.id],
+    );
+    if (pendingRows?.length) {
+      throw new BadRequestException('该账号已有待处理申请，请勿重复提交');
+    }
+    const rateRows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total FROM password_reset_requests
+       WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+         AND (user_id = ? OR phone = ? OR (created_ip <> '' AND created_ip = ?))`,
+      [user.id, trimmedPhone, requestIp],
+    );
+    if (Number(rateRows?.[0]?.total || 0) >= 3) {
+      throw new BadRequestException('申请过于频繁，请24小时后再试');
+    }
     await this.dataSource.query(
       `INSERT INTO password_reset_requests
-        (user_id, account, phone, status, created_at, updated_at)
-       VALUES (?, ?, ?, 0, NOW(), NOW())`,
-      [user.id, user.account, trimmedPhone],
+        (user_id, account, phone, status, sms_status, created_ip, created_at, updated_at)
+       VALUES (?, ?, ?, 0, 0, ?, NOW(), NOW())`,
+      [user.id, user.account, trimmedPhone, requestIp],
     );
     return { message: '重置密码申请已提交，请等待管理员处理' };
   }
 
   private async ensurePasswordResetTable() {
+    if (this.passwordResetTableReady) return;
     await this.dataSource.query(`
       CREATE TABLE IF NOT EXISTS password_reset_requests (
         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -649,6 +676,12 @@ export class UserService implements OnModuleInit {
         status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 1已重置 2已拒绝',
         new_password VARCHAR(50) NULL,
         operator_id INT NULL,
+        sms_status TINYINT NOT NULL DEFAULT 0 COMMENT '0待发送 1发送中 2成功 3失败',
+        sms_attempts INT NOT NULL DEFAULT 0,
+        sms_error VARCHAR(500) NULL,
+        sent_at DATETIME NULL,
+        reject_reason VARCHAR(500) NULL,
+        created_ip VARCHAR(50) NULL,
         handled_at DATETIME NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -656,6 +689,20 @@ export class UserService implements OnModuleInit {
         INDEX idx_password_reset_user_id (user_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    const alters = [
+      `ALTER TABLE password_reset_requests ADD COLUMN sms_status TINYINT NOT NULL DEFAULT 0 COMMENT '0待发送 1发送中 2成功 3失败'`,
+      `ALTER TABLE password_reset_requests ADD COLUMN sms_attempts INT NOT NULL DEFAULT 0`,
+      `ALTER TABLE password_reset_requests ADD COLUMN sms_error VARCHAR(500) NULL`,
+      `ALTER TABLE password_reset_requests ADD COLUMN sent_at DATETIME NULL`,
+      `ALTER TABLE password_reset_requests ADD COLUMN reject_reason VARCHAR(500) NULL`,
+      `ALTER TABLE password_reset_requests ADD COLUMN created_ip VARCHAR(50) NULL`,
+    ];
+    for (const sql of alters) {
+      try {
+        await this.dataSource.query(sql);
+      } catch (_) {}
+    }
+    this.passwordResetTableReady = true;
   }
 
   /** CDK激活 */

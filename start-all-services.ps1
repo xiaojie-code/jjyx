@@ -49,6 +49,14 @@ function Test-LocalPort {
     return [bool]$rows
 }
 
+function Test-LanPort {
+    param([int]$Port)
+
+    $rows = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalAddress -ne '127.0.0.1' -and $_.LocalAddress -ne '::1' }
+    return [bool]$rows
+}
+
 function Start-HiddenPowerShell {
     param(
         [string]$Name,
@@ -143,7 +151,9 @@ function Start-MySqlIfNeeded {
 }
 
 function Start-BackendIfNeeded {
-    if (Test-LocalPort $ServerPort) {
+    # Cocos tooling may bind 127.0.0.1:3001. That listener is not the Nest
+    # backend and cannot be reached by phones or the LAN-targeted admin proxy.
+    if (Test-LanPort $ServerPort) {
         Write-Host "PORT $ServerPort OK backend"
         return
     }
@@ -160,10 +170,11 @@ function Start-AdminIfNeeded {
         return
     }
     $adminRoot = Join-Path $RepoRoot 'admin'
+    $adminApiTarget = 'http://' + $Endpoint.ApiHost + ':' + $ServerPort
     Start-HiddenPowerShell `
         -Name 'admin' `
         -WorkingDirectory $adminRoot `
-        -Command 'npm run dev -- --host 0.0.0.0'
+        -Command ("`$env:VITE_API_PROXY_TARGET = '$adminApiTarget'; npm run dev -- --host 0.0.0.0")
 }
 
 function Start-KillerIfNeeded {
@@ -172,7 +183,10 @@ function Start-KillerIfNeeded {
         return
     }
     $killerRoot = Join-Path $RepoRoot 'server\uploads\games\killer-server'
-    $command = '$env:PATH="' + $PhpDir + ';" + $env:PATH; & "' + $PhpExe + '" .\windows.php'
+    # Keep the PHP path quoted in the generated runner. Unquoted drive paths
+    # are parsed as commands by PowerShell, which prevents the worker from
+    # starting after a restart.
+    $command = "`$env:PATH = '$PhpDir;' + `$env:PATH; & '$PhpExe' '.\windows.php'"
     Start-HiddenPowerShell `
         -Name 'killer websocket' `
         -WorkingDirectory $killerRoot `
@@ -271,7 +285,8 @@ if ($WithFlutterWeb) { $ports += $WebPort }
 if ($WithNginx) { $ports += 80 }
 
 foreach ($port in $ports) {
-    if (Test-LocalPort $port) {
+    $listening = if ($port -eq $ServerPort) { Test-LanPort $port } else { Test-LocalPort $port }
+    if ($listening) {
         Write-Host "PORT $port OK"
     } else {
         Write-Host "PORT $port NOT_FOUND"

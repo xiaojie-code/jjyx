@@ -28,7 +28,30 @@ class TokenStorage {
 
   /// 保存 refresh token
   static Future<bool> setRefreshToken(String token) async {
-    return await _prefs?.setString(AppConstants.refreshTokenKey, token) ?? false;
+    return await _prefs?.setString(AppConstants.refreshTokenKey, token) ??
+        false;
+  }
+
+  /// 仅在用户主动勾选并成功登录后保存登录页凭据。
+  static String? getRememberedLoginAccount() {
+    return _prefs?.getString(AppConstants.rememberedLoginAccountKey);
+  }
+
+  static String? getRememberedLoginPassword() {
+    return _prefs?.getString(AppConstants.rememberedLoginPasswordKey);
+  }
+
+  static Future<void> saveRememberedLogin(
+    String account,
+    String password,
+  ) async {
+    await _prefs?.setString(AppConstants.rememberedLoginAccountKey, account);
+    await _prefs?.setString(AppConstants.rememberedLoginPasswordKey, password);
+  }
+
+  static Future<void> clearRememberedLogin() async {
+    await _prefs?.remove(AppConstants.rememberedLoginAccountKey);
+    await _prefs?.remove(AppConstants.rememberedLoginPasswordKey);
   }
 
   /// 清除所有 token（退出登录时调用）

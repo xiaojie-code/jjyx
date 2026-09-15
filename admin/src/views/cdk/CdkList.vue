@@ -9,7 +9,7 @@
               <el-button type="primary" icon="Plus" @click="showGenerateDialog">批量生成</el-button>
             </div>
           </template>
-          <el-form :inline="true" @submit.prevent="loadCdks" style="margin-bottom: 16px">
+          <el-form :inline="true" @submit.prevent="handleCdkSearch" style="margin-bottom: 16px">
             <el-form-item label="状态">
               <el-select v-model="filterStatus" placeholder="全部" clearable style="width:120px">
                 <el-option label="未使用" :value="0" />
@@ -22,7 +22,19 @@
                 <el-option label="充值2000激活码" :value="2000" />
               </el-select>
             </el-form-item>
-            <el-form-item><el-button type="primary" @click="loadCdks">查询</el-button></el-form-item>
+            <el-form-item label="关键词">
+              <el-input
+                v-model="filterKeyword"
+                placeholder="ID/兑换码/用户ID/账号/昵称"
+                clearable
+                style="width:220px"
+                @keyup.enter="handleCdkSearch"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" icon="Search" @click="handleCdkSearch">查询</el-button>
+              <el-button icon="Refresh" @click="resetCdkFilters">重置</el-button>
+            </el-form-item>
           </el-form>
           <el-table :data="cdkList" v-loading="cdkLoading" stripe>
             <el-table-column prop="id" label="ID" width="60" align="center" />
@@ -53,7 +65,16 @@
                 <el-tag :type="row.status===0?'info':'success'" size="small">{{ row.status===0?'未使用':'已使用' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="usedBy" label="使用者" width="80" align="center" />
+            <el-table-column label="使用账号" min-width="170">
+              <template #default="{ row }">
+                <div v-if="row.usedUser" class="used-user">
+                  <span>{{ row.usedUser.account }}</span>
+                  <span class="used-user-meta">ID {{ row.usedUser.id }}<template v-if="row.usedUser.nickname"> · {{ row.usedUser.nickname }}</template></span>
+                </div>
+                <span v-else class="empty-value">未使用</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="usedAt" label="使用时间" width="180" :formatter="dateTimeFormatter" />
             <el-table-column prop="createdAt" label="生成时间" width="180" :formatter="dateTimeFormatter" />
             <el-table-column label="操作" width="120" align="center">
               <template #default="{ row }">
@@ -154,6 +175,7 @@ const cdkPage = ref(1)
 const cdkTotal = ref(0)
 const filterStatus = ref<number | undefined>(undefined)
 const filterActivationAmount = ref<number | undefined>(undefined)
+const filterKeyword = ref('')
 
 // CDK类型
 const typeList = ref<any[]>([])
@@ -175,6 +197,7 @@ async function loadCdks() {
         pageSize: 20,
         status: filterStatus.value,
         activationAmount: filterActivationAmount.value,
+        keyword: filterKeyword.value || undefined,
       },
     })
     cdkList.value = res.list || res || []
@@ -183,6 +206,18 @@ async function loadCdks() {
     cdkList.value = []
     cdkTotal.value = 0
   } finally { cdkLoading.value = false }
+}
+
+function handleCdkSearch() {
+  cdkPage.value = 1
+  loadCdks()
+}
+
+function resetCdkFilters() {
+  filterStatus.value = undefined
+  filterActivationAmount.value = undefined
+  filterKeyword.value = ''
+  handleCdkSearch()
 }
 
 async function loadTypes() {
@@ -274,4 +309,7 @@ function activationTagType(amount: unknown) {
 :deep(.el-table) { --el-table-border-color: transparent; --el-table-row-hover-bg-color: #f0f5ff; }
 :deep(.el-table th.el-table__cell) { background-color: #fafafa; color: #606266; font-weight: 600; }
 :deep(.el-table td.el-table__cell) { padding: 14px 0; }
+.used-user { display: flex; flex-direction: column; line-height: 1.4; }
+.used-user-meta { color: #909399; font-size: 12px; }
+.empty-value { color: #909399; }
 </style>

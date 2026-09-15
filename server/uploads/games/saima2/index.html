@@ -1,0 +1,354 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=yes"
+    />
+    <title>赛马</title>
+    <link rel="shortcut icon" href="TemplateData/favicon.ico" />
+    <link rel="stylesheet" href="TemplateData/style.css" />
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #unity-container {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        transform: none;
+        background: #000;
+      }
+
+      #unity-container.unity-desktop,
+      #unity-container.unity-mobile {
+        left: 0;
+        top: 0;
+        transform: none;
+      }
+
+      #unity-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: #231f20;
+        object-fit: fill;
+      }
+
+      #unity-loading-bar {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+      }
+
+      #unity-progress-text {
+        margin-top: 10px;
+        color: #fff;
+        font: 13px/1.4 Arial, sans-serif;
+        text-shadow: 0 1px 2px #000;
+      }
+
+      #unity-footer {
+        display: none;
+      }
+
+      #unity-warning {
+        position: absolute;
+        left: 50%;
+        top: 16px;
+        max-width: calc(100% - 32px);
+        transform: translateX(-50%);
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+        <div id="unity-progress-text">0%</div>
+      </div>
+      <div id="unity-warning"></div>
+      <div id="unity-footer">
+        <div id="unity-webgl-logo"></div>
+        <div id="unity-build-title">赛马</div>
+        <div id="unity-fullscreen-button"></div>
+      </div>
+    </div>
+    <script>
+      var container = document.querySelector("#unity-container");
+      var canvas = document.querySelector("#unity-canvas");
+      var loadingBar = document.querySelector("#unity-loading-bar");
+      var progressBarFull = document.querySelector("#unity-progress-bar-full");
+      var progressText = document.querySelector("#unity-progress-text");
+      var warningBanner = document.querySelector("#unity-warning");
+      var appInitData = {};
+
+      (function setupSaimaAppBridge() {
+        var NativeWebSocket = window.WebSocket;
+
+        function parseQuery() {
+          var params = {};
+          var query = window.location.search || "";
+          if (query.charAt(0) === "?") query = query.slice(1);
+          query.split("&").forEach(function (pair) {
+            if (!pair) return;
+            var index = pair.indexOf("=");
+            var rawKey = index >= 0 ? pair.slice(0, index) : pair;
+            var rawValue = index >= 0 ? pair.slice(index + 1) : "";
+            try {
+              var key = decodeURIComponent(rawKey.replace(/\+/g, " "));
+              params[key] = decodeURIComponent(rawValue.replace(/\+/g, " "));
+            } catch (_) {}
+          });
+          return params;
+        }
+
+        function mergeInitData(data) {
+          appInitData = Object.assign({}, appInitData, data || {});
+          if (appInitData.appUserId && !appInitData.userId) {
+            appInitData.userId = appInitData.appUserId;
+          }
+          if (appInitData.userId && !appInitData.appUserId) {
+            appInitData.appUserId = appInitData.userId;
+          }
+          window.__GAME_APP_INIT__ = appInitData;
+          window.__SAIMA_APP_INIT__ = appInitData;
+          updateSaimaWsUrl();
+          return appInitData;
+        }
+
+        function isPrivateHost(host) {
+          host = String(host || "").toLowerCase();
+          return (
+            host === "localhost" ||
+            host === "127.0.0.1" ||
+            host === "::1" ||
+            /^192\.168\./.test(host) ||
+            /^10\./.test(host) ||
+            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+          );
+        }
+
+        function deriveSaimaWsUrl(apiBaseUrl) {
+          try {
+            var apiUrl = new URL(apiBaseUrl || "", window.location.href);
+            if (!apiUrl.hostname) return "";
+            var protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+            if (isPrivateHost(apiUrl.hostname)) {
+              return protocol + "//" + apiUrl.hostname + ":8080";
+            }
+            return protocol + "//" + apiUrl.hostname + "/saima-ws";
+          } catch (_) {
+            return "";
+          }
+        }
+
+        function asWebSocketUrl(value) {
+          value = String(value || "").trim();
+          return /^wss?:\/\//i.test(value) ? value : "";
+        }
+
+        function resolveSaimaWsUrl() {
+          return (
+            asWebSocketUrl(appInitData.saimaWsUrl) ||
+            asWebSocketUrl(appInitData.wsUrl) ||
+            deriveSaimaWsUrl(appInitData.apiBaseUrl) ||
+            "ws://localhost:8080"
+          );
+        }
+
+        function updateSaimaWsUrl() {
+          window.__SAIMA_WS_URL__ = resolveSaimaWsUrl();
+          return window.__SAIMA_WS_URL__;
+        }
+
+        function shouldRewriteWsUrl(url, targetUrl) {
+          if (!targetUrl || !url) return Boolean(targetUrl);
+          if (String(url) === String(targetUrl)) return false;
+          try {
+            var parsed = new URL(String(url), window.location.href);
+            return (
+              parsed.hostname === "localhost" ||
+              parsed.hostname === "127.0.0.1" ||
+              parsed.port === "8080"
+            );
+          } catch (_) {
+            return true;
+          }
+        }
+
+        function installWebSocketPatch() {
+          if (!NativeWebSocket || NativeWebSocket.__saimaPatched) return;
+
+          function SaimaWebSocket(url, protocols) {
+            var targetUrl = updateSaimaWsUrl();
+            var nextUrl = shouldRewriteWsUrl(url, targetUrl) ? targetUrl : url;
+            console.log("[saima] websocket url:", nextUrl);
+            if (protocols !== undefined) {
+              return new NativeWebSocket(nextUrl, protocols);
+            }
+            return new NativeWebSocket(nextUrl);
+          }
+
+          Object.getOwnPropertyNames(NativeWebSocket).forEach(function (key) {
+            try {
+              SaimaWebSocket[key] = NativeWebSocket[key];
+            } catch (_) {}
+          });
+          SaimaWebSocket.prototype = NativeWebSocket.prototype;
+          SaimaWebSocket.__saimaPatched = true;
+          window.WebSocket = SaimaWebSocket;
+        }
+
+        var queryData = parseQuery();
+        mergeInitData(window.__GAME_APP_INIT__ || {});
+        mergeInitData(window.__SAIMA_APP_INIT__ || {});
+        mergeInitData(queryData);
+        installWebSocketPatch();
+
+        window.onAppMessage = function onAppMessage(message) {
+          if (!message || message.action !== "init") return;
+          mergeInitData(message.data || {});
+          console.log("[saima] app init received");
+        };
+      })();
+
+      function unityShowBanner(msg, type) {
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? "block" : "none";
+        }
+
+        var div = document.createElement("div");
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type === "error") {
+          div.style = "background: #dc2626; color: white; padding: 10px;";
+        } else {
+          div.style = "background: #facc15; color: #111827; padding: 10px;";
+          setTimeout(function () {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      function clearSaimaRuntimeCache() {
+        var tasks = [];
+        try {
+          if (window.caches && caches.keys) {
+            tasks.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(
+                  keys
+                    .filter(function (key) {
+                      return /Unity|Saima|璧涢┈|saima/i.test(key);
+                    })
+                    .map(function (key) {
+                      return caches.delete(key);
+                    })
+                );
+              })
+            );
+          }
+        } catch (_) {}
+
+        try {
+          if (window.indexedDB && indexedDB.deleteDatabase) {
+            tasks.push(
+              new Promise(function (resolve) {
+                var req = indexedDB.deleteDatabase("UnityCache");
+                req.onsuccess = req.onerror = req.onblocked = function () {
+                  resolve();
+                };
+                setTimeout(resolve, 800);
+              })
+            );
+          }
+        } catch (_) {}
+
+        return Promise.race([
+          Promise.all(tasks),
+          new Promise(function (resolve) {
+            setTimeout(resolve, 1000);
+          }),
+        ]);
+      }
+
+      var buildUrl = "Build";
+      var assetVersion = "20260619-saima-replace-legacy";
+      var loaderUrl = buildUrl + "/saima_webgl.loader.js?v=" + assetVersion;
+      var config = {
+        dataUrl: buildUrl + "/saima_webgl.data.gz?v=" + assetVersion,
+        frameworkUrl: buildUrl + "/saima_webgl.framework.js.gz?v=" + assetVersion,
+        codeUrl: buildUrl + "/saima_webgl.wasm.gz?v=" + assetVersion,
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "DefaultCompany",
+        productName: "赛马",
+        productVersion: "0.1",
+        showBanner: unityShowBanner,
+      };
+
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+        container.className = "unity-mobile";
+        canvas.className = "unity-mobile";
+        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+      } else {
+        container.className = "unity-desktop";
+      }
+
+      loadingBar.style.display = "block";
+
+      window.addEventListener("error", function (event) {
+        console.error("[saima] window error:", event.message, event.filename, event.lineno);
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        console.error("[saima] unhandled rejection:", event.reason);
+      });
+
+      function loadUnity() {
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onload = function () {
+          createUnityInstance(canvas, config, function (progress) {
+            var percent = Math.floor(100 * progress);
+            progressBarFull.style.width = percent + "%";
+            progressText.textContent = percent + "%";
+          })
+            .then(function (unityInstance) {
+              loadingBar.style.display = "none";
+              window.unityInstance = unityInstance;
+              console.log("[saima] unity ready");
+            })
+            .catch(function (message) {
+              console.error("[saima] unity failed:", message);
+              unityShowBanner(message, "error");
+            });
+        };
+        script.onerror = function () {
+          unityShowBanner("Unity loader failed to load.", "error");
+        };
+        document.body.appendChild(script);
+      }
+
+      clearSaimaRuntimeCache().then(loadUnity).catch(loadUnity);
+    </script>
+  </body>
+</html>
+

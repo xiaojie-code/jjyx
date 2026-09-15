@@ -53,14 +53,18 @@ export function getUserBackpack(id: number) {
   return request.get(`/users/${id}/backpack`)
 }
 
-export function getPasswordResetRequests(params?: { status?: number }) {
+export function getPasswordResetRequests(params?: { status?: number; keyword?: string }) {
   return request.get('/password-reset/requests', { params })
+}
+
+export function getPasswordResetStats() {
+  return request.get('/password-reset/stats')
 }
 
 export function resetPasswordByRequest(id: number) {
   return request.post(`/password-reset/${id}/reset`)
 }
 
-export function rejectPasswordResetRequest(id: number) {
-  return request.post(`/password-reset/${id}/reject`)
+export function rejectPasswordResetRequest(id: number, reason?: string) {
+  return request.post(`/password-reset/${id}/reject`, { reason })
 }

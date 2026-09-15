@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/router/app_router.dart';
+import '../../../core/storage/token_storage.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/forgot_password_dialog.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -15,7 +19,54 @@ class LoginPage extends ConsumerStatefulWidget {
 
 class _LoginPageState extends ConsumerState<LoginPage> {
   final _accountCtrl = TextEditingController();
-  final _passwordCtrl = TextEditingController();
+  final _passwordCtrl = _PasswordEditingController();
+  bool _obscurePassword = true;
+  bool _rememberPassword = false;
+  bool _hasRememberedLogin = false;
+  String? _rememberedAccount;
+  String? _rememberedPassword;
+  String? _autoFilledAccount;
+
+  @override
+  void initState() {
+    super.initState();
+    _rememberedAccount = TokenStorage.getRememberedLoginAccount();
+    _rememberedPassword = TokenStorage.getRememberedLoginPassword();
+    _accountCtrl.addListener(_handleAccountChanged);
+    if (_rememberedAccount != null && _rememberedPassword != null) {
+      _accountCtrl.text = _rememberedAccount!;
+      _fillRememberedPassword();
+    }
+  }
+
+  void _handleAccountChanged() {
+    final account = _accountCtrl.text.trim();
+    final matchesRemembered = account.isNotEmpty &&
+        account == _rememberedAccount &&
+        _rememberedPassword != null;
+
+    if (matchesRemembered) {
+      _hasRememberedLogin = true;
+      if (_autoFilledAccount != account) _fillRememberedPassword();
+    } else {
+      _hasRememberedLogin = false;
+      _rememberPassword = false;
+      if (_autoFilledAccount != null && _autoFilledAccount != account) {
+        _passwordCtrl.setPassword('');
+        _autoFilledAccount = null;
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _fillRememberedPassword() {
+    final password = _rememberedPassword;
+    final account = _rememberedAccount;
+    if (password == null || account == null) return;
+    _passwordCtrl.setPassword(password);
+    _autoFilledAccount = account;
+    _rememberPassword = true;
+  }
 
   Future<void> _login() async {
     final account = _accountCtrl.text.trim();
@@ -26,96 +77,40 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
     final success =
         await ref.read(authProvider.notifier).login(account, password);
-    if (success && mounted) {
-      context.go(RoutePaths.chatList);
-    } else {
+    if (!mounted) return;
+
+    if (!success) {
       final error = ref.read(authProvider).error;
-      if (mounted && error != null) _showToast(error);
+      if (error != null) _showToast(error);
+      return;
     }
+
+    if (_rememberPassword) {
+      await TokenStorage.saveRememberedLogin(account, password);
+    } else if (_rememberedAccount == account) {
+      await TokenStorage.clearRememberedLogin();
+    }
+    if (!mounted) return;
+    context.go(RoutePaths.chatList);
   }
 
   Future<void> _showForgotPasswordDialog() async {
-    final accountCtrl = TextEditingController(text: _accountCtrl.text.trim());
-    final phoneCtrl = TextEditingController();
-    var submitting = false;
-
-    await showDialog<void>(
+    final submitted = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: const Text('忘记密码'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: accountCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '账号',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: phoneCtrl,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(
-                      labelText: '手机号',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed:
-                    submitting ? null : () => Navigator.pop(dialogContext),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                onPressed: submitting
-                    ? null
-                    : () async {
-                        final account = accountCtrl.text.trim();
-                        final phone = phoneCtrl.text.trim();
-                        if (account.isEmpty || phone.isEmpty) {
-                          _showToast('请填写账号和手机号');
-                          return;
-                        }
-                        setDialogState(() => submitting = true);
-                        try {
-                          await ref.read(apiClientProvider).post(
-                            ApiEndpoints.passwordResetRequest,
-                            data: {'account': account, 'phone': phone},
-                          );
-                          if (!mounted || !dialogContext.mounted) return;
-                          Navigator.of(dialogContext).pop();
-                          _showToast('申请已提交，请等待管理员处理');
-                        } catch (e) {
-                          if (mounted) _showToast('$e');
-                        } finally {
-                          if (context.mounted) {
-                            setDialogState(() => submitting = false);
-                          }
-                        }
-                      },
-                child: submitting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('确认发送'),
-              ),
-            ],
-          ),
-        );
-      },
+      barrierDismissible: false,
+      builder: (_) => ForgotPasswordDialog(
+        initialAccount: _accountCtrl.text.trim(),
+        onSubmit: (account, phone) async {
+          await ref.read(apiClientProvider).post(
+            ApiEndpoints.passwordResetRequest,
+            data: {'account': account, 'phone': phone},
+          );
+        },
+      ),
     );
-    accountCtrl.dispose();
-    phoneCtrl.dispose();
+    if (mounted && submitted == true) {
+      _showToast('申请已提交，请等待管理员处理');
+    }
   }
 
   void _showToast(String message) {
@@ -131,6 +126,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
   @override
   void dispose() {
+    _accountCtrl.removeListener(_handleAccountChanged);
     _accountCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
@@ -209,15 +205,83 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           prefixIcon: Icon(Icons.person),
                         ),
                       ),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        child: _hasRememberedLogin
+                            ? Align(
+                                key: const ValueKey('remembered-login'),
+                                alignment: Alignment.centerLeft,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.check_circle,
+                                          size: 15, color: Colors.green),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        '已找到保存的登录信息，密码已自动填充',
+                                        style: TextStyle(
+                                          color: Colors.green.shade700,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : const SizedBox.shrink(
+                                key: ValueKey('no-remembered-login'),
+                              ),
+                      ),
                       const SizedBox(height: 16),
                       TextField(
                         controller: _passwordCtrl,
-                        obscureText: true,
-                        decoration: const InputDecoration(
+                        obscureText: false,
+                        enableSuggestions: false,
+                        autocorrect: false,
+                        keyboardType: TextInputType.visiblePassword,
+                        textInputAction: TextInputAction.done,
+                        decoration: InputDecoration(
                           labelText: '密码',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.lock),
+                          border: const OutlineInputBorder(),
+                          prefixIcon: const Icon(Icons.lock),
+                          suffixIcon: IconButton(
+                            tooltip: _obscurePassword ? '显示密码' : '隐藏密码',
+                            icon: Icon(_obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined),
+                            onPressed: () {
+                              setState(() {
+                                _obscurePassword = !_obscurePassword;
+                                _passwordCtrl.setObscured(_obscurePassword);
+                              });
+                            },
+                          ),
                         ),
+                        onSubmitted: (_) => _login(),
+                      ),
+                      Row(
+                        children: [
+                          Checkbox(
+                            value: _rememberPassword,
+                            onChanged: (value) {
+                              setState(
+                                  () => _rememberPassword = value ?? false);
+                            },
+                          ),
+                          const Text('记住密码'),
+                          if (_hasRememberedLogin)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 8),
+                              child: Text(
+                                '已保存',
+                                style: TextStyle(
+                                  color: Colors.green,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       Align(
@@ -269,6 +333,64 @@ class _ToastOverlay extends StatefulWidget {
 
   @override
   State<_ToastOverlay> createState() => _ToastOverlayState();
+}
+
+/// 密码仍保存为真实值用于登录，只渲染圆点，并短暂显示最后输入的一位。
+class _PasswordEditingController extends TextEditingController {
+  Timer? _revealTimer;
+  bool _obscured = true;
+  bool _revealLastCharacter = false;
+
+  void setPassword(String password) {
+    _revealTimer?.cancel();
+    _revealLastCharacter = false;
+    super.value = TextEditingValue(
+      text: password,
+      selection: TextSelection.collapsed(offset: password.length),
+    );
+  }
+
+  void setObscured(bool obscured) {
+    _obscured = obscured;
+    if (obscured) _revealLastCharacter = false;
+    notifyListeners();
+  }
+
+  @override
+  set value(TextEditingValue newValue) {
+    final changed = newValue.text != text;
+    super.value = newValue;
+    if (changed && _obscured && newValue.text.isNotEmpty) {
+      _revealTimer?.cancel();
+      _revealLastCharacter = true;
+      notifyListeners();
+      _revealTimer = Timer(const Duration(milliseconds: 850), () {
+        _revealLastCharacter = false;
+        notifyListeners();
+      });
+    }
+  }
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    if (!_obscured || text.isEmpty) {
+      return TextSpan(style: style, text: text);
+    }
+    final hiddenCount = _revealLastCharacter ? text.length - 1 : text.length;
+    final masked = '•' * hiddenCount +
+        (_revealLastCharacter ? text.substring(text.length - 1) : '');
+    return TextSpan(style: style, text: masked);
+  }
+
+  @override
+  void dispose() {
+    _revealTimer?.cancel();
+    super.dispose();
+  }
 }
 
 class _ToastOverlayState extends State<_ToastOverlay>

@@ -25,11 +25,13 @@ export default defineConfig(({ command }) => ({
     port: 3100,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        // localhost:3001 may be occupied by the local Cocos tooling. The
+        // launcher supplies the current LAN API endpoint for dev sessions.
+        target: process.env.VITE_API_PROXY_TARGET || 'http://192.168.31.73:3001',
         changeOrigin: true,
       },
       '/uploads': {
-        target: 'http://localhost:3001',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://192.168.31.73:3001',
         changeOrigin: true,
       },
     },

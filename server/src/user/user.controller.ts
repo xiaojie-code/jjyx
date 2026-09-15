@@ -44,8 +44,10 @@ export class UserController {
   @Post('password-reset/request')
   async requestPasswordReset(
     @Body() data: { account?: string; phone?: string },
+    @Req() req: Request,
   ) {
-    return this.userService.requestPasswordReset(data.account, data.phone);
+    const ip = req.ip || req.socket.remoteAddress || '';
+    return this.userService.requestPasswordReset(data.account, data.phone, ip);
   }
 
   @Get('me')
