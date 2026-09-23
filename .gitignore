@@ -38,3 +38,9 @@ dump.rdb
 build-log.txt
 *.bak-*
 server/uploads/games/killer/Build/*.bak-*
+
+# Local build/runtime scratch
+/build/cocos-builds/
+/build/flutter_tools_gradle/
+/pm2-home/
+/tmp_xq_compare/
