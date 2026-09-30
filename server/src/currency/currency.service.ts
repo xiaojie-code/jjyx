@@ -1157,25 +1157,10 @@ export class CurrencyService {
       const totalBefore = Number(daily.totalSeconds || 0);
       const rewardedBefore = Number(daily.rewardedCopper || 0);
       const totalAfter = totalBefore + countedDurationSeconds;
-      const config = await this.getGameCopperConfig(mgr);
-      const eligibleCopper = Math.min(
-        Math.floor(totalAfter / (config.minutesPerCoin * 60)),
-        config.dailyMax,
-      );
-      const copperReward = Math.max(0, eligibleCopper - rewardedBefore);
-      let currencyLogId: number | null = null;
-      if (copperReward > 0) {
-        const changed = await this.changeCurrency(
-          userId,
-          'copper',
-          copperReward,
-          'game_duration_copper',
-          `游戏时长奖励：今日累计${Math.floor(totalAfter / 60)}分钟`,
-          mgr,
-        );
-        currencyLogId = changed.logId;
-      }
-      const rewardedAfter = rewardedBefore + copperReward;
+      // 保留游戏时长统计，但停止通过游戏时长新增铜币；历史发放记录不回滚。
+      const copperReward = 0;
+      const currencyLogId: number | null = null;
+      const rewardedAfter = rewardedBefore;
 
       await mgr.query(
         `UPDATE game_play_time_daily
@@ -1200,8 +1185,8 @@ export class CurrencyService {
         totalSecondsToday: totalAfter,
         copperReward,
         rewardedCopperToday: rewardedAfter,
-        minutesPerCoin: config.minutesPerCoin,
-        dailyMax: config.dailyMax,
+        minutesPerCoin: 0,
+        dailyMax: 0,
       };
     });
   }
@@ -1614,26 +1599,8 @@ export class CurrencyService {
 
   /** 铜币每日产出（定时任务调用） */
   async dailyRewardProduction() {
-    const currencies = await this.currencyRepo.find();
-    for (const c of currencies) {
-      const t1 = Number(c.specialPointsTier1);
-      const t2 = Number(c.specialPointsTier2);
-      const t3 = Number(c.specialPointsTier3);
-      const daily = (t1 * 0.3) / 365 + (t2 * 0.3) / 365 + (t3 * 0.3) / 365;
-
-      if (daily > 0) {
-        await this.dataSource.transaction(async (mgr) => {
-          await this.changeCurrency(
-            c.userId,
-            'copper',
-            daily,
-            'daily_reward',
-            '每日铜币产出',
-            mgr,
-          );
-        });
-      }
-    }
+    // 保留定时任务入口以兼容旧调度器，但当前版本不再新增铜币。
+    return { disabled: true, processed: 0 };
   }
 
   /** 每周积分返还每日发放入口（兼容旧调用名） */
@@ -1663,6 +1630,9 @@ export class CurrencyService {
     await this.dataSource.transaction(async (mgr) => {
       const targetCurrency =
         config.targetCurrency === 'reward' ? 'copper' : config.targetCurrency;
+      if (targetCurrency === 'copper') {
+        throw new BadRequestException('铜币合成功能暂未开放');
+      }
       const unitConsumePoints =
         targetCurrency === 'silver'
           ? await this.getSilverSynthesisPointsForUser(userId, mgr)
@@ -1704,11 +1674,18 @@ export class CurrencyService {
     const configs = await this.synthesisRepo.find({ where: { status: 1 } });
     const silverConsumePoints =
       await this.getSilverSynthesisPointsForUser(userId);
-    return configs.map((config) =>
+    return configs
+      .filter((config) => {
+        const target = config.targetCurrency === 'reward'
+          ? 'copper'
+          : config.targetCurrency;
+        return target !== 'copper';
+      })
+      .map((config) =>
       config.targetCurrency === 'silver'
         ? { ...config, consumePoints: silverConsumePoints }
         : config,
-    );
+      );
   }
 
   private async ensureWithdrawSecurityTable() {
@@ -3078,17 +3055,23 @@ export class CurrencyService {
         description: '充值页展示的收款人姓名',
       },
       {
+        configKey: 'recharge_wallet_address',
+        configName: '充值钱包地址',
+        configValue: '',
+        description: '充值页可切换的钱包收款地址',
+      },
+      {
         configKey: 'recharge_notice',
         configName: '充值说明',
         configValue:
-          '请先扫码付款，再填写姓名和手机号提交，管理员核实后会通过短信发送激活码。',
+          '请选择收款方式完成付款，再填写姓名和手机号提交，管理员核实后发放2000积分。',
         description: '充值页展示的操作说明',
       },
       {
         configKey: 'recharge_packages',
         configName: '充值套餐',
-        configValue: '',
-        description: '充值套餐档位，多个用英文逗号分隔，如 100,200,500',
+        configValue: '50',
+        description: '当前充值档位（用户端固定为50元）',
       },
     ];
     for (const d of defaults) {

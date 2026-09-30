@@ -286,8 +286,7 @@ class _DailySignInDialogState extends ConsumerState<_DailySignInDialog> {
     final missed = status == 'missed';
     final future = status == 'future';
     final points = (day['pointsReward'] as num?)?.toDouble() ?? 0;
-    final copper = (day['copperReward'] as num?)?.toDouble() ?? 0;
-    final label = _rewardText(points, copper);
+    final label = _rewardText(points);
 
     Color border = Colors.grey.shade200;
     Color bg = Colors.white;
@@ -380,17 +379,12 @@ class _DailySignInDialogState extends ConsumerState<_DailySignInDialog> {
     );
   }
 
-  String _rewardText(double points, double copper) {
+  String _rewardText(double points) {
     final parts = <String>[];
     if (points > 0) {
       parts.add(points % 1 == 0
           ? '${points.toInt()}积分'
           : '${points.toStringAsFixed(2)}积分');
-    }
-    if (copper > 0) {
-      parts.add(copper % 1 == 0
-          ? '${copper.toInt()}铜币'
-          : '${copper.toStringAsFixed(2)}铜币');
     }
     return parts.isEmpty ? '普通奖励' : parts.join('\n');
   }

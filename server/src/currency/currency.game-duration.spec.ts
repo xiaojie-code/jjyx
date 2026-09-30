@@ -1,7 +1,7 @@
 import { CurrencyService } from './currency.service';
 
 describe('CurrencyService game duration copper rewards', () => {
-  it('counts only new session seconds and rewards each threshold once', async () => {
+  it('counts only new session seconds without creating copper rewards', async () => {
     const session = { durationSeconds: 0, copperReward: 0 };
     const daily = { id: 1, totalSeconds: 0, rewardedCopper: 0 };
 
@@ -69,24 +69,24 @@ describe('CurrencyService game duration copper rewards', () => {
     });
     await expect(report(900)).resolves.toMatchObject({
       totalSecondsToday: 900,
-      copperReward: 1,
-      rewardedCopperToday: 1,
+      copperReward: 0,
+      rewardedCopperToday: 0,
     });
     await expect(report(1800)).resolves.toMatchObject({
       totalSecondsToday: 1800,
-      copperReward: 1,
-      rewardedCopperToday: 2,
+      copperReward: 0,
+      rewardedCopperToday: 0,
     });
     await expect(report(3600)).resolves.toMatchObject({
       totalSecondsToday: 3600,
       copperReward: 0,
-      rewardedCopperToday: 2,
+      rewardedCopperToday: 0,
     });
 
     expect(daily.totalSeconds).toBe(3600);
-    expect(daily.rewardedCopper).toBe(2);
+    expect(daily.rewardedCopper).toBe(0);
     expect(session.durationSeconds).toBe(3600);
-    expect(session.copperReward).toBe(2);
-    expect(service.changeCurrency).toHaveBeenCalledTimes(2);
+    expect(session.copperReward).toBe(0);
+    expect(service.changeCurrency).not.toHaveBeenCalled();
   });
 });

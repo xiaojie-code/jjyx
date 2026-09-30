@@ -36,11 +36,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
       Toast.error(context, '两次密码不一致');
       return;
     }
-    if (invite.isEmpty) {
-      Toast.error(context, '请输入邀请码');
-      return;
-    }
-    if (!_isValidInviteCode(invite)) {
+    if (invite.isNotEmpty && !_isValidInviteCode(invite)) {
       Toast.error(context, '邀请码格式不正确，应为8位大写字母和数字组合');
       return;
     }
@@ -123,8 +119,8 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 controller: _inviteCtrl,
                 textCapitalization: TextCapitalization.characters,
                 decoration: const InputDecoration(
-                  labelText: '邀请码',
-                  hintText: '必填，8位大写字母和数字',
+                  labelText: '邀请码（选填）',
+                  hintText: '可填写上级邀请码，留空也可注册',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.card_giftcard),
                 ),

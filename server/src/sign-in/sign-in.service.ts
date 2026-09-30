@@ -18,12 +18,12 @@ const WEEKDAY_NAMES = ['星期一', '星期二', '星期三', '星期四', '星�
 
 const WEEK_REWARDS: Record<number, WeekReward> = {
   1: { points: 100, copper: 0 },
-  2: { points: 0, copper: 1 },
+  2: { points: 150, copper: 0 },
   3: { points: 200, copper: 0 },
-  4: { points: 0, copper: 1 },
-  5: { points: 0, copper: 1 },
-  6: { points: 300, copper: 0 },
-  7: { points: 300, copper: 0, fullWeekCopper: 1 },
+  4: { points: 250, copper: 0 },
+  5: { points: 300, copper: 0 },
+  6: { points: 350, copper: 0 },
+  7: { points: 500, copper: 0 },
 };
 
 @Injectable()
@@ -118,17 +118,13 @@ export class SignInService implements OnModuleInit {
     return true;
   }
 
-  private resolveTodayReward(weekDay: number, records: SignInRecord[], weekStart: Date) {
+  private resolveTodayReward(weekDay: number) {
     const base = WEEK_REWARDS[weekDay];
     if (!base) return { points: 0, copper: 0, fullWeek: false };
-    if (weekDay !== 7) {
-      return { points: base.points, copper: base.copper, fullWeek: false };
-    }
-    const fullWeek = this.isFullWeekReadyBeforeSunday(records, weekStart);
     return {
       points: base.points,
-      copper: fullWeek ? (base.fullWeekCopper || 0) : 0,
-      fullWeek,
+      copper: 0,
+      fullWeek: false,
     };
   }
 
@@ -142,7 +138,7 @@ export class SignInService implements OnModuleInit {
     }
 
     const todayWeekDay = this.getWeekDay(today);
-    const todayReward = this.resolveTodayReward(todayWeekDay, records, weekStart);
+    const todayReward = this.resolveTodayReward(todayWeekDay);
     const days = Array.from({ length: 7 }, (_, index) => {
       const weekDay = index + 1;
       const date = this.addDays(weekStart, index);
@@ -237,7 +233,7 @@ export class SignInService implements OnModuleInit {
 
       const { weekStart, records } = await this.getWeekRecords(userId, today, manager);
       const weekDay = this.getWeekDay(today);
-      const reward = this.resolveTodayReward(weekDay, records, weekStart);
+      const reward = this.resolveTodayReward(weekDay);
       const record = await manager.save(
         SignInRecord,
         manager.create(SignInRecord, {

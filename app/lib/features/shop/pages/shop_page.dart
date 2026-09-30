@@ -34,6 +34,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
   bool _isMuted = true;
   bool _showControls = true;
   bool _isDisposing = false;
+  bool _showPartnerProducts = false;
   String _paymentQrcode = '';
   String _paymentPayeeName = '';
   _CagOffer _cagOffer = const _CagOffer();
@@ -1236,35 +1237,81 @@ class _ShopPageState extends ConsumerState<ShopPage> {
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
               sliver: SliverToBoxAdapter(child: _buildVideoSection()),
             ),
-            const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 10),
-                child: Text(
-                  '精选商品',
-                  style: TextStyle(
-                    color: Color(0xFF101828),
-                    fontSize: 21,
-                    fontWeight: FontWeight.w800,
+            SliverToBoxAdapter(child: _buildCategoryTabs()),
+            if (_showPartnerProducts)
+              const SliverToBoxAdapter(child: _PartnerProductsPlaceholder())
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                sliver: SliverGrid(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => _buildProductCard(_products[index]),
+                    childCount: _products.length,
+                  ),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    mainAxisExtent: regularCardExtent,
                   ),
                 ),
               ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              sliver: SliverGrid(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildProductCard(_products[index]),
-                  childCount: _products.length,
-                ),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  mainAxisExtent: regularCardExtent,
-                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryTabs() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+      child: Row(
+        children: [
+          _buildCategoryTab('CAG商品',
+              selected: !_showPartnerProducts,
+              onTap: () => setState(() => _showPartnerProducts = false)),
+          const SizedBox(width: 10),
+          _buildCategoryTab('合作商商品',
+              selected: _showPartnerProducts,
+              onTap: () => setState(() => _showPartnerProducts = true)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryTab(
+    String title, {
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: Material(
+        color: selected ? const Color(0xFFFF4D24) : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected
+                    ? const Color(0xFFFF4D24)
+                    : const Color(0xFFE4E7EC),
               ),
             ),
-          ],
+            child: Text(
+              title,
+              maxLines: 1,
+              style: TextStyle(
+                color: selected ? Colors.white : const Color(0xFF344054),
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1665,6 +1712,50 @@ class _ProductCardState extends State<_ProductCard> {
             color: Color(0xFF98A2B3),
             size: 34,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PartnerProductsPlaceholder extends StatelessWidget {
+  const _PartnerProductsPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 28, 16, 40),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 64),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE4E7EC)),
+        ),
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.storefront_outlined,
+              size: 52,
+              color: Color(0xFF98A2B3),
+            ),
+            SizedBox(height: 14),
+            Text(
+              '敬请期待',
+              style: TextStyle(
+                color: Color(0xFF344054),
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            SizedBox(height: 6),
+            Text(
+              '合作商商品正在筹备中',
+              style: TextStyle(color: Color(0xFF98A2B3), fontSize: 13),
+            ),
+          ],
         ),
       ),
     );

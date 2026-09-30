@@ -16,7 +16,15 @@ export class RechargeController {
   @Post('submit')
   submit(
     @CurrentUser('id') userId: number,
-    @Body() data: { realName?: string; phone?: string; amount?: number; packageName?: string },
+    @Body()
+    data: {
+      realName?: string;
+      phone?: string;
+      amount?: number;
+      packageName?: string;
+      paymentMethod?: string;
+      walletAddress?: string;
+    },
   ) {
     return this.rechargeService.submitOrder(userId, data);
   }

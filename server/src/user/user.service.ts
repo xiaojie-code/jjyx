@@ -403,9 +403,6 @@ export class UserService implements OnModuleInit {
   async register(dto: RegisterDto, ip: string) {
     await this.checkSwitch('register');
     const requestInviteCode = dto.inviteCode?.trim().toUpperCase();
-    if (!requestInviteCode) {
-      throw new BadRequestException('邀请码不能为空');
-    }
 
     const exists = await this.userRepo.findOne({
       where: { account: dto.account },
@@ -416,13 +413,15 @@ export class UserService implements OnModuleInit {
 
     // 验证邀请码
     let inviterId: number | null = null;
-    const inviter = await this.userRepo.findOne({
-      where: { inviteCode: requestInviteCode },
-    });
-    if (!inviter) {
+    const inviter = requestInviteCode
+      ? await this.userRepo.findOne({
+          where: { inviteCode: requestInviteCode },
+        })
+      : null;
+    if (requestInviteCode && !inviter) {
       throw new BadRequestException('邀请码不存在');
     }
-    inviterId = inviter.id;
+    inviterId = inviter?.id ?? null;
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const now = new Date();

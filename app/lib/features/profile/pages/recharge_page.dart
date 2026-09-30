@@ -22,10 +22,12 @@ class _RechargePageState extends ConsumerState<RechargePage> {
   bool _submitting = false;
 
   String _qrcode = '';
+  String _walletAddress = '';
   String _payeeName = '';
   String _notice = '';
-  List<int> _amountOptions = const [50, 500, 2000];
-  int? _selectedAmount;
+  List<int> _amountOptions = const [50];
+  int? _selectedAmount = 50;
+  String _paymentMethod = 'qrcode';
   List<Map<String, dynamic>> _orders = [];
 
   @override
@@ -48,17 +50,25 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           .read(apiClientProvider)
           .get<Map<String, dynamic>>(ApiEndpoints.rechargeInfo);
       if (!mounted) return;
-      final remoteOptions = (result?['amountOptions'] as List<dynamic>?)
-              ?.map((value) => int.tryParse(value.toString()))
-              .whereType<int>()
-              .toList() ??
-          const <int>[];
       setState(() {
         _qrcode = result?['qrcode']?.toString() ?? '';
+        _walletAddress = result?['walletAddress']?.toString() ?? '';
         _payeeName = result?['payeeName']?.toString() ?? '';
         _notice = result?['notice']?.toString() ?? '';
-        if (remoteOptions.isNotEmpty) {
-          _amountOptions = remoteOptions;
+        // 用户端当前只开放50元档，避免旧服务缓存返回历史档位。
+        _amountOptions = const [50];
+        final configuredMethods = (result?['paymentMethods'] as List<dynamic>?)
+                ?.map((item) => item.toString())
+                .toSet() ??
+            <String>{};
+        final methods = configuredMethods.isNotEmpty
+            ? configuredMethods
+            : <String>{
+                if (_qrcode.isNotEmpty) 'qrcode',
+                if (_walletAddress.isNotEmpty) 'wallet',
+              };
+        if (!methods.contains(_paymentMethod)) {
+          _paymentMethod = methods.contains('qrcode') ? 'qrcode' : 'wallet';
         }
         _loading = false;
       });
@@ -100,6 +110,14 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       Toast.warning(context, '请选择充值金额');
       return;
     }
+    if (_paymentMethod == 'wallet' && _walletAddress.isEmpty) {
+      Toast.warning(context, '钱包地址暂未配置，请选择其他收款方式');
+      return;
+    }
+    if (_paymentMethod == 'qrcode' && _qrcode.isEmpty) {
+      Toast.warning(context, '收款码暂未配置，请选择其他收款方式');
+      return;
+    }
     setState(() => _submitting = true);
     try {
       await ref.read(apiClientProvider).post(
@@ -109,18 +127,18 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           'phone': phone,
           'amount': _selectedAmount,
           'packageName': '$_selectedAmount元档',
+          'paymentMethod': _paymentMethod,
+          'walletAddress': _paymentMethod == 'wallet' ? _walletAddress : null,
         },
       );
       if (!mounted) return;
       Toast.success(
         context,
-        _selectedAmount == 50
-            ? '充值申请已提交，管理员核实后将发放1500积分'
-            : '充值申请已提交，管理员核实后会发送激活码',
+        '充值申请已提交，管理员核实后将发放2000积分',
       );
       _nameCtrl.clear();
       _phoneCtrl.clear();
-      setState(() => _selectedAmount = null);
+      setState(() => _selectedAmount = 50);
       _loadOrders();
     } catch (e) {
       if (!mounted) return;
@@ -155,6 +173,12 @@ class _RechargePageState extends ConsumerState<RechargePage> {
     );
   }
 
+  void _copyWalletAddress() {
+    if (_walletAddress.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: _walletAddress));
+    Toast.success(context, '钱包地址已复制');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -171,7 +195,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
                   _buildStepCard(),
                   const SizedBox(height: 16),
                   // 收款码
-                  _buildQrcodeCard(),
+                  _buildPaymentCard(),
                   const SizedBox(height: 16),
                   // 套餐选择
                   _buildPackageCard(),
@@ -200,9 +224,9 @@ class _RechargePageState extends ConsumerState<RechargePage> {
           const Text('充值步骤',
               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
           const SizedBox(height: 8),
-          _buildStep('1', '扫描下方收款码完成付款'),
+          _buildStep('1', '选择收款方式完成付款'),
           _buildStep('2', '填写姓名和手机号，点击提交'),
-          _buildStep('3', '管理员核实后，50元档发放1500积分，其他档位短信发送激活码'),
+          _buildStep('3', '管理员核实到账后发放2000积分'),
           if (_notice.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(_notice,
@@ -232,7 +256,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
     );
   }
 
-  Widget _buildQrcodeCard() {
+  Widget _buildPaymentCard() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -241,9 +265,35 @@ class _RechargePageState extends ConsumerState<RechargePage> {
       ),
       child: Column(
         children: [
-          const Text('收款码', style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('选择收款方式', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
-          if (_qrcode.isNotEmpty)
+          Row(
+            children: [
+              Expanded(
+                child: ChoiceChip(
+                  label: const Text('收款码'),
+                  selected: _paymentMethod == 'qrcode',
+                  onSelected: _qrcode.isEmpty
+                      ? null
+                      : (_) => setState(() => _paymentMethod = 'qrcode'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ChoiceChip(
+                  label: const Text('钱包地址'),
+                  selected: _paymentMethod == 'wallet',
+                  onSelected: _walletAddress.isEmpty
+                      ? null
+                      : (_) => setState(() => _paymentMethod = 'wallet'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_paymentMethod == 'wallet')
+            _buildWalletAddressCard()
+          else if (_qrcode.isNotEmpty)
             GestureDetector(
               onTap: _showQrcodeFullscreen,
               child: Image.network(
@@ -256,17 +306,45 @@ class _RechargePageState extends ConsumerState<RechargePage> {
             )
           else
             _qrcodePlaceholder('管理员暂未配置收款码'),
-          if (_payeeName.isNotEmpty) ...[
+          if (_paymentMethod == 'qrcode' && _payeeName.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text('收款人：$_payeeName',
                 style: const TextStyle(fontSize: 14, color: Colors.black87)),
           ],
-          if (_qrcode.isNotEmpty)
+          if (_paymentMethod == 'qrcode' && _qrcode.isNotEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 6),
               child: Text('点击二维码可放大',
                   style: TextStyle(fontSize: 11, color: Colors.grey)),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWalletAddressCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: SelectableText(
+              _walletAddress,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+          ),
+          IconButton(
+            onPressed: _copyWalletAddress,
+            icon: const Icon(Icons.copy, size: 19),
+            tooltip: '复制钱包地址',
+          ),
         ],
       ),
     );
@@ -311,11 +389,10 @@ class _RechargePageState extends ConsumerState<RechargePage> {
               final selected = _selectedAmount == amount;
               return ChoiceChip(
                 label: Text(
-                  amount == 50 ? '$amount 元  赠1500积分' : '$amount 元',
+                  '$amount 元  赠2000积分',
                 ),
                 selected: selected,
-                onSelected: (v) =>
-                    setState(() => _selectedAmount = v ? amount : null),
+                onSelected: (_) => setState(() => _selectedAmount = amount),
               );
             }).toList(),
           ),
@@ -354,7 +431,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
               labelText: '手机号',
-              hintText: '用于接收激活码短信',
+              hintText: '用于联系充值订单',
               border: OutlineInputBorder(),
               counterText: '',
             ),
@@ -375,7 +452,7 @@ class _RechargePageState extends ConsumerState<RechargePage> {
                       height: 20,
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.white))
-                  : const Text('确认发送', style: TextStyle(fontSize: 16)),
+                  : const Text('提交充值申请', style: TextStyle(fontSize: 16)),
             ),
           ),
         ],

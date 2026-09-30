@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 
 /**
- * 充值订单：用户扫码付款后提交姓名+手机号，管理员核实后通过短信发激活码。
+ * 充值订单：用户选择收款方式付款后提交信息，管理员核实后发放积分。
  */
 @Entity('recharge_orders')
 export class RechargeOrder {
@@ -27,8 +27,26 @@ export class RechargeOrder {
   })
   realName: string;
 
-  @Column({ type: 'varchar', length: 20, comment: '接收激活码的手机号' })
+  @Column({ type: 'varchar', length: 20, comment: '充值联系手机号' })
   phone: string;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+    name: 'payment_method',
+    comment: '付款方式：qrcode 或 wallet',
+  })
+  paymentMethod: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    name: 'payment_address',
+    comment: '用户下单时使用的收款地址快照',
+  })
+  paymentAddress: string | null;
 
   @Column({
     type: 'decimal',

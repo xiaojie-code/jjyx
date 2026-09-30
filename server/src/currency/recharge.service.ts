@@ -17,13 +17,16 @@ import { SmsService } from './sms.service';
 import { CurrencyService } from './currency.service';
 
 const POINTS_RECHARGE_AMOUNT = 50;
-const POINTS_RECHARGE_REWARD = 1500;
+const POINTS_RECHARGE_REWARD = 2000;
 const CDK_RECHARGE_AMOUNT_OPTIONS = [500, 2000];
-const RECHARGE_AMOUNT_OPTIONS = [
+const RECHARGE_AMOUNT_OPTIONS = [POINTS_RECHARGE_AMOUNT];
+const ALL_RECHARGE_AMOUNT_OPTIONS = [
   POINTS_RECHARGE_AMOUNT,
   ...CDK_RECHARGE_AMOUNT_OPTIONS,
 ];
 const CHINA_MOBILE_REGEX = /^1[3-9]\d{9}$/;
+const CURRENT_RECHARGE_NOTICE =
+  '请选择收款方式完成付款，再填写姓名和手机号提交。管理员核实后发放2000积分。';
 
 @Injectable()
 export class RechargeService implements OnModuleInit {
@@ -45,6 +48,28 @@ export class RechargeService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureTable();
+    await this.ensureCurrentRechargeNotice();
+  }
+
+  private async ensureCurrentRechargeNotice() {
+    const config = await this.configRepo.findOne({
+      where: { configKey: 'recharge_notice' },
+    });
+    if (!config || /激活码|1500|500元|2000元/.test(config.configValue || '')) {
+      if (config) {
+        config.configValue = CURRENT_RECHARGE_NOTICE;
+        await this.configRepo.save(config);
+      } else {
+        await this.configRepo.save(
+          this.configRepo.create({
+            configKey: 'recharge_notice',
+            configName: '充值说明',
+            configValue: CURRENT_RECHARGE_NOTICE,
+            description: '充值页展示的操作说明',
+          }),
+        );
+      }
+    }
   }
 
   private async getConfig(key: string, defaultValue = ''): Promise<string> {
@@ -60,9 +85,11 @@ export class RechargeService implements OnModuleInit {
         user_id INT NOT NULL,
         real_name VARCHAR(50) NOT NULL,
         phone VARCHAR(20) NOT NULL,
+        payment_method VARCHAR(20) NULL COMMENT 'qrcode 或 wallet',
+        payment_address VARCHAR(255) NULL COMMENT '用户下单时使用的收款地址快照',
         amount DECIMAL(10,2) NULL,
         package_name VARCHAR(50) NULL,
-        status TINYINT NOT NULL DEFAULT 0 COMMENT '0待核实 1已发码 2已驳回',
+        status TINYINT NOT NULL DEFAULT 0 COMMENT '0待核实 1已处理 2已驳回',
         admin_remark VARCHAR(200) NULL,
         operator_id INT NULL,
         handled_at DATETIME NULL,
@@ -76,6 +103,8 @@ export class RechargeService implements OnModuleInit {
     const alters = [
       `ALTER TABLE recharge_orders ADD COLUMN amount DECIMAL(10,2) NULL`,
       `ALTER TABLE recharge_orders ADD COLUMN package_name VARCHAR(50) NULL`,
+      `ALTER TABLE recharge_orders ADD COLUMN payment_method VARCHAR(20) NULL`,
+      `ALTER TABLE recharge_orders ADD COLUMN payment_address VARCHAR(255) NULL`,
       `ALTER TABLE recharge_orders ADD COLUMN admin_remark VARCHAR(200) NULL`,
       `ALTER TABLE recharge_orders ADD COLUMN operator_id INT NULL`,
       `ALTER TABLE recharge_orders ADD COLUMN handled_at DATETIME NULL`,
@@ -93,7 +122,7 @@ export class RechargeService implements OnModuleInit {
 
   private normalizeRechargeAmount(value: any): number | null {
     const amount = Number(value);
-    return RECHARGE_AMOUNT_OPTIONS.includes(amount) ? amount : null;
+    return ALL_RECHARGE_AMOUNT_OPTIONS.includes(amount) ? amount : null;
   }
 
   private normalizeActivationAmount(value: any): number | null {
@@ -200,21 +229,27 @@ export class RechargeService implements OnModuleInit {
     return this.inferActivationAmountFromItems(cdk.itemsJson);
   }
 
-  /** App 端：获取收款信息（二维码、收款人、说明、套餐） */
+  /** App 端：获取收款信息（二维码、钱包地址、收款人、说明、套餐） */
   async getRechargeInfo() {
     const qrcode = await this.getConfig('recharge_qrcode', '');
     const payeeName = await this.getConfig('recharge_payee_name', '');
+    const walletAddress = await this.getConfig('recharge_wallet_address', '');
     const notice = await this.getConfig(
       'recharge_notice',
-      '请先扫码付款，再填写姓名和手机号提交。管理员核实后，50元档发放1500积分，500元和2000元档通过短信发送激活码。',
+      CURRENT_RECHARGE_NOTICE,
     );
     const packages = RECHARGE_AMOUNT_OPTIONS.join(',');
     return {
       qrcode,
+      walletAddress,
       payeeName,
       notice,
       packages,
       amountOptions: RECHARGE_AMOUNT_OPTIONS,
+      paymentMethods: [
+        ...(qrcode ? ['qrcode'] : []),
+        ...(walletAddress ? ['wallet'] : []),
+      ],
     };
   }
 
@@ -226,6 +261,8 @@ export class RechargeService implements OnModuleInit {
       phone?: string;
       amount?: number;
       packageName?: string;
+      paymentMethod?: string;
+      walletAddress?: string;
     },
   ) {
     const realName = String(data.realName || '').trim();
@@ -240,7 +277,20 @@ export class RechargeService implements OnModuleInit {
         ? null
         : Number(data.amount);
     if (amount === null || !RECHARGE_AMOUNT_OPTIONS.includes(amount)) {
-      throw new BadRequestException('请选择充值金额：50、500或2000');
+      throw new BadRequestException('当前仅支持50元充值');
+    }
+
+    const requestedPaymentMethod = String(data.paymentMethod || 'qrcode')
+      .trim()
+      .toLowerCase();
+    const paymentMethod = requestedPaymentMethod === 'wallet' ? 'wallet' : 'qrcode';
+    const qrcode = await this.getConfig('recharge_qrcode', '');
+    const walletAddress = await this.getConfig('recharge_wallet_address', '');
+    if (paymentMethod === 'wallet' && !walletAddress) {
+      throw new BadRequestException('钱包地址暂未配置，请选择其他收款方式');
+    }
+    if (paymentMethod === 'qrcode' && !qrcode) {
+      throw new BadRequestException('收款码暂未配置，请选择其他收款方式');
     }
 
     // 防重复：同一用户存在待核实订单时不允许重复提交
@@ -257,6 +307,8 @@ export class RechargeService implements OnModuleInit {
       userId: Number(userId),
       realName,
       phone,
+      paymentMethod,
+      paymentAddress: paymentMethod === 'wallet' ? walletAddress : qrcode,
       amount,
       packageName: `${amount}元档`,
       status: 0,
@@ -266,16 +318,12 @@ export class RechargeService implements OnModuleInit {
     // 给管理员发服务通知
     const user = await this.userRepo.findOne({ where: { id: userId } });
     const accountInfo = user ? `账号 ${user.account}` : `用户${userId}`;
-    const fulfillmentText =
-      amount === POINTS_RECHARGE_AMOUNT
-        ? `发放${POINTS_RECHARGE_REWARD}积分`
-        : '发放激活码';
     await this.serviceNotificationService.notifyAdmin({
       type: 'recharge',
       title: '新的充值申请',
-      content: `${realName}（${accountInfo}）提交充值申请，手机号 ${phone}${amount ? `，金额 ${amount} 元` : ''}，请核实收款后${fulfillmentText}`,
+      content: `${realName}（${accountInfo}）提交充值申请，手机号 ${phone}，金额 ${amount} 元，付款方式 ${paymentMethod === 'wallet' ? '钱包地址' : '收款码'}，请核实收款后发放积分`,
       fromUserId: userId,
-      payload: { orderId: order.id, phone, amount },
+      payload: { orderId: order.id, phone, amount, paymentMethod },
     });
     await this.serviceNotificationService.notifyUser({
       recipientId: userId,
@@ -286,10 +334,7 @@ export class RechargeService implements OnModuleInit {
     });
 
     return {
-      message:
-        amount === POINTS_RECHARGE_AMOUNT
-          ? `充值申请已提交，管理员核实后将发放${POINTS_RECHARGE_REWARD}积分`
-          : '充值申请已提交，管理员核实后会通过短信发送激活码',
+      message: `充值申请已提交，管理员核实后将发放${POINTS_RECHARGE_REWARD}积分`,
     };
   }
 
@@ -304,6 +349,8 @@ export class RechargeService implements OnModuleInit {
       id: o.id,
       realName: o.realName,
       phone: o.phone,
+      paymentMethod: o.paymentMethod,
+      paymentAddress: o.paymentAddress,
       amount: o.amount == null ? null : Number(o.amount),
       packageName: o.packageName,
       status: o.status,
@@ -313,7 +360,7 @@ export class RechargeService implements OnModuleInit {
           : o.status === 1
             ? Number(o.amount) === POINTS_RECHARGE_AMOUNT
               ? '已发积分'
-              : '已发码'
+              : '已处理'
             : '已驳回',
       adminRemark: o.adminRemark,
       createdAt: o.createdAt,
@@ -366,7 +413,8 @@ export class RechargeService implements OnModuleInit {
 
     const rows = await this.orderRepo.query(
       `SELECT o.id AS id, o.user_id AS userId, o.real_name AS realName, o.phone AS phone,
-              o.amount AS amount, o.package_name AS packageName, o.status AS status,
+               o.amount AS amount, o.package_name AS packageName, o.status AS status,
+               o.payment_method AS paymentMethod, o.payment_address AS paymentAddress,
               o.admin_remark AS adminRemark, o.handled_at AS handledAt, o.created_at AS createdAt,
               u.account AS account, u.nickname AS nickname
        FROM recharge_orders o
@@ -386,9 +434,9 @@ export class RechargeService implements OnModuleInit {
           Number(r.status) === 0
             ? '待核实'
             : Number(r.status) === 1
-              ? Number(r.amount) === POINTS_RECHARGE_AMOUNT
-                ? '已发积分'
-                : '已发码'
+                ? Number(r.amount) === POINTS_RECHARGE_AMOUNT
+                 ? '已发积分'
+                 : '已处理'
               : '已驳回',
       })),
       total,
@@ -415,7 +463,7 @@ export class RechargeService implements OnModuleInit {
         const amount = this.normalizeRechargeAmount(order.amount);
         if (!amount) {
           throw new BadRequestException(
-            '订单充值金额不合法，请让用户重新选择50、500或2000提交',
+            '订单充值金额不合法，请检查历史订单',
           );
         }
 
@@ -463,7 +511,7 @@ export class RechargeService implements OnModuleInit {
         data.action === 'approve'
           ? isPointsRecharge
             ? `你的50元充值申请已核实，${POINTS_RECHARGE_REWARD}积分已到账。`
-            : `你的充值申请已核实，激活码已通过短信发送至 ${order.phone}，请注意查收。`
+            : `你的充值申请已核实，订单已处理。`
           : `你的充值申请未通过：${String(data.remark || '').trim() || '请联系客服'}`,
       payload: {
         orderId: order.id,
@@ -481,7 +529,7 @@ export class RechargeService implements OnModuleInit {
         data.action === 'approve'
           ? isPointsRecharge
             ? `审核通过，已发放${POINTS_RECHARGE_REWARD}积分`
-            : '已标记为已发码'
+            : '历史充值订单已处理'
           : '已驳回',
       pointsReward:
         data.action === 'approve' && isPointsRecharge
@@ -512,7 +560,7 @@ export class RechargeService implements OnModuleInit {
     const orderAmount = this.normalizeRechargeAmount(order.amount);
     if (!orderAmount) {
       throw new BadRequestException(
-        '订单充值金额不合法，请让用户重新选择50、500或2000提交',
+        '订单充值金额不合法，请检查历史订单',
       );
     }
 

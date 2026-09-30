@@ -10,7 +10,6 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/utils/toast.dart';
 import '../../auth/providers/auth_provider.dart';
-import '../../main/providers/badge_provider.dart';
 
 class SynthesizePage extends ConsumerStatefulWidget {
   const SynthesizePage({super.key});
@@ -20,9 +19,10 @@ class SynthesizePage extends ConsumerStatefulWidget {
 }
 
 class _SynthesizePageState extends ConsumerState<SynthesizePage> {
+  static const bool _showTradeFeatures = false;
   List<Map<String, dynamic>> _configs = [];
-  List<Map<String, dynamic>> _goldTrades = [];
-  List<Map<String, dynamic>> _copperTrades = [];
+  final List<Map<String, dynamic>> _goldTrades = [];
+  final List<Map<String, dynamic>> _copperTrades = [];
   Map<String, dynamic>? _goldOverview;
   Map<String, dynamic>? _copperOverview;
   bool _loading = true;
@@ -36,7 +36,6 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
     super.initState();
     Future.microtask(() async {
       ref.read(authProvider.notifier).loadProfile();
-      await ref.read(badgeProvider.notifier).clearGoldTrades();
       await _loadAll();
     });
   }
@@ -48,35 +47,16 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
       final configs = await api.get<List<dynamic>>(
         ApiEndpoints.currencySynthesisConfigs,
       );
-      final overview = await api.get<Map<String, dynamic>>(
-        ApiEndpoints.goldOverview,
-      );
-      final copperOverview = await api.get<Map<String, dynamic>>(
-        ApiEndpoints.copperOverview,
-      );
-      final trades = await api.get<List<dynamic>>(ApiEndpoints.goldTradeList);
-      final copperTrades =
-          await api.get<List<dynamic>>(ApiEndpoints.copperTradeList);
       if (!mounted) return;
       setState(() {
         _configs =
             (configs ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
-        _goldOverview =
-            overview == null ? null : Map<String, dynamic>.from(overview);
-        _copperOverview = copperOverview == null
-            ? null
-            : Map<String, dynamic>.from(copperOverview);
-        _goldTrades =
-            (trades ?? []).map((e) => Map<String, dynamic>.from(e)).toList();
-        _copperTrades = (copperTrades ?? [])
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      Toast.error(context, apiErrorMessage(e, fallback: '交易合成加载失败'));
+      Toast.error(context, apiErrorMessage(e, fallback: '合成页面加载失败'));
     }
   }
 
@@ -1299,7 +1279,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
         ref.watch(authProvider).profile?.currency?.points ?? 0;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('交易合成')),
+      appBar: AppBar(title: const Text('合成')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
@@ -1307,8 +1287,10 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  _buildGoldCard(),
-                  _buildCopperCard(),
+                  if (_showTradeFeatures) ...[
+                    _buildGoldCard(),
+                    _buildCopperCard(),
+                  ],
                   if (silverConfig == null)
                     _buildDisabledSynthesisCard(
                       title: '合成银币',
@@ -1329,7 +1311,7 @@ class _SynthesizePageState extends ConsumerState<SynthesizePage> {
                         );
                       },
                     ),
-                  _buildGoldTradeSquare(),
+                  if (_showTradeFeatures) _buildGoldTradeSquare(),
                 ],
               ),
             ),

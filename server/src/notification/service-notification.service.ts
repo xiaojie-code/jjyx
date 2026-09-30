@@ -358,7 +358,7 @@ export class ServiceNotificationService implements OnModuleInit {
           recipientId,
           type: 'recharge',
           title: '新的充值申请',
-          content: `${row.real_name}（${accountInfo}）提交充值申请，手机号 ${row.phone}${amount ? `，金额 ${amount} 元` : ''}，请核实收款后发放激活码`,
+          content: `${row.real_name}（${accountInfo}）提交充值申请，手机号 ${row.phone}${amount ? `，金额 ${amount} 元` : ''}，请核实收款后发放积分`,
           fromUserId: Number(row.user_id),
           payload: { orderId: Number(row.id), phone: row.phone, amount },
           createdAt: row.created_at,

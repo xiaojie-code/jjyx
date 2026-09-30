@@ -18,12 +18,11 @@ export class CurrencyScheduler implements OnModuleInit {
     );
   }
 
-  /** 每天0:00 铜币产出 */
+  /** 每天0:00 保留兼容调度入口，当前版本不新增铜币 */
   @Cron('0 0 0 * * *')
   async handleDailyReward() {
-    this.logger.log('开始执行每日铜币产出...');
+    this.logger.log('每日铜币产出已停用，保留调度兼容入口');
     await this.currencyService.dailyRewardProduction();
-    this.logger.log('每日铜币产出完成');
   }
 
   /** 每天00:00:01 发放当日每周积分返还 */

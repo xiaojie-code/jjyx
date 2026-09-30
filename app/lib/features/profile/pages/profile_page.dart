@@ -9,7 +9,6 @@ import '../../../core/update/app_update_service.dart';
 import '../../../core/update/update_state.dart';
 import '../../../core/utils/activation_guard.dart';
 import '../../auth/providers/auth_provider.dart';
-import '../../main/providers/badge_provider.dart';
 import 'activate_page.dart';
 import 'asset_package_page.dart';
 import 'edit_avatar_page.dart';
@@ -52,19 +51,6 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     );
   }
 
-  void _showCopperLogs() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => const _PointLogSheet(
-        currencyType: 'copper',
-        title: '铜币明细',
-        fallbackTypeName: '铜币变动',
-      ),
-    );
-  }
-
   void _showSilverLogs() {
     showModalBottomSheet<void>(
       context: context,
@@ -78,19 +64,6 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     );
   }
 
-  void _showGoldLogs() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => const _PointLogSheet(
-        currencyType: 'gold',
-        title: '金币明细',
-        fallbackTypeName: '金币变动',
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
@@ -98,10 +71,6 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     final profile = authState.profile;
     final currency = profile?.currency;
     final hasUpdate = ref.watch(updateStateProvider).hasUpdate;
-    final badges = ref.watch(badgeProvider);
-    final tradeCount = (user?.isActivated ?? false)
-        ? badges.goldTradeCount + badges.copperTradeCount
-        : 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -211,9 +180,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     ),
                     _buildMenuItem(
                       Icons.sync,
-                      '交易合成',
+                      '合成',
                       () => _push(const SynthesizePage()),
-                      showDot: tradeCount > 0,
                     ),
                     _buildMenuItem(
                       Icons.account_balance_wallet,
@@ -257,17 +225,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         children: [
           Row(
             children: [
-              _currencyItem('持股数', shares),
               _currencyItem('积分', currency.points, onTap: _showPointLogs),
               _currencyItem('总用户数', totalUserCount),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _currencyItem('金币', currency.gold, onTap: _showGoldLogs),
               _currencyItem('银币', currency.silver, onTap: _showSilverLogs),
-              _currencyItem('铜币', currency.copper, onTap: _showCopperLogs),
             ],
           ),
         ],
@@ -315,6 +275,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     VoidCallback onTap, {
     bool showDot = false,
   }) {
+    const hiddenTitles = {'激活', '资产包', '推广奖励', '提现'};
+    if (hiddenTitles.contains(title)) return const SizedBox.shrink();
+
     return ListTile(
       leading: _buildDotIcon(icon, showDot),
       title: Text(title),

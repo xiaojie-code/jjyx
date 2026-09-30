@@ -43,17 +43,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<bool> register(
     String account,
     String password,
-    String inviteCode,
+    String? inviteCode,
   ) async {
     state = state.copyWith(isLoading: true, error: null);
     try {
+      final payload = <String, dynamic>{
+        'account': account,
+        'password': password,
+      };
+      final normalizedInviteCode = inviteCode?.trim();
+      if (normalizedInviteCode != null && normalizedInviteCode.isNotEmpty) {
+        payload['inviteCode'] = normalizedInviteCode;
+      }
       final result = await _api.post<Map<String, dynamic>>(
         ApiEndpoints.register,
-        data: {
-          'account': account,
-          'password': password,
-          'inviteCode': inviteCode,
-        },
+        data: payload,
       );
       final token = result?['token'] as String?;
       if (token != null) {

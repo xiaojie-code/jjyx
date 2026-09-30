@@ -23,15 +23,15 @@ export default defineConfig(({ command }) => ({
   },
   server: {
     port: 3100,
+    // Keep the dev proxy on the same machine as the API. This avoids stale
+    // LAN addresses breaking the admin login when the network changes.
     proxy: {
       '/api': {
-        // localhost:3001 may be occupied by the local Cocos tooling. The
-        // launcher supplies the current LAN API endpoint for dev sessions.
-        target: process.env.VITE_API_PROXY_TARGET || 'http://192.168.31.73:3001',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:3001',
         changeOrigin: true,
       },
       '/uploads': {
-        target: process.env.VITE_API_PROXY_TARGET || 'http://192.168.31.73:3001',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:3001',
         changeOrigin: true,
       },
     },

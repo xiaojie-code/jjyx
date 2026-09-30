@@ -36,6 +36,10 @@
               <template #default="{ row }">{{ row.amount != null ? `¥${row.amount}` : '-' }}</template>
             </el-table-column>
             <el-table-column prop="packageName" label="套餐" width="90" />
+            <el-table-column label="付款方式" width="100">
+              <template #default="{ row }">{{ row.paymentMethod === 'wallet' ? '钱包地址' : '收款码' }}</template>
+            </el-table-column>
+            <el-table-column prop="paymentAddress" label="付款地址快照" min-width="180" show-overflow-tooltip />
             <el-table-column label="状态" width="90">
               <template #default="{ row }">
                 <el-tag :type="row.status === 0 ? 'warning' : row.status === 1 ? 'success' : 'danger'">
@@ -55,7 +59,7 @@
                     link
                     @click="approvePointsRecharge(row)"
                   >审核并发积分</el-button>
-                  <el-button v-else size="small" type="success" link @click="openSendCodeDialog(row)">发送激活码</el-button>
+                  <el-button v-else size="small" type="success" link @click="handleLegacyOrder(row)">处理历史订单</el-button>
                   <el-button size="small" type="danger" link @click="handleReview(row, 'reject')">驳回</el-button>
                 </template>
                 <span v-else class="text-muted">已处理</span>
@@ -73,31 +77,6 @@
           />
         </el-card>
 
-        <el-dialog v-model="sendCodeDialogVisible" title="发送激活码短信" width="460px">
-          <el-form label-width="90px">
-            <el-form-item label="付款人姓名">
-              <el-input v-model="sendCodeForm.realName" disabled />
-            </el-form-item>
-            <el-form-item label="手机号">
-              <el-input v-model="sendCodeForm.phone" disabled />
-            </el-form-item>
-            <el-form-item label="充值金额">
-              <el-input v-model="sendCodeForm.amountText" disabled />
-            </el-form-item>
-            <el-alert
-              type="info"
-              :closable="false"
-              show-icon
-              title="系统会根据充值金额自动生成对应档位的激活码，并通过短信发送到该手机号。"
-            />
-          </el-form>
-          <template #footer>
-            <el-button @click="sendCodeDialogVisible = false">取消</el-button>
-            <el-button type="primary" :loading="sendCodeSending" @click="confirmSendCode">
-              确认生成并发送
-            </el-button>
-          </template>
-        </el-dialog>
       </el-tab-pane>
 
       <!-- 收款设置 -->
@@ -128,8 +107,16 @@
             <el-form-item label="收款人姓名">
               <el-input v-model="cfg.recharge_payee_name" placeholder="例如 张三" />
             </el-form-item>
+            <el-form-item label="钱包地址">
+              <el-input
+                v-model="cfg.recharge_wallet_address"
+                type="textarea"
+                :rows="3"
+                placeholder="填写后用户可在充值页切换为钱包地址付款"
+              />
+            </el-form-item>
             <el-form-item label="充值套餐">
-              <el-input model-value="50（赠1500积分）, 500, 2000" disabled />
+              <el-input model-value="50元（审核后获得2000积分）" disabled />
             </el-form-item>
             <el-form-item label="充值说明">
               <el-input v-model="cfg.recharge_notice" type="textarea" :rows="4" placeholder="给用户的充值步骤说明" />
@@ -153,7 +140,6 @@ import {
   getRechargeOrders,
   getRechargeStats,
   reviewRecharge,
-  sendRechargeActivationCode,
   uploadRechargeQrcode,
   getConfigs,
   updateConfig,
@@ -168,18 +154,10 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const stats = reactive({ pending: 0, approved: 0, rejected: 0 })
-const sendCodeDialogVisible = ref(false)
-const sendCodeSending = ref(false)
-const currentSendCodeOrder = ref<any | null>(null)
-const sendCodeForm = reactive({
-  realName: '',
-  phone: '',
-  amountText: '',
-})
-
 const cfg = reactive<Record<string, string>>({
   recharge_qrcode: '',
   recharge_payee_name: '',
+  recharge_wallet_address: '',
   recharge_packages: '',
   recharge_notice: '',
 })
@@ -209,43 +187,9 @@ async function loadOrders() {
   }
 }
 
-function openSendCodeDialog(row: any) {
-  currentSendCodeOrder.value = row
-  sendCodeForm.realName = row.realName || ''
-  sendCodeForm.phone = row.phone || ''
-  sendCodeForm.amountText = row.amount != null ? `${row.amount} 元` : ''
-  sendCodeDialogVisible.value = true
-}
-
-async function confirmSendCode() {
-  const order = currentSendCodeOrder.value
-  if (!order) {
-    ElMessage.error('请选择充值订单')
-    return
-  }
-  if (!sendCodeForm.realName) {
-    ElMessage.error('付款人姓名不能为空')
-    return
-  }
-  if (!sendCodeForm.phone) {
-    ElMessage.error('手机号不能为空')
-    return
-  }
-
-  sendCodeSending.value = true
-  try {
-    const res: any = await sendRechargeActivationCode(order.id)
-    ElMessage.success(res?.code ? `激活码已生成并发送：${res.code}` : '激活码短信已发送')
-    sendCodeDialogVisible.value = false
-    loadOrders()
-  } finally {
-    sendCodeSending.value = false
-  }
-}
-
 async function approvePointsRecharge(row: any) {
   await ElMessageBox.confirm(
-    `确认已收到 ${row.realName}（${row.phone}）支付的50元，并向该用户发放1500积分？`,
+    `确认已收到 ${row.realName}（${row.phone}）支付的50元，并向该用户发放2000积分？`,
     '审核50元充值',
     {
       type: 'success',
@@ -254,7 +198,18 @@ async function approvePointsRecharge(row: any) {
     },
   )
   const res: any = await reviewRecharge(row.id, { action: 'approve' })
-  ElMessage.success(res?.message || '审核通过，已发放1500积分')
+  ElMessage.success(res?.message || '审核通过，已发放2000积分')
+  loadOrders()
+}
+
+async function handleLegacyOrder(row: any) {
+  await ElMessageBox.confirm(
+    `该订单为历史${row.amount}元订单，当前充值规则已调整为50元档。确认将该历史订单标记为已处理吗？`,
+    '处理历史订单',
+    { type: 'warning' },
+  )
+  await reviewRecharge(row.id, { action: 'approve', remark: '历史订单已处理' })
+  ElMessage.success('历史订单已处理')
   loadOrders()
 }
 
@@ -262,8 +217,8 @@ async function handleReview(row: any, action: 'approve' | 'reject') {
   let remark = ''
   if (action === 'approve') {
     await ElMessageBox.confirm(
-      `确认已收到 ${row.realName}（${row.phone}）的付款，并已通过短信发送激活码？`,
-      '确认发码',
+      `确认已收到 ${row.realName}（${row.phone}）的付款并完成处理？`,
+      '确认处理',
       { type: 'success' },
     )
   } else {
@@ -303,6 +258,7 @@ async function loadConfig() {
 async function saveConfig() {
   await Promise.all([
     updateConfig('recharge_payee_name', cfg.recharge_payee_name || ''),
+    updateConfig('recharge_wallet_address', cfg.recharge_wallet_address || ''),
     updateConfig('recharge_notice', cfg.recharge_notice || ''),
   ])
   ElMessage.success('设置已保存')
